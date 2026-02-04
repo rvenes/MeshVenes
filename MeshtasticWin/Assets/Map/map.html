@@ -1,0 +1,261 @@
+﻿<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <link rel="stylesheet" href="leaflet/leaflet.css">
+  <script src="leaflet/leaflet.js"></script>
+
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    body { background:#2a2a2a; }
+
+    .top {
+      position:absolute; left:10px; top:10px;
+      background:rgba(0,0,0,0.45); color:#fff; padding:6px 10px;
+      border-radius:8px; font-family:Segoe UI, sans-serif; font-size:12px;
+      z-index:9999;
+    }
+
+    .node-label {
+      background: rgba(245,245,245,0.95);
+      color: #111;
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-family: Segoe UI, sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      border: 1px solid rgba(0,0,0,0.25);
+      box-shadow: 0 6px 14px rgba(0,0,0,0.35);
+      text-shadow: none;
+    }
+
+    .leaflet-marker-pane .node-label { z-index: 1000; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="top" id="top">MAP: lastar…</div>
+
+<script>
+  const web = (window.chrome && window.chrome.webview) ? window.chrome.webview : null;
+  function post(o){ if (web) web.postMessage(o); }
+
+  document.getElementById('top').textContent = (typeof L === 'undefined')
+    ? "MAP: Leaflet manglar"
+    : ("MAP: Leaflet OK " + L.version);
+
+  if (typeof L === 'undefined') {
+    post({ type:"ready" });
+  } else {
+    const map = L.map('map', { zoomControl:true, worldCopyJump:true }).setView([20,0], 2);
+
+    // Offline base
+    const Grid = L.GridLayer.extend({
+      createTile: function(){
+        const c = document.createElement('canvas');
+        c.width = 256; c.height = 256;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#0b2a3a'; ctx.fillRect(0,0,256,256);
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+        for (let x=0; x<=256; x+=64){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,256); ctx.stroke(); }
+        for (let y=0; y<=256; y+=64){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(256,y); ctx.stroke(); }
+        return c;
+      }
+    });
+    new Grid().addTo(map);
+
+    // Online OSM
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+    // Custom pin-icon (SVG)
+    const pinSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="34" height="48" viewBox="0 0 34 48">
+        <defs>
+          <filter id="s" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#000" flood-opacity="0.35"/>
+          </filter>
+        </defs>
+        <path filter="url(#s)" d="M17 47c-1.2 0-2.3-.6-3-1.6C10.2 40 3 29.7 3 20 3 9.5 9.9 1 17 1s14 8.5 14 19c0 9.7-7.2 20-11 25.4-0.7 1-1.8 1.6-3 1.6z"
+              fill="#1E88E5" stroke="#0D47A1" stroke-width="1.2"/>
+        <circle cx="17" cy="17" r="6.2" fill="#ffffff" stroke="#0D47A1" stroke-width="1.2"/>
+      </svg>
+    `;
+    const pinIcon = L.divIcon({
+      className: '',
+      html: pinSvg,
+      iconSize: [34, 48],
+      iconAnchor: [17, 47],
+      popupAnchor: [0, -44]
+    });
+
+    const markers = new Map(); // idHex -> L.Marker
+    const labels  = new Map(); // idHex -> L.Marker (divIcon)
+    let selectedId = null;
+
+    // --- anti-overlap jitter ---
+    const samePosBuckets = new Map(); // key -> [idHex...]
+
+    function posKey(lat, lon){
+      return lat.toFixed(6) + "," + lon.toFixed(6);
+    }
+
+    function jitterIfStacked(idHex, lat, lon){
+      const key = posKey(lat, lon);
+
+      if (!samePosBuckets.has(key)) samePosBuckets.set(key, []);
+      const arr = samePosBuckets.get(key);
+
+      let idx = arr.indexOf(idHex);
+      if (idx === -1) { arr.push(idHex); idx = arr.length - 1; }
+
+      if (arr.length <= 1) return [lat, lon];
+
+      const radiusPx = 18; // juster om du vil
+      const angle = (idx * 2 * Math.PI) / Math.max(arr.length, 6);
+
+      const p = map.latLngToContainerPoint([lat, lon]);
+      const p2 = L.point(p.x + Math.cos(angle) * radiusPx, p.y + Math.sin(angle) * radiusPx);
+      const ll2 = map.containerPointToLatLng(p2);
+
+      return [ll2.lat, ll2.lng];
+    }
+
+    function labelText(n){
+      return (n.shortName && n.shortName.trim()) ? n.shortName
+           : (n.shortId && n.shortId.trim()) ? n.shortId
+           : n.idHex;
+    }
+
+    function tooltipHtml(n){
+      const name = (n.name && n.name.trim()) ? n.name : labelText(n);
+      const snr = (n.snr === null || n.snr === undefined) ? "—" : n.snr;
+      const rssi = (n.rssi === null || n.rssi === undefined) ? "—" : n.rssi;
+      const last = n.lastHeard || "—";
+      const pos = n.hasPos ? `${n.lat.toFixed(6)},${n.lon.toFixed(6)}` : "—";
+      const posT = n.lastPosLocal || "—";
+      return `
+        <div style="font-family:Segoe UI,sans-serif;font-size:13px;line-height:1.35;">
+          <div style="font-weight:700">${escapeHtml(name)} <span style="opacity:.7">(${escapeHtml(labelText(n))})</span></div>
+          <div style="opacity:.85">${escapeHtml(n.idHex)}</div>
+          <div style="margin-top:6px;">
+            <b>SNR</b>: ${escapeHtml(String(snr))} &nbsp;&nbsp; <b>RSSI</b>: ${escapeHtml(String(rssi))}
+          </div>
+          <div><b>Last</b>: ${escapeHtml(last)}</div>
+          <div><b>Pos</b>: ${escapeHtml(pos)} <span style="opacity:.75">(${escapeHtml(posT)})</span></div>
+          <div style="margin-top:8px;">
+            <button onclick="requestHistory('${escapeAttr(n.idHex)}')">Les logg</button>
+          </div>
+        </div>`;
+    }
+
+    window.requestHistory = function(idHex){
+      post({ type:"requestHistory", idHex });
+    };
+
+    function setNodes(nodes){
+      samePosBuckets.clear();
+
+      const alive = new Set();
+
+      for (const n of nodes){
+        alive.add(n.idHex);
+        if (!n.hasPos) continue;
+
+        const ll = jitterIfStacked(n.idHex, n.lat, n.lon);
+
+        // Pin marker
+        if (!markers.has(n.idHex)){
+          const m = L.marker(ll, { icon: pinIcon, title: n.name || n.shortId || n.idHex });
+          m.on('click', () => {
+            selectedId = n.idHex;
+            post({ type:"selectNode", idHex:n.idHex });
+            highlight();
+          });
+          m.bindTooltip(tooltipHtml(n), { direction:'top', sticky:true, opacity:0.95 });
+          markers.set(n.idHex, m);
+          m.addTo(map);
+        } else {
+          markers.get(n.idHex).setLatLng(ll);
+          markers.get(n.idHex).setTooltipContent(tooltipHtml(n));
+        }
+
+        // Label chip
+        const chip = `<div class="node-label">${escapeHtml(labelText(n))}</div>`;
+        const icon = L.divIcon({ className:'', html: chip, iconSize: null });
+
+        if (!labels.has(n.idHex)){
+          const lm = L.marker(ll, { icon, interactive:false, zIndexOffset: 1000 });
+          labels.set(n.idHex, lm);
+          lm.addTo(map);
+        } else {
+          labels.get(n.idHex).setLatLng(ll);
+          labels.get(n.idHex).setIcon(icon);
+        }
+
+        requestAnimationFrame(() => {
+          const el = labels.get(n.idHex)?.getElement();
+          if (el) el.style.transform = (el.style.transform || "") + " translate(14px, -36px)";
+        });
+      }
+
+      for (const [id,m] of markers.entries()){
+        if (!alive.has(id)){ map.removeLayer(m); markers.delete(id); }
+      }
+      for (const [id,lm] of labels.entries()){
+        if (!alive.has(id)){ map.removeLayer(lm); labels.delete(id); }
+      }
+
+      highlight();
+    }
+
+    function highlight(){
+      for (const [id,m] of markers.entries()){
+        const el = m.getElement();
+        if (!el) continue;
+        el.style.filter = (id === selectedId) ? "drop-shadow(0 0 8px rgba(0,255,120,0.9))" : "";
+      }
+      for (const [id,lm] of labels.entries()){
+        const el = lm.getElement();
+        if (!el) continue;
+        el.style.opacity = (selectedId && id !== selectedId) ? "0.9" : "1";
+      }
+    }
+
+    function fitAll(){
+      const list = Array.from(markers.values());
+      if (list.length === 0) return;
+      const fg = L.featureGroup(list);
+      const b = fg.getBounds();
+      if (b.isValid()) map.fitBounds(b.pad(0.2));
+    }
+
+    function zoomTo(idHex){
+      const m = markers.get(idHex);
+      if (!m) return;
+      map.setView(m.getLatLng(), Math.max(map.getZoom(), 14));
+      m.openTooltip();
+    }
+
+    if (web){
+      web.addEventListener('message', (ev) => {
+        const msg = ev.data;
+        if (!msg || !msg.type) return;
+
+        if (msg.type === "nodes") { setNodes(msg.nodes || []); return; }
+        if (msg.type === "selected") { selectedId = msg.idHex || null; highlight(); if (selectedId) zoomTo(selectedId); return; }
+        if (msg.type === "fitAll") { fitAll(); return; }
+        if (msg.type === "zoomTo") { zoomTo(msg.idHex); return; }
+      });
+    }
+
+    post({ type:"ready" });
+  }
+
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function escapeAttr(s){ return String(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+</script>
+</body>
+</html>

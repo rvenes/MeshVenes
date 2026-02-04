@@ -1,0 +1,161 @@
+﻿using Google.Protobuf;
+using System;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+
+namespace MeshtasticWin.Protocol;
+
+public static class ToRadioFactory
+{
+    private static Type? _toRadioType;
+    private static Type? _meshPacketType;
+    private static Type? _decodedType;
+
+    private static PropertyInfo? _toRadioPacketProp;
+    private static PropertyInfo? _toRadioWantConfigIdProp;
+
+    private static PropertyInfo? _packetToProp;
+    private static PropertyInfo? _packetDecodedProp;
+    private static PropertyInfo? _packetIdProp;
+    private static PropertyInfo? _packetWantAckProp;
+    private static PropertyInfo? _packetChannelProp;
+
+    private static PropertyInfo? _decodedPortnumProp;
+    private static PropertyInfo? _decodedPayloadProp;
+
+    public static IMessage CreateHelloRequest(uint wantConfigId = 1u)
+    {
+        EnsureCached();
+
+        if (_toRadioType is null)
+            throw new InvalidOperationException("ToRadio type not found");
+
+        var msg = (IMessage)Activator.CreateInstance(_toRadioType)!;
+
+        if (_toRadioWantConfigIdProp is null)
+            throw new InvalidOperationException("ToRadio.WantConfigId property not found");
+
+        _toRadioWantConfigIdProp.SetValue(msg, wantConfigId);
+        return msg;
+    }
+
+    public static IMessage CreateTextMessage(
+        string text,
+        uint to,
+        bool? wantAck,
+        uint channel,
+        out uint packetId)
+    {
+        EnsureCached();
+
+        packetId = 0;
+
+        if (_toRadioType is null || _meshPacketType is null || _decodedType is null)
+            throw new InvalidOperationException("Proto types not found (ToRadio/MeshPacket/Decoded)");
+
+        if (_toRadioPacketProp is null)
+            throw new InvalidOperationException("ToRadio.Packet property not found");
+
+        if (_packetToProp is null || _packetDecodedProp is null)
+            throw new InvalidOperationException("MeshPacket.{To/Decoded} properties not found");
+
+        if (_decodedPortnumProp is null || _decodedPayloadProp is null)
+            throw new InvalidOperationException("Decoded.{Portnum/Payload} properties not found");
+
+        bool wantAckResolved = wantAck ?? (to != 0xFFFFFFFF);
+
+        var toRadio = (IMessage)Activator.CreateInstance(_toRadioType)!;
+        var packet = Activator.CreateInstance(_meshPacketType)!;
+
+        _packetToProp.SetValue(packet, to);
+
+        // Channel: DM skal alltid vere 0
+        if (_packetChannelProp is not null)
+            _packetChannelProp.SetValue(packet, channel);
+
+        // Id: unik/non-zero
+        if (_packetIdProp is not null)
+        {
+            packetId = PacketIdGenerator.Next();
+            _packetIdProp.SetValue(packet, packetId);
+        }
+
+        // WantAck
+        if (_packetWantAckProp is not null)
+            _packetWantAckProp.SetValue(packet, wantAckResolved);
+
+        // Decoded
+        var decoded = Activator.CreateInstance(_decodedType)!;
+
+        // Portnum = TEXT_MESSAGE_APP = 1
+        var portPropType = _decodedPortnumProp.PropertyType;
+        object portValue = portPropType.IsEnum ? Enum.ToObject(portPropType, 1) : 1;
+        _decodedPortnumProp.SetValue(decoded, portValue);
+
+        // Payload
+        var bytes = Encoding.UTF8.GetBytes(text ?? "");
+        _decodedPayloadProp.SetValue(decoded, ByteString.CopyFrom(bytes));
+
+        _packetDecodedProp.SetValue(packet, decoded);
+        _toRadioPacketProp.SetValue(toRadio, packet);
+
+        return toRadio;
+    }
+
+    private static void EnsureCached()
+    {
+        if (_toRadioType is not null)
+            return;
+
+        _toRadioType = FindTypeByName("ToRadio");
+        _meshPacketType = FindTypeByName("MeshPacket");
+
+        if (_toRadioType is null || _meshPacketType is null)
+            return;
+
+        _toRadioWantConfigIdProp =
+            _toRadioType.GetProperty("WantConfigId", BindingFlags.Public | BindingFlags.Instance);
+
+        _toRadioPacketProp =
+            _toRadioType.GetProperty("Packet", BindingFlags.Public | BindingFlags.Instance);
+
+        _packetToProp =
+            _meshPacketType.GetProperty("To", BindingFlags.Public | BindingFlags.Instance);
+
+        _packetDecodedProp =
+            _meshPacketType.GetProperty("Decoded", BindingFlags.Public | BindingFlags.Instance);
+
+        _packetIdProp =
+            _meshPacketType.GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+
+        _packetWantAckProp =
+            _meshPacketType.GetProperty("WantAck", BindingFlags.Public | BindingFlags.Instance);
+
+        _packetChannelProp =
+            _meshPacketType.GetProperty("Channel", BindingFlags.Public | BindingFlags.Instance);
+
+        _decodedType = _packetDecodedProp?.PropertyType;
+
+        if (_decodedType is not null)
+        {
+            _decodedPortnumProp =
+                _decodedType.GetProperty("Portnum", BindingFlags.Public | BindingFlags.Instance);
+
+            _decodedPayloadProp =
+                _decodedType.GetProperty("Payload", BindingFlags.Public | BindingFlags.Instance);
+        }
+    }
+
+    private static Type? FindTypeByName(string typeName)
+    {
+        return AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a =>
+            {
+                try { return a.GetTypes(); }
+                catch { return Array.Empty<Type>(); }
+            })
+            .SelectMany(t => t)
+            .FirstOrDefault(t => t.IsClass && t.Name == typeName);
+    }
+}

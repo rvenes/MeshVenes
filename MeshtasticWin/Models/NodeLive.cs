@@ -1,0 +1,148 @@
+﻿using System;
+using System.ComponentModel;
+
+namespace MeshtasticWin.Models;
+
+public sealed class NodeLive : INotifyPropertyChanged
+{
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public string IdHex { get; }
+
+    // Nytt: brukast til sort/filter
+    public DateTime LastHeardUtc { get; private set; } = DateTime.MinValue;
+
+    // Valfritt (om du vil vise i UI)
+    public ulong NodeNum { get; set; }
+
+    public string ShortId
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(IdHex))
+                return "";
+
+            var s = IdHex.Trim();
+
+            if (s.StartsWith("fr=", StringComparison.OrdinalIgnoreCase))
+                s = s.Substring(3).Trim();
+
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                var hex = s.Substring(2);
+                if (hex.Length >= 4)
+                    return "0x" + hex[^4..].ToUpperInvariant();
+                return "0x" + hex.ToUpperInvariant();
+            }
+
+            if (s.Length >= 4)
+                return s[^4..].ToUpperInvariant();
+
+            return s.ToUpperInvariant();
+        }
+    }
+
+    private string _longName = "";
+    public string LongName
+    {
+        get => _longName;
+        set { if (_longName != value) { _longName = value; OnChanged(nameof(LongName)); OnChanged(nameof(Name)); } }
+    }
+
+    private string _shortName = "";
+    public string ShortName
+    {
+        get => _shortName;
+        set { if (_shortName != value) { _shortName = value; OnChanged(nameof(ShortName)); OnChanged(nameof(Name)); } }
+    }
+
+    private string _sub = "";
+    public string Sub
+    {
+        get => _sub;
+        set { if (_sub != value) { _sub = value; OnChanged(nameof(Sub)); } }
+    }
+
+    private string _snr = "—";
+    public string SNR
+    {
+        get => _snr;
+        set { if (_snr != value) { _snr = value; OnChanged(nameof(SNR)); } }
+    }
+
+    private string _rssi = "—";
+    public string RSSI
+    {
+        get => _rssi;
+        set { if (_rssi != value) { _rssi = value; OnChanged(nameof(RSSI)); } }
+    }
+
+    private string _lastHeard = "—";
+    public string LastHeard
+    {
+        get => _lastHeard;
+        set { if (_lastHeard != value) { _lastHeard = value; OnChanged(nameof(LastHeard)); } }
+    }
+
+    // GPS (antar desse felta finst i din NodeLive – om dei alt finst, behold dei og fjern duplikat)
+    private double _lat;
+    public double Latitude { get => _lat; set { if (_lat != value) { _lat = value; OnChanged(nameof(Latitude)); OnChanged(nameof(HasPosition)); } } }
+
+    private double _lon;
+    public double Longitude { get => _lon; set { if (_lon != value) { _lon = value; OnChanged(nameof(Longitude)); OnChanged(nameof(HasPosition)); } } }
+
+    private DateTime _lastPosUtc = DateTime.MinValue;
+    public DateTime LastPositionUtc { get => _lastPosUtc; set { if (_lastPosUtc != value) { _lastPosUtc = value; OnChanged(nameof(LastPositionUtc)); OnChanged(nameof(LastPositionText)); } } }
+
+    public bool HasPosition => LastPositionUtc != DateTime.MinValue;
+
+    public string LastPositionText
+    {
+        get
+        {
+            if (!HasPosition) return "—";
+            var local = LastPositionUtc.ToLocalTime();
+            return local.ToString("HH:mm:ss");
+        }
+    }
+
+    public bool UpdatePosition(double lat, double lon, DateTime tsUtc, double? alt = null)
+    {
+        Latitude = lat;
+        Longitude = lon;
+        LastPositionUtc = tsUtc;
+        return true;
+    }
+
+    // Bruk namn frå NodeInfo når dei finst, ellers ShortId/IdHex.
+    public string Name
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(LongName))
+                return LongName;
+            if (!string.IsNullOrWhiteSpace(ShortName))
+                return ShortName;
+            if (!string.IsNullOrWhiteSpace(ShortId))
+                return ShortId;
+            return IdHex;
+        }
+    }
+
+    public NodeLive(string idHex)
+    {
+        IdHex = idHex;
+        Sub = "Seen on mesh";
+        Touch();
+    }
+
+    public void Touch()
+    {
+        LastHeardUtc = DateTime.UtcNow;
+        LastHeard = DateTime.Now.ToString("HH:mm:ss");
+        OnChanged(nameof(LastHeardUtc));
+    }
+
+    private void OnChanged(string name) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}

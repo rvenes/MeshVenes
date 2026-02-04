@@ -1,0 +1,30 @@
+<Page
+    x:Class="MeshtasticWin.Pages.ConnectPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:MeshtasticWin.Pages">
+
+    <Grid Padding="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Topp: COM + knappar -->
+        <StackPanel Orientation="Horizontal" Spacing="12">
+            <TextBlock Text="COM:" VerticalAlignment="Center" />
+            <TextBox x:Name="PortBox" Width="140" PlaceholderText="COM5" Text="COM5"/>
+            <Button x:Name="ConnectButton"
+        Content="Connect"
+        Click="Connect_Click" />
+
+            <Button x:Name="DisconnectButton"
+        Content="Disconnect"
+        Click="Disconnect_Click" />
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" Opacity="0.8"/>
+        </StackPanel>
+
+        <!-- Logg -->
+        <ListView x:Name="LogList" Grid.Row="1" Margin="0,12,0,0"/>
+    </Grid>
+</Page>

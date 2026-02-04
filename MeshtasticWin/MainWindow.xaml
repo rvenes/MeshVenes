@@ -1,0 +1,26 @@
+<Window
+    x:Class="MeshtasticWin.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:MeshtasticWin"
+    Title="MeshtasticWin">
+
+    <Grid>
+        <NavigationView x:Name="Nav"
+                        PaneDisplayMode="Top"
+                        IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="False"
+                        SelectionChanged="Nav_SelectionChanged">
+
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Messages" Tag="messages" />
+                <NavigationViewItem Content="Connect" Tag="connect" />
+                <NavigationViewItem Content="Nodes" Tag="nodes" />
+                <NavigationViewItem Content="Mesh Map" Tag="map" />
+                <NavigationViewItem Content="Settings" Tag="settings" />
+            </NavigationView.MenuItems>
+
+            <Frame x:Name="ContentFrame" />
+        </NavigationView>
+    </Grid>
+</Window>

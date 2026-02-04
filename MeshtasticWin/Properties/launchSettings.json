@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "MeshtasticWin (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "MeshtasticWin (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
