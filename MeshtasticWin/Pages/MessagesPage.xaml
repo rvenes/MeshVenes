@@ -11,16 +11,21 @@
 	            <ColumnDefinition Width="*"/>
 	        </Grid.ColumnDefinitions>
 
-	        <!-- VENSTRE: chat/nodeliste -->
-	        <Grid Grid.Column="0" RowDefinitions="Auto,6,Auto,6,*">
+	        <!-- LEFT: chat/node list -->
+	        <Grid Grid.Column="0" RowDefinitions="Auto,6,Auto,6,Auto,6,*">
 	            <TextBlock Text="Chats" FontSize="22" FontWeight="SemiBold" />
 
-	            <TextBox Grid.Row="2"
+	            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" Opacity="0.85" VerticalAlignment="Center">
+	                <ToggleButton x:Name="HideInactiveToggle" Content="Hide inactive" Click="HideInactiveToggle_Click"/>
+	                <ComboBox x:Name="AgeFilterCombo" Width="170" SelectionChanged="AgeFilterCombo_SelectionChanged"/>
+	            </StackPanel>
+
+	            <TextBox Grid.Row="4"
 	                     x:Name="ChatSearchBox"
-	                     PlaceholderText="Søk (namn / id)"
+	                     PlaceholderText="Search (name / id)"
 	                     TextChanged="ChatSearchBox_TextChanged"/>
 
-	            <ListView Grid.Row="4"
+	            <ListView Grid.Row="6"
 	                      x:Name="ChatList"
 	                      ItemsSource="{x:Bind ChatListItems, Mode=OneWay}"
 	                      SelectionMode="Single"

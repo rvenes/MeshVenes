@@ -385,6 +385,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         if (Selected is null) return;
         MeshtasticWin.AppState.SetActiveChatPeer(Selected.IdHex);
+        App.MainWindowInstance?.NavigateTo("messages");
     }
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

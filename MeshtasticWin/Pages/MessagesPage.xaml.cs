@@ -41,9 +41,18 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private bool _suppressListEvent;
     private string _chatFilter = "";
 
+    private int _hideOlderThanDays = 90; // default: 3 months
+    private bool _hideInactive = true;
+
     public MessagesPage()
     {
         InitializeComponent();
+
+        AgeFilterCombo.Items.Add("Show all");
+        AgeFilterCombo.Items.Add("Hide > 3 months");
+        AgeFilterCombo.SelectedIndex = 1;
+
+        HideInactiveToggle.IsChecked = _hideInactive;
 
         MeshtasticWin.AppState.Messages.CollectionChanged += Messages_CollectionChanged;
         MeshtasticWin.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
@@ -85,6 +94,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         // Nodes (same sort som NodesPage: online først, så lastHeard)
         var nodes = MeshtasticWin.AppState.Nodes
             .Where(n => !string.IsNullOrWhiteSpace(n.IdHex))
+            .Where(n => !IsTooOld(n))
+            .Where(n => !IsHiddenByInactive(n))
             .Where(n =>
             {
                 if (string.IsNullOrWhiteSpace(q)) return true;
@@ -139,6 +150,39 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         _chatFilter = ChatSearchBox.Text ?? "";
         RebuildChatList();
         SyncListToActiveChat();
+    }
+
+    private void AgeFilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _hideOlderThanDays = AgeFilterCombo.SelectedIndex switch
+        {
+            0 => 99999,
+            1 => 90,
+            _ => 90
+        };
+
+        RebuildChatList();
+        SyncListToActiveChat();
+    }
+
+    private void HideInactiveToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _hideInactive = HideInactiveToggle.IsChecked == true;
+        RebuildChatList();
+        SyncListToActiveChat();
+    }
+
+    private bool IsTooOld(NodeLive n)
+    {
+        if (_hideOlderThanDays >= 99999) return false;
+        var age = DateTime.UtcNow - n.LastHeardUtc;
+        return age.TotalDays > _hideOlderThanDays;
+    }
+
+    private bool IsHiddenByInactive(NodeLive n)
+    {
+        if (!_hideInactive) return false;
+        return !IsOnlineByRssi(n);
     }
 
     private static bool IsOnlineByRssi(NodeLive n)

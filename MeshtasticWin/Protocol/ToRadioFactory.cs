@@ -19,6 +19,7 @@ public static class ToRadioFactory
     private static PropertyInfo? _packetDecodedProp;
     private static PropertyInfo? _packetIdProp;
     private static PropertyInfo? _packetWantAckProp;
+    private static PropertyInfo? _packetHopLimitProp;
     private static PropertyInfo? _packetChannelProp;
 
     private static PropertyInfo? _decodedPortnumProp;
@@ -73,6 +74,10 @@ public static class ToRadioFactory
         // Channel: DM skal alltid vere 0
         if (_packetChannelProp is not null)
             _packetChannelProp.SetValue(packet, channel);
+
+        // Hop limit: ensure non-zero TTL for routed messages
+        if (_packetHopLimitProp is not null)
+            _packetHopLimitProp.SetValue(packet, 3u);
 
         // Id: unik/non-zero
         if (_packetIdProp is not null)
@@ -134,6 +139,9 @@ public static class ToRadioFactory
 
         _packetChannelProp =
             _meshPacketType.GetProperty("Channel", BindingFlags.Public | BindingFlags.Instance);
+
+        _packetHopLimitProp =
+            _meshPacketType.GetProperty("HopLimit", BindingFlags.Public | BindingFlags.Instance);
 
         _decodedType = _packetDecodedProp?.PropertyType;
 
