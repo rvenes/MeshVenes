@@ -1,3 +1,32 @@
-.vs/
+# Build output
 bin/
 obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.cache
+*.log
+*.vsidx
+*.VC.db
+*.opendb
+
+# Test
+TestResults/
+
+# Patch files
+changes.patch
+*.patch
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Rider / VS Code (om du nokon gong brukar det)
+.idea/
+.vscode/
+
+# NuGet
+packages/
+*.nupkg
