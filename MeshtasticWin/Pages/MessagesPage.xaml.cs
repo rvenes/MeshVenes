@@ -7,16 +7,39 @@ using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Globalization;
+using System.ComponentModel;
 using System.Linq;
 
 namespace MeshtasticWin.Pages;
 
-public sealed partial class MessagesPage : Page
+public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
     public ObservableCollection<MessageVm> ViewMessages { get; } = new();
-    public ObservableCollection<ChatTargetVm> ChatTargets { get; } = new();
+    public ObservableCollection<ChatListItemVm> ChatListItems { get; } = new();
 
-    private bool _suppressPickerEvent;
+    public string ActiveChatTitle
+    {
+        get
+        {
+            var peer = MeshtasticWin.AppState.ActiveChatPeerIdHex;
+            if (string.IsNullOrWhiteSpace(peer))
+                return "Primary channel";
+
+            var node = MeshtasticWin.AppState.Nodes.FirstOrDefault(n =>
+                string.Equals(n.IdHex, peer, StringComparison.OrdinalIgnoreCase));
+
+            if (node is null)
+                return $"DM: {peer}";
+
+            return string.IsNullOrWhiteSpace(node.ShortId)
+                ? $"DM: {node.Name}"
+                : $"DM: {node.Name} ({node.ShortId})";
+        }
+    }
+
+    private bool _suppressListEvent;
+    private string _chatFilter = "";
 
     public MessagesPage()
     {
@@ -26,8 +49,8 @@ public sealed partial class MessagesPage : Page
         MeshtasticWin.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
         MeshtasticWin.AppState.ActiveChatChanged += ActiveChatChanged;
 
-        RebuildChatTargets();
-        SyncPickerToActiveChat();
+        RebuildChatList();
+        SyncListToActiveChat();
         RebuildView();
     }
 
@@ -37,64 +60,94 @@ public sealed partial class MessagesPage : Page
     private void Nodes_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => DispatcherQueue.TryEnqueue(() =>
         {
-            RebuildChatTargets();
-            SyncPickerToActiveChat();
+            RebuildChatList();
+            SyncListToActiveChat();
+            OnChanged(nameof(ActiveChatTitle));
         });
 
     private void ActiveChatChanged()
         => DispatcherQueue.TryEnqueue(() =>
         {
-            SyncPickerToActiveChat();
+            SyncListToActiveChat();
             RebuildView();
+            OnChanged(nameof(ActiveChatTitle));
         });
 
-    private void RebuildChatTargets()
+    private void RebuildChatList()
     {
-        ChatTargets.Clear();
+        ChatListItems.Clear();
+
+        var q = (_chatFilter ?? "").Trim();
 
         // Primary (broadcast)
-        ChatTargets.Add(ChatTargetVm.Primary());
+        ChatListItems.Add(ChatListItemVm.Primary());
 
-        // DM targets
-        foreach (var n in MeshtasticWin.AppState.Nodes)
-        {
-            if (string.IsNullOrWhiteSpace(n.IdHex))
-                continue;
+        // Nodes (same sort som NodesPage: online først, så lastHeard)
+        var nodes = MeshtasticWin.AppState.Nodes
+            .Where(n => !string.IsNullOrWhiteSpace(n.IdHex))
+            .Where(n =>
+            {
+                if (string.IsNullOrWhiteSpace(q)) return true;
+                return (n.Name?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (n.IdHex?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (n.ShortId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false);
+            })
+            .OrderByDescending(IsOnlineByRssi)
+            .ThenByDescending(n => n.LastHeardUtc)
+            .ThenBy(n => n.Name)
+            .ToList();
 
-            if (ChatTargets.Any(x => string.Equals(x.PeerIdHex, n.IdHex, StringComparison.OrdinalIgnoreCase)))
-                continue;
+        foreach (var n in nodes)
+            ChatListItems.Add(ChatListItemVm.ForNode(n));
 
-            ChatTargets.Add(ChatTargetVm.ForNode(n));
-        }
+        OnChanged(nameof(ActiveChatTitle));
     }
 
-    private void SyncPickerToActiveChat()
+    private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+    private void SyncListToActiveChat()
     {
-        _suppressPickerEvent = true;
+        _suppressListEvent = true;
 
         var peer = MeshtasticWin.AppState.ActiveChatPeerIdHex;
 
-        ChatTargetVm? match;
+        ChatListItemVm? match;
         if (string.IsNullOrWhiteSpace(peer))
-            match = ChatTargets.FirstOrDefault(x => x.PeerIdHex is null);
+            match = ChatListItems.FirstOrDefault(x => x.PeerIdHex is null);
         else
-            match = ChatTargets.FirstOrDefault(x => string.Equals(x.PeerIdHex, peer, StringComparison.OrdinalIgnoreCase));
+            match = ChatListItems.FirstOrDefault(x => string.Equals(x.PeerIdHex, peer, StringComparison.OrdinalIgnoreCase));
 
         if (match is not null)
-            ChatPicker.SelectedItem = match;
+            ChatList.SelectedItem = match;
 
-        _suppressPickerEvent = false;
+        _suppressListEvent = false;
     }
 
-    private void ChatPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void ChatList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressPickerEvent)
+        if (_suppressListEvent)
             return;
 
-        if (ChatPicker.SelectedItem is not ChatTargetVm target)
+        if (ChatList.SelectedItem is not ChatListItemVm target)
             return;
 
         MeshtasticWin.AppState.SetActiveChatPeer(target.PeerIdHex);
+    }
+
+    private void ChatSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _chatFilter = ChatSearchBox.Text ?? "";
+        RebuildChatList();
+        SyncListToActiveChat();
+    }
+
+    private static bool IsOnlineByRssi(NodeLive n)
+    {
+        // Online = har målt RSSI (ikkje "—" og ikkje 0)
+        if (string.IsNullOrWhiteSpace(n.RSSI) || n.RSSI == "—") return false;
+        if (int.TryParse(n.RSSI, out var rssi))
+            return rssi != 0;
+        return false;
     }
 
     private void RebuildView()
@@ -204,32 +257,42 @@ public sealed partial class MessagesPage : Page
         else
             MessageArchive.Append(local, dmPeerIdHex: peer);
     }
+
 }
 
-public sealed class ChatTargetVm
+public sealed class ChatListItemVm
 {
-    public string Display { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string ShortId { get; set; } = "";
+    public string LastHeard { get; set; } = "";
+    public string SNR { get; set; } = "";
+    public string RSSI { get; set; } = "";
+
     public string? PeerIdHex { get; set; } // null = Primary
 
-    public static ChatTargetVm Primary()
-        => new() { Display = "Primary channel", PeerIdHex = null };
-
-    public static ChatTargetVm ForNode(NodeLive n)
-    {
-        var name = n.Name;
-        var shortId = n.ShortId;
-
-        var display =
-            string.IsNullOrWhiteSpace(shortId)
-                ? $"DM: {name}"
-                : $"DM: {name} ({shortId})";
-
-        return new ChatTargetVm
+    public static ChatListItemVm Primary()
+        => new()
         {
-            Display = display,
+            Title = "Primary channel",
+            ShortId = "",
+            LastHeard = "Broadcast",
+            SNR = "—",
+            RSSI = "—",
+            PeerIdHex = null
+        };
+
+    public static ChatListItemVm ForNode(NodeLive n)
+        => new()
+        {
+            Title = string.IsNullOrWhiteSpace(n.ShortId)
+                ? n.Name
+                : n.Name,
+            ShortId = n.ShortId ?? "",
+            LastHeard = n.LastHeard ?? "—",
+            SNR = n.SNR ?? "—",
+            RSSI = n.RSSI ?? "—",
             PeerIdHex = n.IdHex
         };
-    }
 }
 
 public sealed class MessageVm
