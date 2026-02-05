@@ -19,10 +19,7 @@ public static class NodeLogArchive
 {
     private static readonly object _gate = new();
 
-    private static string BaseDir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MeshtasticWin",
-            "Logs");
+    private static string BaseDir => AppDataPaths.LogsPath;
 
     private static readonly Dictionary<NodeLogType, string> FolderNames = new()
     {
@@ -35,7 +32,7 @@ public static class NodeLogArchive
 
     public static void EnsureBaseFolders()
     {
-        Directory.CreateDirectory(BaseDir);
+        AppDataPaths.EnsureCreated();
         foreach (var entry in FolderNames)
             Directory.CreateDirectory(Path.Combine(BaseDir, entry.Value));
 
@@ -54,6 +51,7 @@ public static class NodeLogArchive
 
         lock (_gate)
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.AppendAllText(path, line + Environment.NewLine);
         }
     }
