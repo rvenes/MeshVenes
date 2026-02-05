@@ -79,13 +79,13 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         InitializeComponent();
 
-        AgeFilterCombo.Items.Add("Vis alle");
-        AgeFilterCombo.Items.Add("Skjul > 1 veke");
-        AgeFilterCombo.Items.Add("Skjul > 2 veker");
-        AgeFilterCombo.Items.Add("Skjul > 3 veker");
-        AgeFilterCombo.Items.Add("Skjul > 4 veker");
-        AgeFilterCombo.Items.Add("Skjul > 1 månad");
-        AgeFilterCombo.Items.Add("Skjul > 3 månader");
+        AgeFilterCombo.Items.Add("Show all");
+        AgeFilterCombo.Items.Add("Hide > 1 week");
+        AgeFilterCombo.Items.Add("Hide > 2 weeks");
+        AgeFilterCombo.Items.Add("Hide > 3 weeks");
+        AgeFilterCombo.Items.Add("Hide > 4 weeks");
+        AgeFilterCombo.Items.Add("Hide > 1 month");
+        AgeFilterCombo.Items.Add("Hide > 3 months");
         AgeFilterCombo.SelectedIndex = 6;
 
         HideInactiveToggle.IsChecked = _hideInactive;

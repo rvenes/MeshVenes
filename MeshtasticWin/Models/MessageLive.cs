@@ -16,6 +16,7 @@ public sealed class MessageLive
 
     public string Text { get; init; } = "";
     public string When { get; init; } = "";
+    public DateTime WhenUtc { get; init; }
 
     public uint PacketId { get; init; }
 
@@ -53,6 +54,7 @@ public sealed class MessageLive
             ToName = toName ?? "",
             Text = text ?? "",
             When = DateTime.Now.ToString("HH:mm:ss"),
+            WhenUtc = DateTime.UtcNow,
             IsMine = false,
             PacketId = 0,
             IsHeard = false,
@@ -69,6 +71,7 @@ public sealed class MessageLive
             ToName = toName ?? "",
             Text = text ?? "",
             When = DateTime.Now.ToString("HH:mm:ss"),
+            WhenUtc = DateTime.UtcNow,
             IsMine = true,
             PacketId = packetId,
             IsHeard = false,
@@ -107,6 +110,7 @@ public sealed class MessageLive
             IsMine = IsMine,
             Text = Text,
             When = When,
+            WhenUtc = WhenUtc,
             PacketId = PacketId,
             IsHeard = heard,
             IsDelivered = delivered,

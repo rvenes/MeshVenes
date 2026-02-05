@@ -1,5 +1,6 @@
 ﻿using System;
 using System.ComponentModel;
+using Microsoft.UI.Xaml;
 
 namespace MeshtasticWin.Models;
 
@@ -114,6 +115,10 @@ public sealed class NodeLive : INotifyPropertyChanged
         return true;
     }
 
+    public bool HasUnread => MeshtasticWin.AppState.HasUnread(IdHex);
+
+    public Visibility UnreadVisible => HasUnread ? Visibility.Visible : Visibility.Collapsed;
+
     // Bruk namn frå NodeInfo når dei finst, ellers ShortId/IdHex.
     public string Name
     {
@@ -133,6 +138,18 @@ public sealed class NodeLive : INotifyPropertyChanged
     {
         IdHex = idHex;
         Sub = "Seen on mesh";
+
+        // Update unread indicator when AppState changes.
+        MeshtasticWin.AppState.UnreadChanged += peer =>
+        {
+            if (string.IsNullOrWhiteSpace(peer))
+                return;
+
+            if (string.Equals(peer, IdHex, StringComparison.OrdinalIgnoreCase))
+                OnChanged(nameof(HasUnread));
+                OnChanged(nameof(UnreadVisible));
+        };
+
         Touch();
     }
 

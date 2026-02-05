@@ -32,9 +32,14 @@
 	                      SelectionChanged="ChatList_SelectionChanged">
 	                <ListView.ItemTemplate>
 	                    <DataTemplate x:DataType="local:ChatListItemVm">
-	                        <Grid Padding="10" RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto">
-	                            <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" />
-	                            <TextBlock Grid.Column="1" Text="{x:Bind ShortId}" Opacity="0.7"/>
+	                        <Grid Padding="10" RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*,Auto">
+	                            <Ellipse Width="8" Height="8" Margin="0,0,8,0"
+                                     Fill="LimeGreen"
+                                     VerticalAlignment="Center"
+                                     Visibility="{x:Bind UnreadVisible}"/>
+
+	                            <TextBlock Grid.Column="1" Text="{x:Bind Title}" FontWeight="SemiBold" />
+	                            <TextBlock Grid.Column="2" Text="{x:Bind ShortId}" Opacity="0.7"/>
 
 	                            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10" Opacity="0.8">
 	                                <TextBlock Text="{x:Bind LastHeard}" />
@@ -49,7 +54,7 @@
 	            </ListView>
 	        </Grid>
 
-	        <!-- HØGRE: meldingar -->
+	        <!-- RIGHT: messages -->
 	        <Grid Grid.Column="2" RowDefinitions="Auto,12,*,12,Auto">
 	            <!-- Header -->
 	            <TextBlock Text="{x:Bind ActiveChatTitle, Mode=OneWay}" FontSize="30" FontWeight="SemiBold" />
@@ -95,7 +100,7 @@
 	                </Grid.ColumnDefinitions>
 
 	                <TextBox x:Name="InputBox"
-	                         PlaceholderText="Skriv melding..."
+	                         PlaceholderText="Type a message..."
 	                         AcceptsReturn="False"
 	                         KeyDown="InputBox_KeyDown"/>
 

@@ -64,7 +64,12 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     }
 
     private void Messages_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-        => DispatcherQueue.TryEnqueue(RebuildView);
+        => DispatcherQueue.TryEnqueue(() =>
+        {
+            RebuildView();
+            RebuildChatList();
+            SyncListToActiveChat();
+        });
 
     private void Nodes_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => DispatcherQueue.TryEnqueue(() =>
@@ -78,7 +83,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         => DispatcherQueue.TryEnqueue(() =>
         {
             SyncListToActiveChat();
+            MeshtasticWin.AppState.MarkChatRead(MeshtasticWin.AppState.ActiveChatPeerIdHex);
             RebuildView();
+            RebuildChatList();
             OnChanged(nameof(ActiveChatTitle));
         });
 
@@ -143,6 +150,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             return;
 
         MeshtasticWin.AppState.SetActiveChatPeer(target.PeerIdHex);
+        MeshtasticWin.AppState.MarkChatRead(target.PeerIdHex);
+        RebuildChatList();
+        SyncListToActiveChat();
     }
 
     private void ChatSearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -187,7 +197,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private static bool IsOnlineByRssi(NodeLive n)
     {
-        // Online = har målt RSSI (ikkje "—" og ikkje 0)
+        // Online = has measured RSSI (not "—" and not 0)
         if (string.IsNullOrWhiteSpace(n.RSSI) || n.RSSI == "—") return false;
         if (int.TryParse(n.RSSI, out var rssi))
             return rssi != 0;
@@ -312,6 +322,8 @@ public sealed class ChatListItemVm
     public string SNR { get; set; } = "";
     public string RSSI { get; set; } = "";
 
+    public Visibility UnreadVisible { get; set; } = Visibility.Collapsed;
+
     public string? PeerIdHex { get; set; } // null = Primary
 
     public static ChatListItemVm Primary()
@@ -322,6 +334,7 @@ public sealed class ChatListItemVm
             LastHeard = "Broadcast",
             SNR = "—",
             RSSI = "—",
+            UnreadVisible = MeshtasticWin.AppState.HasUnread(null) ? Visibility.Visible : Visibility.Collapsed,
             PeerIdHex = null
         };
 
@@ -335,6 +348,7 @@ public sealed class ChatListItemVm
             LastHeard = n.LastHeard ?? "—",
             SNR = n.SNR ?? "—",
             RSSI = n.RSSI ?? "—",
+            UnreadVisible = MeshtasticWin.AppState.HasUnread(n.IdHex) ? Visibility.Visible : Visibility.Collapsed,
             PeerIdHex = n.IdHex
         };
 }

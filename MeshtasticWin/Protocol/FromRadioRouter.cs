@@ -148,6 +148,9 @@ public static class FromRadioRouter
 
         var msg = MessageLive.CreateIncoming(fromIdHex, fromNode.Name, toIdHex, toName, text);
 
+        // Update unread indicators
+        MeshtasticWin.AppState.NotifyIncomingMessage(msg.IsDirect ? fromIdHex : null, msg.WhenUtc);
+
         MeshtasticWin.AppState.Messages.Insert(0, msg);
         while (MeshtasticWin.AppState.Messages.Count > MaxMessages)
             MeshtasticWin.AppState.Messages.RemoveAt(MeshtasticWin.AppState.Messages.Count - 1);
@@ -213,12 +216,18 @@ public static class FromRadioRouter
     {
         uint requestId = 0;
 
-        var reqProp = decodedObj.GetType().GetProperty("RequestId", BindingFlags.Public | BindingFlags.Instance);
+        var reqProp =
+            decodedObj.GetType().GetProperty("RequestId", BindingFlags.Public | BindingFlags.Instance) ??
+            decodedObj.GetType().GetProperty("ReplyId", BindingFlags.Public | BindingFlags.Instance) ??
+            decodedObj.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+
         if (reqProp is not null)
         {
             var v = reqProp.GetValue(decodedObj);
             if (v is uint u) requestId = u;
-            else if (v is int i && i >= 0) requestId = (uint)i;
+            else if (v is int i) requestId = unchecked((uint)i);
+            else if (v is long l) requestId = unchecked((uint)l);
+            else if (v is ulong ul) requestId = unchecked((uint)ul);
         }
 
         if (requestId == 0)
