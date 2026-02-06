@@ -13,6 +13,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Windows.ApplicationModel;
 using Windows.System;
 
@@ -20,6 +21,11 @@ namespace MeshtasticWin.Pages;
 
 public sealed partial class NodesPage : Page, INotifyPropertyChanged
 {
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ObservableCollection<NodeLive> FilteredNodesView { get; } = new();
@@ -231,11 +237,33 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         wv.WebMessageReceived += CoreWebView2_WebMessageReceived;
 
-        var installPath = Package.Current.InstalledLocation.Path;
+        var installPath = ResolveInstallPath();
         var mapFolder = Path.Combine(installPath, "Assets", "Map");
 
         wv.SetVirtualHostNameToFolderMapping("appassets.local", mapFolder, CoreWebView2HostResourceAccessKind.Allow);
         MapView.Source = new Uri("https://appassets.local/map.html");
+    }
+
+    private static string ResolveInstallPath()
+    {
+        if (Packaging.IsPackaged())
+        {
+            try
+            {
+                return Package.Current.InstalledLocation.Path;
+            }
+            catch
+            {
+                return TrimBaseDirectory();
+            }
+        }
+
+        return TrimBaseDirectory();
+    }
+
+    private static string TrimBaseDirectory()
+    {
+        return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -286,7 +314,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                     idHex = id,
                     points = points.Select(p => new { lat = p.Lat, lon = p.Lon, tsUtc = p.TsUtc.ToString("o") })
                 };
-                MapView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(payload));
+                MapView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(payload, s_jsonOptions));
             }
         }
         catch { }
@@ -453,14 +481,14 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             })
             .ToArray();
 
-        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "nodes", nodes }));
+        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "nodes", nodes }, s_jsonOptions));
         await System.Threading.Tasks.Task.CompletedTask;
     }
 
     private async System.Threading.Tasks.Task PushSelectionToMapAsync()
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
-        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "selected", idHex = Selected?.IdHex }));
+        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "selected", idHex = Selected?.IdHex }, s_jsonOptions));
         await System.Threading.Tasks.Task.CompletedTask;
     }
 
@@ -474,14 +502,14 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
         if (Selected is null) return;
-        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "zoomTo", idHex = Selected.IdHex }));
+        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "zoomTo", idHex = Selected.IdHex }, s_jsonOptions));
     }
 
     private void ReadGpsLog_Click(object sender, RoutedEventArgs e)
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
         if (Selected is null) return;
-        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "requestHistory", idHex = Selected.IdHex }));
+        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "requestHistory", idHex = Selected.IdHex }, s_jsonOptions));
     }
 
     private void SendDm_Click(object sender, RoutedEventArgs e)
@@ -854,7 +882,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
         var payload = new { type = "positionPeek", lat, lon };
-        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(payload));
+        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(payload, s_jsonOptions));
     }
 
     internal sealed record PositionLogEntry(DateTime TimestampUtc, double Lat, double Lon, double? Alt, string DisplayText)
