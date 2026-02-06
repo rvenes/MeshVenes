@@ -42,6 +42,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private System.Threading.Tasks.Task? _mapInitializationTask;
     private bool _mapEventsAttached;
     private bool _mapConfigured;
+    private bool _mapResourceLoggingAttached;
     private string? _mapFolderPath;
     private Uri? _mapUri;
 
@@ -274,6 +275,20 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             _mapEventsAttached = true;
         }
 
+        if (!_mapResourceLoggingAttached)
+        {
+            try
+            {
+                wv.AddWebResourceRequestedFilter("https://appassets.local/*", CoreWebView2WebResourceContext.All);
+                wv.WebResourceRequested += CoreWebView2_WebResourceRequested;
+                _mapResourceLoggingAttached = true;
+            }
+            catch (Exception ex)
+            {
+                RadioClient.Instance.AddLogFromUiThread($"Map resource logging setup failed: {ex.Message}");
+            }
+        }
+
         var installPath = ResolveInstallPath();
         _mapFolderPath = Path.GetFullPath(Path.Combine(installPath, "Assets", "Map"));
         RadioClient.Instance.AddLogFromUiThread($"Map assets path: {_mapFolderPath}");
@@ -304,6 +319,19 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             wv.SetVirtualHostNameToFolderMapping("appassets.local", _mapFolderPath, CoreWebView2HostResourceAccessKind.Allow);
             _ = InjectConsoleBridgeAsync(wv);
             MapView.Source = _mapUri;
+
+            if (AppState.EnableWebViewDevTools)
+            {
+                try
+                {
+                    wv.OpenDevToolsWindow();
+                    RadioClient.Instance.AddLogFromUiThread("Map DevTools opened.");
+                }
+                catch (Exception ex)
+                {
+                    RadioClient.Instance.AddLogFromUiThread($"Map DevTools failed: {ex.Message}");
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -400,6 +428,21 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             }
         }
         catch { }
+    }
+
+    private void CoreWebView2_WebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        try
+        {
+            var uri = e.Request?.Uri ?? "";
+            if (uri.StartsWith("https://appassets.local/", StringComparison.OrdinalIgnoreCase))
+            {
+                RadioClient.Instance.AddLogFromUiThread($"Map resource requested: {uri}");
+            }
+        }
+        catch
+        {
+        }
     }
 
     private void CoreWebView2_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
