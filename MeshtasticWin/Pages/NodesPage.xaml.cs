@@ -726,8 +726,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         if (DetailsTabs.SelectedIndex == 0)
         {
-            await EnsureMapAsync();
-            _ = MapView.CoreWebView2?.ExecuteScriptAsync("window.dispatchEvent(new Event('resize'));");
+            _ = HandleMapTabSelectedAsync();
         }
 
         var logKind = TabIndexToLogKind(DetailsTabs.SelectedIndex);
@@ -739,6 +738,12 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         RefreshSelectedNodeLogs();
 
+    }
+
+    private async System.Threading.Tasks.Task HandleMapTabSelectedAsync()
+    {
+        await EnsureMapAsync();
+        _ = MapView.CoreWebView2?.ExecuteScriptAsync("window.dispatchEvent(new Event('resize'));");
     }
 
     private void PositionLogList_SelectionChanged(object sender, SelectionChangedEventArgs _)
