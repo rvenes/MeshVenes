@@ -246,7 +246,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
         catch (InvalidOperationException)
         {
-            return AppContext.BaseDirectory;
+            return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
     }
 
