@@ -39,6 +39,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private int _traceRouteRemainingSeconds;
     private bool _traceRouteCooldownActive;
     private readonly DispatcherTimer _logPollTimer = new();
+    private System.Threading.Tasks.Task? _mapInitializationTask;
+    private bool _mapEventsAttached;
+    private bool _mapConfigured;
+    private string? _mapFolderPath;
+    private Uri? _mapUri;
 
     private readonly Dictionary<string, Dictionary<LogKind, DateTime>> _lastLogWriteByNode = new();
     private readonly Dictionary<string, HashSet<LogKind>> _pendingLogIndicatorsByNode = new();
@@ -228,29 +233,88 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private async System.Threading.Tasks.Task EnsureMapAsync()
     {
-        if (MapView.CoreWebView2 is not null)
+        if (_mapConfigured)
             return;
 
-        await MapView.EnsureCoreWebView2Async();
-        var wv = MapView.CoreWebView2;
-        if (wv is null) return;
+        if (_mapInitializationTask is null)
+            _mapInitializationTask = InitializeMapAsync();
 
-        wv.WebMessageReceived += CoreWebView2_WebMessageReceived;
-        wv.NavigationCompleted += CoreWebView2_NavigationCompleted;
+        await _mapInitializationTask;
+    }
+
+    private async System.Threading.Tasks.Task InitializeMapAsync()
+    {
+        if (_mapConfigured)
+            return;
+
+        try
+        {
+            await MapView.EnsureCoreWebView2Async();
+        }
+        catch (Exception ex)
+        {
+            RadioClient.Instance.AddLogFromUiThread($"Map initialization failed: {ex.Message}");
+            ShowMapFallback("Map initialization failed.");
+            _mapInitializationTask = null;
+            return;
+        }
+
+        var wv = MapView.CoreWebView2;
+        if (wv is null)
+        {
+            ShowMapFallback("Map initialization failed.");
+            _mapInitializationTask = null;
+            return;
+        }
+
+        if (!_mapEventsAttached)
+        {
+            wv.WebMessageReceived += CoreWebView2_WebMessageReceived;
+            wv.NavigationCompleted += CoreWebView2_NavigationCompleted;
+            wv.ConsoleMessage += CoreWebView2_ConsoleMessage;
+            _mapEventsAttached = true;
+        }
 
         var installPath = ResolveInstallPath();
-        var mapFolder = Path.GetFullPath(Path.Combine(installPath, "Assets", "Map"));
+        _mapFolderPath = Path.GetFullPath(Path.Combine(installPath, "Assets", "Map"));
+        RadioClient.Instance.AddLogFromUiThread($"Map assets path: {_mapFolderPath}");
 
-        if (!Directory.Exists(mapFolder))
+        if (!Directory.Exists(_mapFolderPath))
         {
-            RadioClient.Instance.AddLogFromUiThread($"Map assets missing: {mapFolder}");
-            ShowMapFallback("Map assets missing");
+            RadioClient.Instance.AddLogFromUiThread($"Map assets missing: {_mapFolderPath}");
+            ShowMapFallback("Map assets missing.");
+            _mapInitializationTask = null;
+            return;
+        }
+
+        var mapHtml = Path.Combine(_mapFolderPath, "map.html");
+        if (!File.Exists(mapHtml))
+        {
+            RadioClient.Instance.AddLogFromUiThread($"Map HTML missing: {mapHtml}");
+            ShowMapFallback("Map HTML missing.");
+            _mapInitializationTask = null;
+            return;
+        }
+
+        _mapUri = new Uri("https://appassets.local/map.html");
+        RadioClient.Instance.AddLogFromUiThread($"Map navigation URI: {_mapUri}");
+
+        try
+        {
+            _mapReady = false;
+            wv.SetVirtualHostNameToFolderMapping("appassets.local", _mapFolderPath, CoreWebView2HostResourceAccessKind.Allow);
+            MapView.Source = _mapUri;
+        }
+        catch (Exception ex)
+        {
+            RadioClient.Instance.AddLogFromUiThread($"Map navigation setup failed: {ex.Message}");
+            ShowMapFallback("Map navigation setup failed.");
+            _mapInitializationTask = null;
             return;
         }
 
         HideMapFallback();
-        wv.SetVirtualHostNameToFolderMapping("appassets.local", mapFolder, CoreWebView2HostResourceAccessKind.Allow);
-        MapView.Source = new Uri("https://appassets.local/map.html");
+        _mapConfigured = true;
     }
 
     private static string ResolveInstallPath()
@@ -287,6 +351,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             if (type == "ready")
             {
                 _mapReady = true;
+                RadioClient.Instance.AddLogFromUiThread("Map ready message received.");
                 _ = PushAllNodesToMapAsync();
                 _ = PushSelectionToMapAsync();
                 return;
@@ -331,11 +396,24 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void CoreWebView2_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
-        if (e.IsSuccess)
-            return;
-
         var uri = MapView.Source?.ToString() ?? MapView.CoreWebView2?.Source ?? "unknown";
+        if (e.IsSuccess)
+        {
+            RadioClient.Instance.AddLogFromUiThread($"Map navigation completed: {uri}");
+            HideMapFallback();
+            return;
+        }
+
+        _mapReady = false;
         RadioClient.Instance.AddLogFromUiThread($"Map navigation failed: {e.WebErrorStatus} ({uri})");
+        ShowMapFallback($"Map failed to load: {e.WebErrorStatus}");
+        _mapConfigured = false;
+        _mapInitializationTask = null;
+    }
+
+    private void CoreWebView2_ConsoleMessage(object? sender, CoreWebView2ConsoleMessageReceivedEventArgs e)
+    {
+        RadioClient.Instance.AddLogFromUiThread($"Map console [{e.Level}]: {e.Message}");
     }
 
     private void ShowMapFallback(string message)
