@@ -17,10 +17,24 @@ public static class AppDataPaths
 
     public static void EnsureCreated()
     {
-        Directory.CreateDirectory(BasePath);
-        Directory.CreateDirectory(LogsPath);
-        Directory.CreateDirectory(TraceroutePath);
-        Directory.CreateDirectory(GpsPath);
+        CreateDirectory(BasePath);
+        CreateDirectory(LogsPath);
+        CreateDirectory(TraceroutePath);
+        CreateDirectory(GpsPath);
         Debug.WriteLine($"MeshtasticWin BasePath: {BasePath}");
+    }
+
+    private static void CreateDirectory(string path)
+    {
+        Debug.WriteLine($"Creating dir: {path}");
+        try
+        {
+            Directory.CreateDirectory(path);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to create dir: {path} :: {ex}");
+            throw;
+        }
     }
 }
