@@ -9,6 +9,7 @@ public static class AppState
 {
     public static ObservableCollection<NodeLive> Nodes { get; } = new();
     public static ObservableCollection<MessageLive> Messages { get; } = new();
+    public static bool EnableWebViewDevTools { get; set; }
 
 
 // Unread tracking (for chat list indicators)
