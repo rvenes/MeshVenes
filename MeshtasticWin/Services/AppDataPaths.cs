@@ -38,7 +38,7 @@ public static class AppDataPaths
 
     private static string ResolveBasePath()
     {
-        if (IsPackaged())
+        if (Packaging.IsPackaged())
         {
             var localFolder = ApplicationData.Current.LocalFolder.Path;
             return Path.Combine(localFolder, "MeshtasticWin");

@@ -240,18 +240,24 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private static string ResolveInstallPath()
     {
-        try
+        if (Packaging.IsPackaged())
         {
-            return Package.Current.InstalledLocation.Path;
+            try
+            {
+                return Package.Current.InstalledLocation.Path;
+            }
+            catch
+            {
+                return TrimBaseDirectory();
+            }
         }
-        catch (InvalidOperationException)
-        {
-            return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
-        catch
-        {
-            return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
+
+        return TrimBaseDirectory();
+    }
+
+    private static string TrimBaseDirectory()
+    {
+        return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
