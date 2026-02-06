@@ -1,13 +1,16 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using Windows.Storage;
 
 namespace MeshtasticWin.Services;
 
 public static class AppDataPaths
 {
-    public static string BasePath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MeshtasticWin");
+    private static bool _initialized;
+    private static string? _basePath;
+
+    public static string BasePath => _basePath ??= ResolveBasePath();
 
     public static string LogsPath => Path.Combine(BasePath, "Logs");
 
@@ -17,24 +20,29 @@ public static class AppDataPaths
 
     public static void EnsureCreated()
     {
-        CreateDirectory(BasePath);
-        CreateDirectory(LogsPath);
-        CreateDirectory(TraceroutePath);
-        CreateDirectory(GpsPath);
-        Debug.WriteLine($"MeshtasticWin BasePath: {BasePath}");
+        if (_initialized)
+            return;
+
+        _initialized = true;
+
+        Directory.CreateDirectory(BasePath);
+        Directory.CreateDirectory(LogsPath);
+        Directory.CreateDirectory(TraceroutePath);
+        Directory.CreateDirectory(GpsPath);
+
+        Debug.WriteLine($"Log base path resolved to: {BasePath}");
     }
 
-    private static void CreateDirectory(string path)
+    private static string ResolveBasePath()
     {
-        Debug.WriteLine($"Creating dir: {path}");
         try
         {
-            Directory.CreateDirectory(path);
+            var localFolder = ApplicationData.Current.LocalFolder.Path;
+            return Path.Combine(localFolder, "MeshtasticWin");
         }
-        catch (Exception ex)
+        catch
         {
-            Debug.WriteLine($"Failed to create dir: {path} :: {ex}");
-            throw;
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MeshtasticWin");
         }
     }
 }
