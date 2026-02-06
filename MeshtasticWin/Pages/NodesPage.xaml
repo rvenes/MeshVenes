@@ -102,7 +102,17 @@
                             </StackPanel>
                         </controls:TabViewItem.Header>
                         <Border CornerRadius="10" Background="{ThemeResource CardBackgroundFillColorDefault}">
-                            <controls:WebView2 x:Name="MapView"/>
+                            <Grid>
+                                <controls:WebView2 x:Name="MapView"/>
+                                <TextBlock x:Name="MapFallbackText"
+                                           Text="Map assets missing"
+                                           Visibility="Collapsed"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           FontSize="16"
+                                           Opacity="0.8"/>
+                            </Grid>
                         </Border>
                     </controls:TabViewItem>
 

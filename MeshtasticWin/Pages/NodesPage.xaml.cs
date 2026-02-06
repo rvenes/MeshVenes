@@ -236,10 +236,19 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         if (wv is null) return;
 
         wv.WebMessageReceived += CoreWebView2_WebMessageReceived;
+        wv.NavigationCompleted += CoreWebView2_NavigationCompleted;
 
         var installPath = ResolveInstallPath();
-        var mapFolder = Path.Combine(installPath, "Assets", "Map");
+        var mapFolder = Path.GetFullPath(Path.Combine(installPath, "Assets", "Map"));
 
+        if (!Directory.Exists(mapFolder))
+        {
+            RadioClient.Instance.AddLogFromUiThread($"Map assets missing: {mapFolder}");
+            ShowMapFallback("Map assets missing");
+            return;
+        }
+
+        HideMapFallback();
         wv.SetVirtualHostNameToFolderMapping("appassets.local", mapFolder, CoreWebView2HostResourceAccessKind.Allow);
         MapView.Source = new Uri("https://appassets.local/map.html");
     }
@@ -318,6 +327,26 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             }
         }
         catch { }
+    }
+
+    private void CoreWebView2_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (e.IsSuccess)
+            return;
+
+        var uri = MapView.Source?.ToString() ?? MapView.CoreWebView2?.Source ?? "unknown";
+        RadioClient.Instance.AddLogFromUiThread($"Map navigation failed: {e.WebErrorStatus} ({uri})");
+    }
+
+    private void ShowMapFallback(string message)
+    {
+        MapFallbackText.Text = message;
+        MapFallbackText.Visibility = Visibility.Visible;
+    }
+
+    private void HideMapFallback()
+    {
+        MapFallbackText.Visibility = Visibility.Collapsed;
     }
 
     private void Nodes_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
