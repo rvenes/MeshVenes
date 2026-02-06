@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:MeshtasticWin.Models"
     xmlns:controls="using:Microsoft.UI.Xaml.Controls"
-    xmlns:charting="using:CommunityToolkit.WinUI.UI.Controls">
+    xmlns:charting="using:CommunityToolkit.WinUI.UI.Controls.DataVisualization.Charting">
 
     <Grid Padding="12">
         <Grid.ColumnDefinitions>
@@ -154,11 +154,11 @@
                                                      IndependentValuePath="Timestamp"
                                                      DependentValuePath="BatteryVolts"
                                                      Title="Battery (V)"/>
-                                <charting:LineSeries ItemsSource="{x:Bind DeviceMetricChartSamples, Mode=OneWay}"
+                                <charting:AreaSeries ItemsSource="{x:Bind DeviceMetricChartSamples, Mode=OneWay}"
                                                      IndependentValuePath="Timestamp"
                                                      DependentValuePath="ChannelUtilization"
                                                      Title="Channel Util (%)"/>
-                                <charting:LineSeries ItemsSource="{x:Bind DeviceMetricChartSamples, Mode=OneWay}"
+                                <charting:AreaSeries ItemsSource="{x:Bind DeviceMetricChartSamples, Mode=OneWay}"
                                                      IndependentValuePath="Timestamp"
                                                      DependentValuePath="Airtime"
                                                      Title="Airtime (%)"/>
