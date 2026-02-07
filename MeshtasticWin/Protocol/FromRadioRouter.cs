@@ -17,6 +17,7 @@ public static class FromRadioRouter
     private const int TelemetryAppPortNum = 67; // TELEMETRY_APP
     private const int TraceRoutePortNum = 70; // TRACEROUTE_APP
     private const int MaxMessages = 500;
+    private static readonly DateTime MinTelemetryTimestampUtc = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
     public static bool TryHandle(byte[] payload, Action<Action> runOnUi, Action<string> logToUi, out string summary)
         => TryApplyFromRadio(payload, runOnUi, logToUi, out summary);
@@ -446,9 +447,10 @@ public static class FromRadioRouter
             return false;
         }
 
-        var tsUtc = DateTime.UtcNow;
-        if (TryGetUInt(telemetryObj, "Time", out var timeSec) && timeSec > 0)
-            tsUtc = DateTimeOffset.FromUnixTimeSeconds(timeSec).UtcDateTime;
+        var receiveTimeUtc = DateTime.UtcNow;
+        var tsUtc = receiveTimeUtc;
+        if (TryGetUInt(telemetryObj, "Time", out var timeSec))
+            tsUtc = NormalizeTelemetryTimestamp(timeSec, receiveTimeUtc);
 
         var fromIdHex = $"0x{fromNodeNum:x8}";
         var logType = (NodeLogType?)null;
@@ -494,6 +496,20 @@ public static class FromRadioRouter
         }
         summary = line;
         return true;
+    }
+
+    private static DateTime NormalizeTelemetryTimestamp(uint timeSec, DateTime receiveTimeUtc)
+    {
+        if (timeSec == 0)
+            return receiveTimeUtc;
+
+        var tsUtc = DateTimeOffset.FromUnixTimeSeconds(timeSec).UtcDateTime;
+        if (tsUtc < MinTelemetryTimestampUtc)
+            return receiveTimeUtc;
+        if (tsUtc > receiveTimeUtc.AddDays(1))
+            return receiveTimeUtc;
+
+        return tsUtc;
     }
 
     private static void TryCaptureDeviceMetrics(object metricsObj, string fromIdHex, DateTime tsUtc, Action<string> logToUi)
