@@ -74,7 +74,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private PositionLogEntry? _selectedPositionEntry;
     private int _positionLogRetentionDays = 7;
     private readonly ObservableCollection<DeviceMetricSample> _deviceMetricSamples = new();
-    public IReadOnlyList<DeviceMetricSample> DeviceMetricSamples => _deviceMetricSamples;
+    private readonly ReadOnlyObservableCollection<DeviceMetricSample> _deviceMetricSamplesView;
+    public IEnumerable<DeviceMetricSample> DeviceMetricSamples => _deviceMetricSamplesView;
 
     private NodeLive? _selected;
     public NodeLive? Selected
@@ -232,6 +233,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         InitializeComponent();
 
+        _deviceMetricSamplesView = new ReadOnlyObservableCollection<DeviceMetricSample>(_deviceMetricSamples);
         _deviceMetricSamples.CollectionChanged += DeviceMetricSamples_CollectionChanged;
 
         AgeFilterCombo.Items.Add("Show all");
@@ -876,13 +878,13 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         ShowPositionOnMap(entry.Lat, entry.Lon);
     }
 
-    private void PositionLogListItem_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    private void PositionLogEntry_RightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         e.Handled = true;
         ShowPositionLogContextFlyout(sender);
     }
 
-    private void PositionLogListItem_Holding(object sender, HoldingRoutedEventArgs e)
+    private void PositionLogEntry_Holding(object sender, HoldingRoutedEventArgs e)
     {
         if (e.HoldingState != HoldingState.Started)
             return;
@@ -902,19 +904,6 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         var flyout = element.ContextFlyout;
         flyout?.ShowAt(element);
-    }
-
-    private void PositionLogList_RightTapped(object sender, RightTappedRoutedEventArgs e)
-    {
-        if (sender is not ListView listView)
-            return;
-
-        var element = e.OriginalSource as DependencyObject;
-        var container = FindAncestor<ListViewItem>(element);
-        if (container is null)
-            return;
-
-        listView.SelectedItem = container.Content;
     }
 
     private void DeviceMetricSamples_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

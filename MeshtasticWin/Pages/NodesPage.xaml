@@ -234,27 +234,24 @@
                                       SelectionChanged="PositionLogList_SelectionChanged"
                                       IsItemClickEnabled="True"
                                       ItemClick="PositionLogList_ItemClick">
-                                <ListView.ItemContainerStyle>
-                                    <Style TargetType="ListViewItem">
-                                        <Setter Property="IsRightTapEnabled" Value="True"/>
-                                        <Setter Property="IsHoldingEnabled" Value="True"/>
-                                        <EventSetter Event="RightTapped" Handler="PositionLogListItem_RightTapped"/>
-                                        <EventSetter Event="Holding" Handler="PositionLogListItem_Holding"/>
-                                        <Setter Property="ContextFlyout">
-                                            <Setter.Value>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DisplayText}"
+                                                   TextWrapping="NoWrap"
+                                                   FontFamily="Consolas"
+                                                   IsRightTapEnabled="True"
+                                                   IsHoldingEnabled="True"
+                                                   RightTapped="PositionLogEntry_RightTapped"
+                                                   Holding="PositionLogEntry_Holding">
+                                            <TextBlock.ContextFlyout>
                                                 <MenuFlyout>
                                                     <MenuFlyoutItem Text="Open position in Google Maps"
                                                                     Click="PositionLogOpenMaps_Click"
                                                                     CommandParameter="{Binding}"
                                                                     IsEnabled="{Binding HasValidPosition}"/>
                                                 </MenuFlyout>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </ListView.ItemContainerStyle>
-                                <ListView.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding DisplayText}" TextWrapping="NoWrap" FontFamily="Consolas"/>
+                                            </TextBlock.ContextFlyout>
+                                        </TextBlock>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
                             </ListView>
