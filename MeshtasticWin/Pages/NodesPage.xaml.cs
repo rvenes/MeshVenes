@@ -769,9 +769,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         if (Selected is null) return;
 
         var nodeId = NormalizeNodeId(Selected.IdHex);
-        if (_enabledTrackNodeIds.Contains(nodeId))
+        if (_enabledTrackNodeIds.Remove(nodeId))
         {
-            _enabledTrackNodeIds.Remove(nodeId);
             _lastTrackPointByNode.Remove(nodeId);
             SendTrackClear(nodeId);
             OnChanged(nameof(GpsTrackButtonText));
@@ -1451,7 +1450,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         map[kind] = timestampUtc;
     }
 
-    private DateTime GetLogLastWriteTimeUtc(string nodeId, LogKind kind)
+    private static DateTime GetLogLastWriteTimeUtc(string nodeId, LogKind kind)
     {
         var path = GetLogFilePath(nodeId, kind);
         return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;

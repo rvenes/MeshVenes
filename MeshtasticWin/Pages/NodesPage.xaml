@@ -203,16 +203,16 @@
                                     </Style>
                                 </ListView.ItemContainerStyle>
                                 <ListView.ItemTemplate>
-                                    <DataTemplate x:DataType="models:DeviceMetricSample">
+                                    <DataTemplate>
                                         <Grid ColumnDefinitions="Auto,*,Auto" Padding="2">
-                                            <TextBlock Text="{x:Bind TimestampText}" FontFamily="Consolas" FontSize="12"/>
+                                            <TextBlock Text="{Binding TimestampText}" FontFamily="Consolas" FontSize="12"/>
                                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
-                                                <TextBlock Text="{x:Bind BatteryDisplay}" FontFamily="Consolas" FontSize="12"/>
-                                                <TextBlock Text="{x:Bind ChannelUtilizationDisplay}" FontFamily="Consolas" FontSize="12"/>
-                                                <TextBlock Text="{x:Bind AirtimeDisplay}" FontFamily="Consolas" FontSize="12"/>
+                                                <TextBlock Text="{Binding BatteryDisplay}" FontFamily="Consolas" FontSize="12"/>
+                                                <TextBlock Text="{Binding ChannelUtilizationDisplay}" FontFamily="Consolas" FontSize="12"/>
+                                                <TextBlock Text="{Binding AirtimeDisplay}" FontFamily="Consolas" FontSize="12"/>
                                             </StackPanel>
                                             <TextBlock Grid.Column="2"
-                                                       Text="{x:Bind PoweredDisplay}"
+                                                       Text="{Binding PoweredDisplay}"
                                                        FontFamily="Consolas"
                                                        FontSize="12"
                                                        Foreground="OrangeRed"
