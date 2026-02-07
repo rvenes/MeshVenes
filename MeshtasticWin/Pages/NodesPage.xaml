@@ -1,5 +1,6 @@
 ﻿<Page
     x:Class="MeshtasticWin.Pages.NodesPage"
+    x:Name="Root"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:MeshtasticWin.Models"
@@ -194,7 +195,7 @@
                             </Grid>
                             <ListView Grid.Row="2"
                                       x:Name="DeviceMetricsLogList"
-                                      ItemsSource="{x:Bind DeviceMetricSamples, Mode=OneWay}"
+                                      ItemsSource="{Binding DeviceMetricSamples, ElementName=Root}"
                                       SelectionMode="None">
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="ListViewItem">
