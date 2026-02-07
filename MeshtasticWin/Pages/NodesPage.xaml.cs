@@ -864,12 +864,44 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         _selectedPositionEntry = PositionLogList.SelectedItem as PositionLogEntry;
         OnChanged(nameof(HasPositionSelection));
+    }
 
-        if (_selectedPositionEntry is not null)
-        {
-            DetailsTabs.SelectedIndex = 0;
-            ShowPositionOnMap(_selectedPositionEntry.Lat, _selectedPositionEntry.Lon);
-        }
+    private void PositionLogList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not PositionLogEntry entry)
+            return;
+
+        PositionLogList.SelectedItem = entry;
+        DetailsTabs.SelectedIndex = 0;
+        ShowPositionOnMap(entry.Lat, entry.Lon);
+    }
+
+    private void PositionLogListItem_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        ShowPositionLogContextFlyout(sender);
+    }
+
+    private void PositionLogListItem_Holding(object sender, HoldingRoutedEventArgs e)
+    {
+        if (e.HoldingState != HoldingState.Started)
+            return;
+
+        e.Handled = true;
+        ShowPositionLogContextFlyout(sender);
+    }
+
+    private void ShowPositionLogContextFlyout(object sender)
+    {
+        if (sender is not FrameworkElement element)
+            return;
+
+        var entry = element.DataContext as PositionLogEntry;
+        if (entry is not null)
+            PositionLogList.SelectedItem = entry;
+
+        var flyout = element.ContextFlyout;
+        flyout?.ShowAt(element);
     }
 
     private void PositionLogList_RightTapped(object sender, RightTappedRoutedEventArgs e)
@@ -1723,19 +1755,6 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         var days = (int)Math.Floor(delta.TotalDays);
         return $"{days} day{(days == 1 ? "" : "s")} ago";
-    }
-
-    private static T? FindAncestor<T>(DependencyObject? element) where T : DependencyObject
-    {
-        while (element is not null)
-        {
-            if (element is T match)
-                return match;
-
-            element = VisualTreeHelper.GetParent(element);
-        }
-
-        return null;
     }
 
     private sealed record PositionLogKey(DateTime TimestampUtc, double Lat, double Lon);
