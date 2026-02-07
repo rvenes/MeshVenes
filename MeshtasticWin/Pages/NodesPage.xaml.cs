@@ -612,7 +612,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
     }
 
-    private bool IsOnlineByRssi(NodeLive n)
+    private static bool IsOnlineByRssi(NodeLive n)
     {
         // Online = har målt RSSI (ikkje "—" og ikkje 0)
         if (string.IsNullOrWhiteSpace(n.RSSI) || n.RSSI == "—") return false;
@@ -2151,13 +2151,13 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     }
 
     private static readonly LogKind[] AllLogKinds =
-    {
+    [
         LogKind.DeviceMetrics,
         LogKind.Position,
         LogKind.TraceRoute,
         LogKind.PowerMetrics,
         LogKind.DetectionSensor
-    };
+    ];
 
     private static NodeLogType ToArchiveType(LogKind kind)
         => kind switch
