@@ -784,10 +784,10 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             .Where(p => !string.Equals(p.Src, "nodeinfo_bootstrap", StringComparison.OrdinalIgnoreCase))
             .OrderBy(p => p.TsUtc)
             .Select(p => new GeoPoint(p.Lat, p.Lon))
-            .ToList();
+            .ToArray();
 
         SendTrackSet(nodeId, points);
-        if (points.Count > 0)
+        if (points.Length > 0)
             _lastTrackPointByNode[nodeId] = (points[^1].Lat, points[^1].Lon);
         OnChanged(nameof(GpsTrackButtonText));
     }
@@ -880,15 +880,6 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void PositionLogEntry_RightTapped(object sender, RightTappedRoutedEventArgs e)
     {
-        e.Handled = true;
-        ShowPositionLogContextFlyout(sender);
-    }
-
-    private void PositionLogEntry_Holding(object sender, HoldingRoutedEventArgs e)
-    {
-        if (e.HoldingState != HoldingState.Started)
-            return;
-
         e.Handled = true;
         ShowPositionLogContextFlyout(sender);
     }
@@ -1039,7 +1030,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
     }
 
-    private async void ExportPositionLog_Click(object sender, RoutedEventArgs e)
+    private async void ExportPositionLog_Click(object _, RoutedEventArgs _1)
     {
         if (Selected is null)
             return;
@@ -1666,10 +1657,10 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 .Where(p => !string.Equals(p.Src, "nodeinfo_bootstrap", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(p => p.TsUtc)
                 .Select(p => new GeoPoint(p.Lat, p.Lon))
-                .ToList();
+                .ToArray();
 
             SendTrackSet(nodeId, points);
-            if (points.Count > 0)
+            if (points.Length > 0)
                 _lastTrackPointByNode[nodeId] = (points[^1].Lat, points[^1].Lon);
         }
 

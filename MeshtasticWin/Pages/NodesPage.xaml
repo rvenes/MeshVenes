@@ -240,9 +240,7 @@
                                                    TextWrapping="NoWrap"
                                                    FontFamily="Consolas"
                                                    IsRightTapEnabled="True"
-                                                   IsHoldingEnabled="True"
-                                                   RightTapped="PositionLogEntry_RightTapped"
-                                                   Holding="PositionLogEntry_Holding">
+                                                   RightTapped="PositionLogEntry_RightTapped">
                                             <TextBlock.ContextFlyout>
                                                 <MenuFlyout>
                                                     <MenuFlyoutItem Text="Open position in Google Maps"
