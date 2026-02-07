@@ -904,6 +904,19 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         flyout?.ShowAt(element);
     }
 
+    private void PositionLogList_RightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if (sender is not ListView listView)
+            return;
+
+        var element = e.OriginalSource as DependencyObject;
+        var container = FindAncestor<ListViewItem>(element);
+        if (container is null)
+            return;
+
+        listView.SelectedItem = container.Content;
+    }
+
     private void DeviceMetricSamples_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         OnChanged(nameof(DeviceMetricsCountText));
