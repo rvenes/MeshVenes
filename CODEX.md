@@ -53,14 +53,10 @@ Rules:
 - English only
 - Short and technical
 - Describe WHAT changed, not why or story
-- One line summary, optionally bullet points below
+- Single line summary only
 
 Format:
 
 Short summary line
-
-Optional details:
-- change 1
-- change 2
 
 Only suggest the message. Never run git commit automatically.
