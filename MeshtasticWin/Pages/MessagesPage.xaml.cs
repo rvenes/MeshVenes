@@ -281,7 +281,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             return;
 
         var firstVisible = ChatsView.View?.Cast<ChatListItemVm>().FirstOrDefault();
-        ChatList.SelectedItem = firstVisible;
+        SetActiveChatSelection(firstVisible);
     }
 
     private bool IsChatItemVisible(ChatListItemVm item)
@@ -327,9 +327,15 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         if (match is not null && IsChatItemVisible(match))
             ChatList.SelectedItem = match;
         else
-            EnsureChatSelectionVisible();
+            SetActiveChatSelection(ChatsView.View?.Cast<ChatListItemVm>().FirstOrDefault());
 
         _suppressListEvent = false;
+    }
+
+    private void SetActiveChatSelection(ChatListItemVm? chat)
+    {
+        ChatList.SelectedItem = chat;
+        MeshtasticWin.AppState.SetActiveChatPeer(chat?.PeerIdHex);
     }
 
     private void ChatList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -397,24 +403,24 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private void ApplyMessageVisibilityToAll()
     {
-        var peerKey = NormalizePeerKey(MeshtasticWin.AppState.ActiveChatPeerIdHex);
+        var chatKey = GetChatKey(MeshtasticWin.AppState.ActiveChatPeerIdHex);
         foreach (var vm in ViewMessages)
-            vm.IsVisible = string.Equals(vm.PeerKey, peerKey, StringComparison.OrdinalIgnoreCase);
+            vm.IsVisible = string.Equals(vm.PeerKey, chatKey, StringComparison.OrdinalIgnoreCase);
     }
 
     private MessageVm CreateMessageVm(MessageLive message)
     {
         var vm = MessageVm.From(message);
-        vm.PeerKey = GetPeerKey(message);
-        vm.IsVisible = string.Equals(vm.PeerKey, NormalizePeerKey(MeshtasticWin.AppState.ActiveChatPeerIdHex), StringComparison.OrdinalIgnoreCase);
+        vm.PeerKey = GetChatKey(message);
+        vm.IsVisible = string.Equals(vm.PeerKey, GetChatKey(MeshtasticWin.AppState.ActiveChatPeerIdHex), StringComparison.OrdinalIgnoreCase);
         return vm;
     }
 
     private void UpdateMessageVm(MessageVm vm, MessageLive message)
     {
         vm.UpdateFrom(message);
-        vm.PeerKey = GetPeerKey(message);
-        vm.IsVisible = string.Equals(vm.PeerKey, NormalizePeerKey(MeshtasticWin.AppState.ActiveChatPeerIdHex), StringComparison.OrdinalIgnoreCase);
+        vm.PeerKey = GetChatKey(message);
+        vm.IsVisible = string.Equals(vm.PeerKey, GetChatKey(MeshtasticWin.AppState.ActiveChatPeerIdHex), StringComparison.OrdinalIgnoreCase);
     }
 
     private void RemoveMessageVm(MessageLive message)
@@ -443,14 +449,21 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private static string NormalizePeerKey(string? peerIdHex)
         => string.IsNullOrWhiteSpace(peerIdHex) ? "" : peerIdHex.Trim();
 
-    private static string GetPeerKey(MessageLive message)
+    private static string GetChatKey(string? peerIdHex)
+    {
+        var normalized = NormalizePeerKey(peerIdHex);
+        return string.IsNullOrWhiteSpace(normalized)
+            ? "channel:primary"
+            : $"dm:{normalized}";
+    }
+
+    private static string GetChatKey(MessageLive message)
     {
         if (!message.IsDirect)
-            return "";
+            return "channel:primary";
 
-        return message.IsMine
-            ? NormalizePeerKey(message.ToIdHex)
-            : NormalizePeerKey(message.FromIdHex);
+        var peerIdHex = message.IsMine ? message.ToIdHex : message.FromIdHex;
+        return $"dm:{NormalizePeerKey(peerIdHex)}";
     }
 
     private async void Send_Click(object sender, RoutedEventArgs e)
