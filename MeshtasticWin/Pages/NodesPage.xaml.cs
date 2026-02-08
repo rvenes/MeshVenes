@@ -39,6 +39,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private int _hideOlderThanDays = 90; // default: 3 months
     private bool _hideInactive = true;
     private string _filter = "";
+    private SortMode _sortMode = SortMode.Alphabetical;
     private readonly DispatcherTimer _throttle = new();
     private readonly DispatcherTimer _filterApplyTimer = new();
     private bool _mapReady;
@@ -233,6 +234,12 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     public ObservableCollection<NodeLive> VisibleNodes { get; } = new();
     private readonly ObservableCollection<NodeLive> _allNodes = new();
 
+    private enum SortMode
+    {
+        Alphabetical,
+        LastActive
+    }
+
     public NodesPage()
     {
         InitializeComponent();
@@ -242,11 +249,14 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         AgeFilterCombo.Items.Add("Show all");
         AgeFilterCombo.Items.Add("Hide > 1 week");
         AgeFilterCombo.Items.Add("Hide > 2 weeks");
-        AgeFilterCombo.Items.Add("Hide > 3 weeks");
         AgeFilterCombo.Items.Add("Hide > 4 weeks");
         AgeFilterCombo.Items.Add("Hide > 1 month");
         AgeFilterCombo.Items.Add("Hide > 3 months");
-        AgeFilterCombo.SelectedIndex = 6;
+        AgeFilterCombo.SelectedIndex = 5;
+
+        SortCombo.Items.Add("Sort: Alphabetical");
+        SortCombo.Items.Add("Sort: Last active");
+        SortCombo.SelectedIndex = 0;
 
         HideInactiveToggle.IsChecked = _hideInactive;
 
@@ -619,7 +629,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         if (e.PropertyName is nameof(NodeLive.LastHeardUtc) or nameof(NodeLive.LastHeard)
             or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude)
             or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR)
-            or nameof(NodeLive.Name) or nameof(NodeLive.ShortName))
+            or nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey))
         {
             OnChanged(nameof(NodeCountsText));
             ScheduleFilterApply();
@@ -680,6 +690,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             if (ShouldShowNode(node))
                 desired.Add(node);
         }
+
+        desired = SortNodes(desired);
 
         for (var i = VisibleNodes.Count - 1; i >= 0; i--)
         {
@@ -745,15 +757,43 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             0 => 99999,
             1 => 7,
             2 => 14,
-            3 => 21,
-            4 => 28,
-            5 => 31,
-            6 => 90,
+            3 => 28,
+            4 => 31,
+            5 => 90,
             _ => 99999
         };
 
         RebuildVisibleNodes();
         TriggerMapUpdate();
+    }
+
+    private void SortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _sortMode = SortCombo.SelectedIndex switch
+        {
+            1 => SortMode.LastActive,
+            _ => SortMode.Alphabetical
+        };
+
+        RebuildVisibleNodes();
+        TriggerMapUpdate();
+    }
+
+    private List<NodeLive> SortNodes(List<NodeLive> nodes)
+    {
+        return _sortMode switch
+        {
+            SortMode.LastActive => nodes
+                .OrderByDescending(n => n.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(n => n.LastHeardUtc)
+                .ThenBy(n => n.SortNameKey, StringComparer.Ordinal)
+                .ThenBy(n => n.SortIdKey, StringComparer.Ordinal)
+                .ToList(),
+            _ => nodes
+                .OrderBy(n => n.SortNameKey, StringComparer.Ordinal)
+                .ThenBy(n => n.SortIdKey, StringComparer.Ordinal)
+                .ToList()
+        };
     }
 
     private void HideInactiveToggle_Click(object sender, RoutedEventArgs e)

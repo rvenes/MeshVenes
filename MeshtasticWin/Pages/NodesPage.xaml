@@ -22,6 +22,7 @@
                 <TextBlock Text="{x:Bind NodeCountsText, Mode=OneWay}"/>
                 <ToggleButton x:Name="HideInactiveToggle" Content="Hide inactive" Click="HideInactiveToggle_Click"/>
                 <ComboBox x:Name="AgeFilterCombo" Width="170" SelectionChanged="AgeFilterCombo_SelectionChanged"/>
+                <ComboBox x:Name="SortCombo" Width="180" SelectionChanged="SortCombo_SelectionChanged"/>
             </StackPanel>
 
             <TextBox Grid.Row="4"
