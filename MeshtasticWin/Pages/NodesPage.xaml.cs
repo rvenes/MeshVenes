@@ -260,6 +260,13 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             ApplyFiltersToAllNodes();
         };
 
+        _filterRebuildTimer.Interval = TimeSpan.FromMilliseconds(300);
+        _filterRebuildTimer.Tick += (_, __) =>
+        {
+            _filterRebuildTimer.Stop();
+            RebuildFilteredCore();
+        };
+
         _throttle.Interval = TimeSpan.FromMilliseconds(350);
         _throttle.Tick += (_, __) => { _throttle.Stop(); _ = PushAllNodesToMapAsync(); };
 
