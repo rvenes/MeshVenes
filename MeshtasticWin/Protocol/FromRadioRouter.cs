@@ -212,6 +212,8 @@ public static class FromRadioRouter
 
         var idHex = $"0x{nodeNum:x8}";
         var node = EnsureNode(idHex, nodeNum);
+        if (RadioClient.Instance.IsConnected && string.IsNullOrWhiteSpace(MeshtasticWin.AppState.ConnectedNodeIdHex))
+            MeshtasticWin.AppState.SetConnectedNodeIdHex(idHex);
 
         // User
         var userObj = nodeInfoObj.GetType().GetProperty("User", BindingFlags.Public | BindingFlags.Instance)?.GetValue(nodeInfoObj);
@@ -622,7 +624,16 @@ public static class FromRadioRouter
             sb.Append("passive: true ");
             sb.Append("from: ").Append(fromNodeNum).Append(' ');
             if (toNodeNum != 0xFFFFFFFF)
+            {
                 sb.Append("to: ").Append(toNodeNum).Append(' ');
+            }
+            else
+            {
+                var connected = MeshtasticWin.AppState.Nodes.FirstOrDefault(n =>
+                    string.Equals(n.IdHex, MeshtasticWin.AppState.ConnectedNodeIdHex, StringComparison.OrdinalIgnoreCase));
+                if (connected?.NodeNum > 0)
+                    sb.Append("to: ").Append(connected.NodeNum).Append(' ');
+            }
         }
 
         sb.Append(formatted);
@@ -738,7 +749,16 @@ public static class FromRadioRouter
                 sb.Append("variant: ").Append(variant).Append(' ');
             sb.Append("from: ").Append(fromNodeNum).Append(' ');
             if (toNodeNum != 0xFFFFFFFF)
+            {
                 sb.Append("to: ").Append(toNodeNum).Append(' ');
+            }
+            else
+            {
+                var connected = MeshtasticWin.AppState.Nodes.FirstOrDefault(n =>
+                    string.Equals(n.IdHex, MeshtasticWin.AppState.ConnectedNodeIdHex, StringComparison.OrdinalIgnoreCase));
+                if (connected?.NodeNum > 0)
+                    sb.Append("to: ").Append(connected.NodeNum).Append(' ');
+            }
         }
         if (channelIndex.HasValue)
             sb.Append("channel: ").Append(channelIndex.Value).Append(' ');

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MeshtasticWin.Services;
 
@@ -43,6 +44,21 @@ public static class TraceRouteContext
         return false;
     }
 
+    public static bool TryMarkNoResponse(uint targetNodeNum)
+    {
+        var now = DateTime.UtcNow;
+        lock (_gate)
+        {
+            CleanupLocked(now);
+            var entry = _pending.FirstOrDefault(item => item.TargetNodeNum == targetNodeNum);
+            if (entry is null || entry.NoResponseLogged)
+                return false;
+
+            entry.NoResponseLogged = true;
+            return true;
+        }
+    }
+
     private static void CleanupLocked(DateTime now)
     {
         for (var i = _pending.Count - 1; i >= 0; i--)
@@ -52,5 +68,16 @@ public static class TraceRouteContext
         }
     }
 
-    private sealed record PendingTraceRoute(uint TargetNodeNum, DateTime TimestampUtc);
+    private sealed class PendingTraceRoute
+    {
+        public PendingTraceRoute(uint targetNodeNum, DateTime timestampUtc)
+        {
+            TargetNodeNum = targetNodeNum;
+            TimestampUtc = timestampUtc;
+        }
+
+        public uint TargetNodeNum { get; }
+        public DateTime TimestampUtc { get; }
+        public bool NoResponseLogged { get; set; }
+    }
 }

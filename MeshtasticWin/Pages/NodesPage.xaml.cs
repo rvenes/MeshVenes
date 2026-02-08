@@ -293,6 +293,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             n.PropertyChanged += Node_PropertyChanged;
             _allNodes.Add(n);
         }
+        AppState.ConnectedNodeChanged += ConnectedNodeChanged;
 
         RebuildVisibleNodes();
 
@@ -330,6 +331,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             n.PropertyChanged -= Node_PropertyChanged;
 
         DeviceMetricsLogService.SampleAdded -= DeviceMetricsLogService_SampleAdded;
+        AppState.ConnectedNodeChanged -= ConnectedNodeChanged;
         _filterApplyTimer.Stop();
         _logPollTimer.Stop();
     }
@@ -833,6 +835,22 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         };
 
         ApplySortedOrder(VisibleNodes, sorted);
+        PinConnectedNodeToTop();
+    }
+
+    private void PinConnectedNodeToTop()
+    {
+        if (string.IsNullOrWhiteSpace(AppState.ConnectedNodeIdHex))
+            return;
+
+        var connected = VisibleNodes.FirstOrDefault(n =>
+            string.Equals(n.IdHex, AppState.ConnectedNodeIdHex, StringComparison.OrdinalIgnoreCase));
+        if (connected is null)
+            return;
+
+        var index = VisibleNodes.IndexOf(connected);
+        if (index > 0)
+            VisibleNodes.Move(index, 0);
     }
 
     private void RefreshNodeSorting()
@@ -887,6 +905,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         _hideInactive = HideInactiveToggle.IsChecked == true;
         RebuildVisibleNodes();
         TriggerMapUpdate();
+    }
+
+    private void ConnectedNodeChanged()
+    {
+        ApplyNodeSorting();
     }
 
     private void NodesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1910,6 +1933,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         {
             var packetId = await RadioClient.Instance.SendTraceRouteRequestAsync((uint)Selected.NodeNum);
             TraceRouteContext.RegisterActiveTraceRoute((uint)Selected.NodeNum);
+            ScheduleTraceRouteNoResponse((uint)Selected.NodeNum, Selected.IdHex ?? "");
             RadioClient.Instance.AddLogFromUiThread($"Trace Route sent to {Selected.Name} (packetId=0x{packetId:x8}).");
             StartTraceRouteCooldown();
         }
@@ -1942,6 +1966,42 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(IsTraceRouteEnabled));
             OnChanged(nameof(TraceRouteButtonText));
         }
+    }
+
+    private void ScheduleTraceRouteNoResponse(uint targetNodeNum, string targetIdHex)
+    {
+        var timeoutSeconds = 30;
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(timeoutSeconds));
+            _ = DispatcherQueue.TryEnqueue(() => LogTraceRouteNoResponse(targetNodeNum, targetIdHex));
+        });
+    }
+
+    private void LogTraceRouteNoResponse(uint targetNodeNum, string targetIdHex)
+    {
+        if (!TraceRouteContext.TryMarkNoResponse(targetNodeNum))
+            return;
+
+        if (string.IsNullOrWhiteSpace(targetIdHex))
+            return;
+
+        uint? fromNodeNum = null;
+        if (!string.IsNullOrWhiteSpace(AppState.ConnectedNodeIdHex))
+        {
+            var connected = AppState.Nodes.FirstOrDefault(n =>
+                string.Equals(n.IdHex, AppState.ConnectedNodeIdHex, StringComparison.OrdinalIgnoreCase));
+            if (connected?.NodeNum > 0)
+                fromNodeNum = (uint)connected.NodeNum;
+        }
+
+        var sb = new StringBuilder("active: true no_response: true ");
+        if (fromNodeNum.HasValue)
+            sb.Append("from: ").Append(fromNodeNum.Value).Append(' ');
+        sb.Append("to: ").Append(targetNodeNum);
+
+        NodeLogArchive.Append(NodeLogType.TraceRoute, targetIdHex, DateTime.UtcNow, sb.ToString());
+        RefreshTraceRouteEntries();
     }
 
     private void ShowPositionOnMap(double lat, double lon)
@@ -2141,6 +2201,32 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         var parsed = ParseTraceRouteSummary(summary);
         var isActive = parsed.IsActive;
         var isPassive = !isActive;
+        if (parsed.IsNoResponse)
+        {
+            var noResponseFrom = ResolveNodeIdentityDetailed(parsed.FromNode);
+            var noResponseTo = ResolveNodeIdentityDetailed(parsed.ToNode);
+            var noResponseHeader = $"{(isActive ? "[ACTIVE]" : "[PASSIVE]")} {tsText} | No response | {noResponseFrom} -> {noResponseTo} | Hops: 0";
+            var noResponseLine = "Route: (no response)";
+            return new TraceRouteLogEntry(
+                rawLine,
+                timestamp?.UtcDateTime ?? DateTime.MinValue,
+                noResponseHeader,
+                noResponseLine,
+                null,
+                null,
+                noResponseHeader,
+                noResponseLine,
+                null,
+                null,
+                isPassive,
+                0,
+                Array.Empty<RouteMapPoint>(),
+                Array.Empty<RouteMapPoint>(),
+                Array.Empty<double?>(),
+                Array.Empty<double?>(),
+                false);
+        }
+
         var hasForward = parsed.Route.Count > 0;
         var hasBack = parsed.RouteBack.Count > 0;
         var showBack = hasBack && (isActive || string.Equals(parsed.Variant, "route_reply", StringComparison.OrdinalIgnoreCase));
@@ -2173,14 +2259,16 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         var pathText = hopNames.Count > 0 ? string.Join(" -> ", hopNames) : "No hops recorded";
         var primaryMetrics = BuildPrimaryMetrics(parsed, hasForward);
         var pathLine = $"{pathLabel}: {pathText}";
-        if (isActive && !hasForward)
+        if (isActive && !hasForward && !hasBack)
             pathLine = "Route: (no forward route recorded)";
-        if (!string.IsNullOrWhiteSpace(primaryMetrics))
+        if (isActive && !hasForward && hasBack)
+            pathLine = "Route: (no forward route recorded)";
+        if (!string.IsNullOrWhiteSpace(primaryMetrics) && !(isActive && !hasForward))
             pathLine += " | " + primaryMetrics;
 
         string? backHeader = null;
         string? backLine = null;
-        if (showBack && parsed.RouteBack.Count > 0 && hasForward)
+        if (showBack && parsed.RouteBack.Count > 0)
         {
             var backFromText = ResolveNodeIdentityDetailed(parsed.ToNode ?? parsed.RouteBack[0]);
             var backToText = ResolveNodeIdentityDetailed(parsed.FromNode ?? parsed.RouteBack[^1]);
@@ -2388,6 +2476,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         string? variant = null;
         bool isPassive = false;
         bool isActive = false;
+        bool isNoResponse = false;
 
         var tokens = (summary ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var currentLabel = "";
@@ -2457,10 +2546,18 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                         isActive = true;
                     }
                     break;
+                case "no_response:":
+                    if (string.Equals(token, "true", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(token, "yes", StringComparison.OrdinalIgnoreCase) ||
+                        token == "1")
+                    {
+                        isNoResponse = true;
+                    }
+                    break;
             }
         }
 
-        return new TraceRouteParsed(route, snrTowards, routeBack, snrBack, rxSnr, rxRssi, fromNode, toNode, channel, variant, isPassive, isActive);
+        return new TraceRouteParsed(route, snrTowards, routeBack, snrBack, rxSnr, rxRssi, fromNode, toNode, channel, variant, isPassive, isActive, isNoResponse);
     }
 
     private static string FormatSnrValue(int value)
@@ -2731,7 +2828,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         uint? Channel,
         string? Variant,
         bool IsPassive,
-        bool IsActive);
+        bool IsActive,
+        bool IsNoResponse);
 
     private enum LogKind
     {
