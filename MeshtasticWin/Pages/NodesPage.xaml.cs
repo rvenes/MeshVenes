@@ -2126,11 +2126,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         var hopNames = hopPath.Count > 0 ? hopPath.Select(ResolveHopLabel).ToList() : new List<string>();
 
         var fromNode = parsed.FromNode
-            ?? (parsed.Route.Count > 0 ? parsed.Route[0] : null)
-            ?? (parsed.RouteBack.Count > 0 ? parsed.RouteBack[0] : null);
+            ?? (parsed.Route.Count > 0 ? (uint?)parsed.Route[0] : null)
+            ?? (parsed.RouteBack.Count > 0 ? (uint?)parsed.RouteBack[0] : null);
         var toNode = parsed.ToNode
-            ?? (parsed.Route.Count > 0 ? parsed.Route[^1] : null)
-            ?? (parsed.RouteBack.Count > 0 ? parsed.RouteBack[^1] : null);
+            ?? (parsed.Route.Count > 0 ? (uint?)parsed.Route[^1] : null)
+            ?? (parsed.RouteBack.Count > 0 ? (uint?)parsed.RouteBack[^1] : null);
 
         var fromText = ResolveNodeIdentityDetailed(fromNode);
         var toText = ResolveNodeIdentityDetailed(toNode);
