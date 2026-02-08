@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -35,12 +36,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public ObservableCollection<NodeLive> FilteredNodesView { get; } = new();
-
     private int _hideOlderThanDays = 90; // default: 3 months
     private bool _hideInactive = true;
     private string _filter = "";
     private readonly DispatcherTimer _throttle = new();
+    private readonly DispatcherTimer _filterApplyTimer = new();
     private bool _mapReady;
     private readonly DispatcherTimer _traceRouteTimer = new();
     private int _traceRouteRemainingSeconds;
@@ -229,6 +229,10 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
     }
 
+    public ObservableCollection<NodeLive> NodesSource => MeshtasticWin.AppState.Nodes;
+    public ObservableCollection<NodeLive> VisibleNodes { get; } = new();
+    private readonly ObservableCollection<NodeLive> _allNodes = new();
+
     public NodesPage()
     {
         InitializeComponent();
@@ -248,9 +252,19 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         MeshtasticWin.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
         foreach (var n in MeshtasticWin.AppState.Nodes)
+        {
             n.PropertyChanged += Node_PropertyChanged;
+            _allNodes.Add(n);
+        }
 
-        RebuildFiltered();
+        RebuildVisibleNodes();
+
+        _filterApplyTimer.Interval = TimeSpan.FromMilliseconds(250);
+        _filterApplyTimer.Tick += (_, __) =>
+        {
+            _filterApplyTimer.Stop();
+            RebuildVisibleNodes();
+        };
 
         _throttle.Interval = TimeSpan.FromMilliseconds(350);
         _throttle.Tick += (_, __) => { _throttle.Stop(); _ = PushAllNodesToMapAsync(); };
@@ -272,6 +286,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             n.PropertyChanged -= Node_PropertyChanged;
 
         DeviceMetricsLogService.SampleAdded -= DeviceMetricsLogService_SampleAdded;
+        _filterApplyTimer.Stop();
         _logPollTimer.Stop();
     }
 
@@ -574,12 +589,17 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             {
                 n.PropertyChanged += Node_PropertyChanged;
                 SeedLogWriteTimesForNode(n);
+                _allNodes.Add(n);
             }
 
         if (e.OldItems is not null)
-            foreach (NodeLive n in e.OldItems) n.PropertyChanged -= Node_PropertyChanged;
+            foreach (NodeLive n in e.OldItems)
+            {
+                n.PropertyChanged -= Node_PropertyChanged;
+                _allNodes.Remove(n);
+            }
 
-        RebuildFiltered();
+        ScheduleFilterApply();
         OnChanged(nameof(NodeCountsText));
         TriggerMapUpdate();
     }
@@ -598,10 +618,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         if (e.PropertyName is nameof(NodeLive.LastHeardUtc) or nameof(NodeLive.LastHeard)
             or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude)
-            or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR))
+            or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR)
+            or nameof(NodeLive.Name) or nameof(NodeLive.ShortName))
         {
             OnChanged(nameof(NodeCountsText));
-            RebuildFiltered();
+            ScheduleFilterApply();
             TriggerMapUpdate();
         }
 
@@ -624,13 +645,14 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private bool IsTooOld(NodeLive n)
     {
         if (_hideOlderThanDays >= 99999) return false;
-        if (n.LastHeardUtc == DateTime.MinValue) return true;
+        if (n.LastHeardUtc == DateTime.MinValue) return false;
         return (DateTime.UtcNow - n.LastHeardUtc) > TimeSpan.FromDays(_hideOlderThanDays);
     }
 
     private bool IsHiddenByInactive(NodeLive n)
     {
         if (!_hideInactive) return false;
+        if (n.LastHeardUtc == DateTime.MinValue) return true;
         return !IsOnlineByRssi(n);
     }
 
@@ -641,47 +663,82 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         _throttle.Start();
     }
 
-    private void RebuildFiltered()
+    private void ScheduleFilterApply()
     {
-        FilteredNodesView.Clear();
+        if (_filterApplyTimer.IsEnabled)
+            _filterApplyTimer.Stop();
+        _filterApplyTimer.Start();
+    }
 
-        var q = (_filter ?? "").Trim();
+    private void RebuildVisibleNodes()
+    {
+        _filterApplyTimer.Stop();
 
-        var nodes = MeshtasticWin.AppState.Nodes
-            .Where(n => !IsTooOld(n))
-            .Where(n => !IsHiddenByInactive(n))
-            .Where(n =>
-            {
-                if (string.IsNullOrWhiteSpace(q)) return true;
-                return (n.Name?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
-                    || (n.IdHex?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
-                    || (n.ShortId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false);
-            })
-            .OrderByDescending(n => IsOnlineByRssi(n))
-            .ThenByDescending(n => n.LastHeardUtc)
-            .ThenBy(n => n.Name)
-            .ToList();
-
-        foreach (var n in nodes)
-            FilteredNodesView.Add(n);
-
-        if (Selected is null && FilteredNodesView.Count > 0)
+        var desired = new List<NodeLive>();
+        foreach (var node in _allNodes)
         {
-            NodesList.SelectedItem = FilteredNodesView[0];
-            Selected = FilteredNodesView[0];
+            if (ShouldShowNode(node))
+                desired.Add(node);
         }
 
+        for (var i = VisibleNodes.Count - 1; i >= 0; i--)
+        {
+            if (!desired.Contains(VisibleNodes[i]))
+                VisibleNodes.RemoveAt(i);
+        }
+
+        for (var targetIndex = 0; targetIndex < desired.Count; targetIndex++)
+        {
+            var node = desired[targetIndex];
+            if (targetIndex < VisibleNodes.Count && ReferenceEquals(VisibleNodes[targetIndex], node))
+                continue;
+
+            var existingIndex = VisibleNodes.IndexOf(node);
+            if (existingIndex >= 0)
+                VisibleNodes.Move(existingIndex, targetIndex);
+            else
+                VisibleNodes.Insert(targetIndex, node);
+        }
+
+        EnsureSelectionVisible();
         OnChanged(nameof(NodeCountsText));
+#if DEBUG
+        Debug.WriteLine($"Nodes filter: all={_allNodes.Count} visible={VisibleNodes.Count} hideInactive={_hideInactive} hideDays={_hideOlderThanDays} filter=\"{_filter}\"");
+#endif
+    }
+
+    private bool ShouldShowNode(NodeLive node)
+    {
+        if (IsTooOld(node) || IsHiddenByInactive(node))
+            return false;
+
+        var q = (_filter ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(q))
+            return true;
+
+        return (node.Name?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (node.IdHex?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (node.ShortId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    private void EnsureSelectionVisible()
+    {
+        if (Selected is not null && VisibleNodes.Contains(Selected))
+            return;
+
+        var firstVisible = VisibleNodes.FirstOrDefault();
+        NodesList.SelectedItem = firstVisible;
+        Selected = firstVisible;
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _filter = SearchBox.Text ?? "";
-        RebuildFiltered();
+        RebuildVisibleNodes();
         TriggerMapUpdate();
     }
 
-    private void AgeFilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void AgeFilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs _)
     {
         _hideOlderThanDays = AgeFilterCombo.SelectedIndex switch
         {
@@ -695,14 +752,14 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             _ => 99999
         };
 
-        RebuildFiltered();
+        RebuildVisibleNodes();
         TriggerMapUpdate();
     }
 
     private void HideInactiveToggle_Click(object sender, RoutedEventArgs e)
     {
         _hideInactive = HideInactiveToggle.IsChecked == true;
-        RebuildFiltered();
+        RebuildVisibleNodes();
         TriggerMapUpdate();
     }
 
@@ -860,13 +917,13 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
     }
 
-    private void PositionLogList_SelectionChanged(object sender, SelectionChangedEventArgs _)
+    private void PositionLogList_SelectionChanged(object _, SelectionChangedEventArgs _1)
     {
         _selectedPositionEntry = PositionLogList.SelectedItem as PositionLogEntry;
         OnChanged(nameof(HasPositionSelection));
     }
 
-    private void PositionLogList_ItemClick(object sender, ItemClickEventArgs e)
+    private void PositionLogList_ItemClick(object _, ItemClickEventArgs e)
     {
         if (e.ClickedItem is not PositionLogEntry entry)
             return;
@@ -947,7 +1004,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
     }
 
-    private void RefreshPositionEntries(List<PositionLogEntry>? entries = null)
+    private void RefreshPositionEntries(IReadOnlyList<PositionLogEntry>? entries = null)
     {
         var viewer = FindScrollViewer(PositionLogList);
         var wasAtTop = viewer is null || viewer.VerticalOffset <= 0.5;
@@ -971,7 +1028,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             await OpenMapsForPositionAsync(entry.Lat, entry.Lon);
     }
 
-    private async void OpenCurrentPosition_Click(object sender, RoutedEventArgs e)
+    private async void OpenCurrentPosition_Click(object _, RoutedEventArgs _1)
     {
         if (Selected is null || !Selected.HasPosition)
             return;
@@ -987,7 +1044,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         await Launcher.LaunchUriAsync(uri);
     }
 
-    private async void DeletePositionLogOlder_Click(object sender, RoutedEventArgs e)
+    private async void DeletePositionLogOlder_Click(object _, RoutedEventArgs _1)
         => await DeletePositionLogOlderAsync();
 
     private async void ExportPositionLog_Click(object _, RoutedEventArgs _1)
@@ -1378,10 +1435,10 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         return string.Join(Environment.NewLine, lines);
     }
 
-    private List<PositionLogEntry> ReadPositionEntries()
+    private IReadOnlyList<PositionLogEntry> ReadPositionEntries()
     {
         if (Selected is null)
-            return new List<PositionLogEntry>();
+            return Array.Empty<PositionLogEntry>();
 
         return GpsArchive.ReadAll(Selected.IdHex, maxPoints: 5000)
             .Where(p => !string.Equals(p.Src, "nodeinfo_bootstrap", StringComparison.OrdinalIgnoreCase))
