@@ -14,6 +14,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
+using Windows.UI.Xaml.Data;
 
 namespace MeshtasticWin.Pages;
 
@@ -80,6 +81,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         SortCombo.SelectedIndex = 0;
 
         HideInactiveToggle.IsChecked = _hideInactive;
+        ChatsView.Source = VisibleChatItems;
+        ApplyChatSorting();
 
         MeshtasticWin.AppState.Messages.CollectionChanged += Messages_CollectionChanged;
         MeshtasticWin.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
@@ -224,6 +227,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         if (_chatItemsByPeer.TryGetValue(node.IdHex, out var item))
             item.UpdateFromNode(node);
+        RefreshChatSorting();
     }
 
     private bool ShouldShowChatItem(NodeLive node)
@@ -289,6 +293,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         }
 
         EnsureChatSelectionVisible();
+        RefreshChatSorting();
     }
 
     private void EnsureChatSelectionVisible()

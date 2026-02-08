@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Data;
 using MeshtasticWin.Models;
 using MeshtasticWin.Services;
 using Microsoft.Web.WebView2.Core;
@@ -20,6 +21,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using System.Xml;
+using Windows.UI.Xaml.Data;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -259,6 +261,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         SortCombo.SelectedIndex = 0;
 
         HideInactiveToggle.IsChecked = _hideInactive;
+        NodesView.Source = VisibleNodes;
+        ApplyNodeSorting();
 
         MeshtasticWin.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
         foreach (var n in MeshtasticWin.AppState.Nodes)
@@ -634,6 +638,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(NodeCountsText));
             ScheduleFilterApply();
             TriggerMapUpdate();
+            RefreshNodeSorting();
         }
 
         if (sender is NodeLive updatedNode
@@ -714,6 +719,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         EnsureSelectionVisible();
         OnChanged(nameof(NodeCountsText));
+        RefreshNodeSorting();
 #if DEBUG
         Debug.WriteLine($"Nodes filter: all={_allNodes.Count} visible={VisibleNodes.Count} hideInactive={_hideInactive} hideDays={_hideOlderThanDays} filter=\"{_filter}\"");
 #endif
