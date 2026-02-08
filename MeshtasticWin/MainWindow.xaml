@@ -25,6 +25,7 @@
                 <NavigationViewItem Content="Connect" Tag="connect" />
                 <NavigationViewItem Content="Nodes" Tag="nodes" />
                 <NavigationViewItem Content="Settings" Tag="settings" />
+                <NavigationViewItem Content="About" Tag="about" />
             </NavigationView.MenuItems>
 
             <Frame x:Name="ContentFrame" />

@@ -1,0 +1,36 @@
+<Page
+    x:Class="MeshtasticWin.Pages.AboutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Padding="16">
+        <StackPanel Spacing="12" MaxWidth="900">
+            <TextBlock Text="About" FontSize="20" FontWeight="SemiBold"/>
+
+            <TextBlock TextWrapping="Wrap">
+                MeshtasticWin is a desktop app for connecting to Meshtastic radios and working with messages and nodes.
+            </TextBlock>
+
+            <TextBlock Text="How to use" FontSize="16" FontWeight="SemiBold"/>
+            <TextBlock TextWrapping="Wrap">
+                Use Connect to attach to a device over Serial via USB, then go to Messages and Nodes to interact with your network.
+                Settings contains app options.
+            </TextBlock>
+
+            <TextBlock Text="Licensing" FontSize="16" FontWeight="SemiBold"/>
+            <TextBlock TextWrapping="Wrap">
+                This program is licensed under the GNU GPL 3.0.
+            </TextBlock>
+
+            <TextBlock Text="Connectivity" FontSize="16" FontWeight="SemiBold"/>
+            <TextBlock TextWrapping="Wrap">
+                It currently supports Serial via USB only. HTTP IP and Bluetooth support will be added later.
+            </TextBlock>
+
+            <TextBlock Text="About me" FontSize="16" FontWeight="SemiBold"/>
+            <TextBlock TextWrapping="Wrap">
+                This is an open-source community project.
+            </TextBlock>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
