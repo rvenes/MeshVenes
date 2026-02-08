@@ -2,6 +2,7 @@
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Data;
 using MeshtasticWin.Models;
 using MeshtasticWin.Services;
 using System;
@@ -53,6 +54,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private readonly ChatListItemVm _primaryChatItem = ChatListItemVm.Primary();
     private readonly Dictionary<string, ChatListItemVm> _chatItemsByPeer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DispatcherTimer _chatFilterRefreshTimer = new();
 
     public MessagesPage()
     {
@@ -69,6 +71,15 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         MeshtasticWin.AppState.ActiveChatChanged += ActiveChatChanged;
         MeshtasticWin.AppState.UnreadChanged += UnreadChanged;
 
+        ChatsView.Source = ChatListItems;
+        ChatsView.Filter += ChatsView_Filter;
+        _chatFilterRefreshTimer.Interval = TimeSpan.FromMilliseconds(200);
+        _chatFilterRefreshTimer.Tick += (_, __) =>
+        {
+            _chatFilterRefreshTimer.Stop();
+            RefreshChatListView();
+        };
+
         _chatItemsByPeer[""] = _primaryChatItem;
         ChatListItems.Add(_primaryChatItem);
 
@@ -81,7 +92,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         foreach (var message in MeshtasticWin.AppState.Messages)
             ViewMessages.Add(CreateMessageVm(message));
 
-        ApplyChatFiltersToAllItems();
+        RefreshChatListView();
         ApplyMessageVisibilityToAll();
         SyncListToActiveChat();
         OnChanged(nameof(ActiveChatTitle));
@@ -152,7 +163,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                     RemoveChatItemForNode(node);
                 }
 
-            ApplyChatFiltersToAllItems();
+            ScheduleChatFilterRefresh();
             SyncListToActiveChat();
             OnChanged(nameof(ActiveChatTitle));
         });
@@ -178,7 +189,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             or nameof(NodeLive.Name) or nameof(NodeLive.ShortName))
         {
             UpdateChatItemFromNode(node);
-            UpdateChatItemVisibility(node);
+            ScheduleChatFilterRefresh();
             if (string.Equals(MeshtasticWin.AppState.ActiveChatPeerIdHex, node.IdHex, StringComparison.OrdinalIgnoreCase))
                 OnChanged(nameof(ActiveChatTitle));
         }
@@ -195,7 +206,6 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         var item = ChatListItemVm.ForNode(node);
         _chatItemsByPeer[node.IdHex] = item;
         ChatListItems.Add(item);
-        UpdateChatItemVisibility(node);
     }
 
     private void RemoveChatItemForNode(NodeLive node)
@@ -216,23 +226,6 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             item.UpdateFromNode(node);
     }
 
-    private void UpdateChatItemVisibility(NodeLive node)
-    {
-        if (string.IsNullOrWhiteSpace(node.IdHex))
-            return;
-
-        if (_chatItemsByPeer.TryGetValue(node.IdHex, out var item))
-            item.IsVisible = ShouldShowChatItem(node);
-    }
-
-    private void ApplyChatFiltersToAllItems()
-    {
-        _primaryChatItem.IsVisible = true;
-
-        foreach (var node in MeshtasticWin.AppState.Nodes)
-            UpdateChatItemVisibility(node);
-    }
-
     private bool ShouldShowChatItem(NodeLive node)
     {
         if (IsTooOld(node) || IsHiddenByInactive(node))
@@ -245,6 +238,59 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         return (node.Name?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
             || (node.IdHex?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
             || (node.ShortId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    private void ChatsView_Filter(object sender, FilterEventArgs e)
+    {
+        if (e.Item is not ChatListItemVm item)
+        {
+            e.Accepted = false;
+            return;
+        }
+
+        if (item.PeerIdHex is null)
+        {
+            e.Accepted = true;
+            return;
+        }
+
+        var node = MeshtasticWin.AppState.Nodes.FirstOrDefault(n =>
+            string.Equals(n.IdHex, item.PeerIdHex, StringComparison.OrdinalIgnoreCase));
+        e.Accepted = node is not null && ShouldShowChatItem(node);
+    }
+
+    private void ScheduleChatFilterRefresh()
+    {
+        if (!_hideInactive && _hideOlderThanDays >= 99999 && string.IsNullOrWhiteSpace(_chatFilter))
+            return;
+
+        if (_chatFilterRefreshTimer.IsEnabled)
+            _chatFilterRefreshTimer.Stop();
+        _chatFilterRefreshTimer.Start();
+    }
+
+    private void RefreshChatListView()
+    {
+        ChatsView.View?.Refresh();
+        EnsureChatSelectionVisible();
+    }
+
+    private void EnsureChatSelectionVisible()
+    {
+        if (ChatList.SelectedItem is ChatListItemVm selected && IsChatItemVisible(selected))
+            return;
+
+        var firstVisible = ChatsView.View?.Cast<ChatListItemVm>().FirstOrDefault();
+        ChatList.SelectedItem = firstVisible;
+    }
+
+    private bool IsChatItemVisible(ChatListItemVm item)
+    {
+        var view = ChatsView.View;
+        if (view is null)
+            return true;
+
+        return view.Cast<ChatListItemVm>().Any(vm => ReferenceEquals(vm, item));
     }
 
     private void UnreadChanged(string? peerIdHex)
@@ -278,8 +324,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         else
             match = ChatListItems.FirstOrDefault(x => string.Equals(x.PeerIdHex, peer, StringComparison.OrdinalIgnoreCase));
 
-        if (match is not null)
+        if (match is not null && IsChatItemVisible(match))
             ChatList.SelectedItem = match;
+        else
+            EnsureChatSelectionVisible();
 
         _suppressListEvent = false;
     }
@@ -300,7 +348,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private void ChatSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _chatFilter = ChatSearchBox.Text ?? "";
-        ApplyChatFiltersToAllItems();
+        RefreshChatListView();
         SyncListToActiveChat();
     }
 
@@ -313,14 +361,14 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             _ => 90
         };
 
-        ApplyChatFiltersToAllItems();
+        RefreshChatListView();
         SyncListToActiveChat();
     }
 
     private void HideInactiveToggle_Click(object sender, RoutedEventArgs e)
     {
         _hideInactive = HideInactiveToggle.IsChecked == true;
-        ApplyChatFiltersToAllItems();
+        RefreshChatListView();
         SyncListToActiveChat();
     }
 
