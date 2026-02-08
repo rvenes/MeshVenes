@@ -22,9 +22,13 @@ namespace MeshtasticWin.Pages;
 public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
-    public ObservableCollection<MessageVm> ViewMessages { get; } = new();
     public ObservableCollection<ChatListItemVm> ChatListItems { get; } = new();
     public ObservableCollection<ChatListItemVm> VisibleChatItems { get; } = new();
+    private readonly ObservableCollection<MessageVm> _emptyMessages = new();
+    private ChatListItemVm? _selectedChatItem;
+
+    public ObservableCollection<MessageVm> SelectedChatMessages =>
+        _selectedChatItem?.Messages ?? _emptyMessages;
 
     private static readonly Regex UrlRegex = new(@"https?://\S+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -90,7 +94,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         }
 
         foreach (var message in MeshtasticWin.AppState.Messages)
-            ViewMessages.Add(CreateMessageVm(message));
+            AddMessageToChat(message, insertAtStart: false);
 
         RebuildVisibleChats();
         ApplyMessageVisibilityToAll();
@@ -109,39 +113,26 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
             if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
             {
-                var insertAt = e.NewStartingIndex < 0 ? ViewMessages.Count : e.NewStartingIndex;
                 foreach (MessageLive message in e.NewItems)
                 {
-                    ViewMessages.Insert(insertAt++, CreateMessageVm(message));
+                    AddMessageToChat(message, insertAtStart: e.NewStartingIndex == 0);
                 }
                 return;
             }
 
             if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems is not null)
             {
-                if (e.OldStartingIndex >= 0)
-                {
-                    for (var i = 0; i < e.OldItems.Count; i++)
-                        ViewMessages.RemoveAt(e.OldStartingIndex);
-                }
-                else
-                {
-                    foreach (MessageLive message in e.OldItems)
-                        RemoveMessageVm(message);
-                }
+                foreach (MessageLive message in e.OldItems)
+                    RemoveMessageVm(message);
                 return;
             }
 
             if (e.Action == NotifyCollectionChangedAction.Replace && e.NewItems is not null)
             {
-                var startIndex = e.NewStartingIndex;
                 for (var i = 0; i < e.NewItems.Count; i++)
                 {
-                    if (startIndex + i >= ViewMessages.Count)
-                        break;
-
                     if (e.NewItems[i] is MessageLive message)
-                        UpdateMessageVm(ViewMessages[startIndex + i], message);
+                        UpdateMessageVm(message);
                 }
             }
         });
@@ -345,7 +336,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private void SetActiveChatSelection(ChatListItemVm? chat)
     {
         ChatList.SelectedItem = chat;
+        _selectedChatItem = chat;
         MeshtasticWin.AppState.SetActiveChatPeer(chat?.PeerIdHex);
+        OnChanged(nameof(SelectedChatMessages));
     }
 
     private void ChatList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -356,8 +349,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         if (ChatList.SelectedItem is not ChatListItemVm target)
             return;
 
+        _selectedChatItem = target;
         MeshtasticWin.AppState.SetActiveChatPeer(target.PeerIdHex);
         MeshtasticWin.AppState.MarkChatRead(target.PeerIdHex);
+        OnChanged(nameof(SelectedChatMessages));
         SyncListToActiveChat();
     }
 
@@ -413,47 +408,104 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private void ApplyMessageVisibilityToAll()
     {
-        var chatKey = GetChatKey(MeshtasticWin.AppState.ActiveChatPeerIdHex);
-        foreach (var vm in ViewMessages)
-            vm.IsVisible = string.Equals(vm.PeerKey, chatKey, StringComparison.OrdinalIgnoreCase);
+        OnChanged(nameof(SelectedChatMessages));
     }
 
     private MessageVm CreateMessageVm(MessageLive message)
     {
         var vm = MessageVm.From(message);
         vm.PeerKey = GetChatKey(message);
-        vm.IsVisible = string.Equals(vm.PeerKey, GetChatKey(MeshtasticWin.AppState.ActiveChatPeerIdHex), StringComparison.OrdinalIgnoreCase);
         return vm;
     }
 
-    private void UpdateMessageVm(MessageVm vm, MessageLive message)
+    private void UpdateMessageVm(MessageLive message)
     {
-        vm.UpdateFrom(message);
-        vm.PeerKey = GetChatKey(message);
-        vm.IsVisible = string.Equals(vm.PeerKey, GetChatKey(MeshtasticWin.AppState.ActiveChatPeerIdHex), StringComparison.OrdinalIgnoreCase);
+        var chat = GetOrCreateChatForMessage(message);
+        var vm = FindMessageVm(chat.Messages, message);
+        if (vm is not null)
+            vm.UpdateFrom(message);
     }
 
     private void RemoveMessageVm(MessageLive message)
     {
-        var index = MeshtasticWin.AppState.Messages.IndexOf(message);
-        if (index >= 0 && index < ViewMessages.Count)
-            ViewMessages.RemoveAt(index);
+        var chat = GetOrCreateChatForMessage(message);
+        var vm = FindMessageVm(chat.Messages, message);
+        if (vm is not null)
+            chat.Messages.Remove(vm);
     }
 
     private void SyncMessagesWithAppState()
     {
-        var targetCount = MeshtasticWin.AppState.Messages.Count;
-        while (ViewMessages.Count > targetCount)
-            ViewMessages.RemoveAt(ViewMessages.Count - 1);
+        foreach (var chat in ChatListItems)
+            chat.Messages.Clear();
 
-        for (var i = 0; i < targetCount; i++)
-        {
-            var message = MeshtasticWin.AppState.Messages[i];
-            if (i >= ViewMessages.Count)
-                ViewMessages.Add(CreateMessageVm(message));
-            else
-                UpdateMessageVm(ViewMessages[i], message);
-        }
+        foreach (var message in MeshtasticWin.AppState.Messages)
+            AddMessageToChat(message, insertAtStart: false);
+    }
+
+    private static string NormalizePeerKey(string? peerIdHex)
+        => string.IsNullOrWhiteSpace(peerIdHex) ? "" : peerIdHex.Trim();
+
+    private static string GetChatKey(string? peerIdHex)
+    {
+        var normalized = NormalizePeerKey(peerIdHex);
+        return string.IsNullOrWhiteSpace(normalized)
+            ? "channel:primary"
+            : $"dm:{normalized}";
+    }
+
+    private static string GetChatKey(MessageLive message)
+    {
+        if (!message.IsDirect)
+            return "channel:primary";
+
+        var peerIdHex = message.IsMine ? message.ToIdHex : message.FromIdHex;
+        return $"dm:{NormalizePeerKey(peerIdHex)}";
+    }
+
+    private void AddMessageToChat(MessageLive message, bool insertAtStart)
+    {
+        var chat = GetOrCreateChatForMessage(message);
+        var vm = CreateMessageVm(message);
+        if (insertAtStart)
+            chat.Messages.Insert(0, vm);
+        else
+            chat.Messages.Add(vm);
+    }
+
+    private ChatListItemVm GetOrCreateChatForMessage(MessageLive message)
+    {
+        var chatKey = GetChatKey(message);
+        if (chatKey == "channel:primary")
+            return _primaryChatItem;
+
+        var peerIdHex = message.IsMine ? message.ToIdHex : message.FromIdHex;
+        peerIdHex = NormalizePeerKey(peerIdHex);
+
+        if (_chatItemsByPeer.TryGetValue(peerIdHex, out var existing))
+            return existing;
+
+        var node = MeshtasticWin.AppState.Nodes.FirstOrDefault(n =>
+            string.Equals(n.IdHex, peerIdHex, StringComparison.OrdinalIgnoreCase));
+
+        var item = node is not null
+            ? ChatListItemVm.ForNode(node)
+            : ChatListItemVm.ForPeer(peerIdHex);
+
+        _chatItemsByPeer[peerIdHex] = item;
+        ChatListItems.Add(item);
+        ScheduleChatFilterRefresh();
+        return item;
+    }
+
+    private static MessageVm? FindMessageVm(IEnumerable<MessageVm> messages, MessageLive message)
+    {
+        if (message.PacketId != 0)
+            return messages.FirstOrDefault(vm => vm.PacketId == message.PacketId && vm.IsMine);
+
+        return messages.FirstOrDefault(vm =>
+            string.Equals(vm.Text, message.Text ?? "", StringComparison.Ordinal) &&
+            string.Equals(vm.When, message.When ?? "", StringComparison.Ordinal));
     }
 
     private static string NormalizePeerKey(string? peerIdHex)
@@ -650,6 +702,15 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public ObservableCollection<MessageVm> Messages { get; } = new();
+
+    private string _chatKey = "channel:primary";
+    public string ChatKey
+    {
+        get => _chatKey;
+        set { if (_chatKey != value) { _chatKey = value; OnChanged(nameof(ChatKey)); } }
+    }
+
     private string _title = "";
     public string Title
     {
@@ -718,7 +779,8 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             SNR = "—",
             RSSI = "—",
             UnreadVisible = MeshtasticWin.AppState.HasUnread(null) ? Visibility.Visible : Visibility.Collapsed,
-            PeerIdHex = null
+            PeerIdHex = null,
+            ChatKey = "channel:primary"
         };
 
     public static ChatListItemVm ForNode(NodeLive n)
@@ -732,7 +794,21 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             SNR = n.SNR ?? "—",
             RSSI = n.RSSI ?? "—",
             UnreadVisible = MeshtasticWin.AppState.HasUnread(n.IdHex) ? Visibility.Visible : Visibility.Collapsed,
-            PeerIdHex = n.IdHex
+            PeerIdHex = n.IdHex,
+            ChatKey = $"dm:{n.IdHex}"
+        };
+
+    public static ChatListItemVm ForPeer(string peerIdHex)
+        => new()
+        {
+            Title = string.IsNullOrWhiteSpace(peerIdHex) ? "Unknown" : peerIdHex,
+            ShortId = "",
+            LastHeard = "—",
+            SNR = "—",
+            RSSI = "—",
+            UnreadVisible = Visibility.Collapsed,
+            PeerIdHex = peerIdHex,
+            ChatKey = $"dm:{peerIdHex}"
         };
 
     public void UpdateFromNode(NodeLive n)
@@ -743,6 +819,8 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
         SNR = n.SNR ?? "—";
         RSSI = n.RSSI ?? "—";
         UnreadVisible = MeshtasticWin.AppState.HasUnread(n.IdHex) ? Visibility.Visible : Visibility.Collapsed;
+        PeerIdHex = n.IdHex;
+        ChatKey = $"dm:{n.IdHex}";
     }
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -780,6 +858,20 @@ public sealed class MessageVm : INotifyPropertyChanged
         set { if (_when != value) { _when = value; OnChanged(nameof(When)); } }
     }
 
+    private uint _packetId;
+    public uint PacketId
+    {
+        get => _packetId;
+        set { if (_packetId != value) { _packetId = value; OnChanged(nameof(PacketId)); } }
+    }
+
+    private bool _isMine;
+    public bool IsMine
+    {
+        get => _isMine;
+        set { if (_isMine != value) { _isMine = value; OnChanged(nameof(IsMine)); } }
+    }
+
     private Visibility _heardVisible = Visibility.Collapsed;
     public Visibility HeardVisible
     {
@@ -812,20 +904,24 @@ public sealed class MessageVm : INotifyPropertyChanged
     public static MessageVm From(MessageLive m)
         => new()
         {
-            Header = m.Header,
-            Text = m.Text,
-            When = m.When,
+            Header = m.Header ?? "",
+            Text = m.Text ?? "",
+            When = m.When ?? "",
             HeardVisible = (m.IsMine && m.IsHeard) ? Visibility.Visible : Visibility.Collapsed,
-            DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed
+            DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed,
+            PacketId = m.PacketId,
+            IsMine = m.IsMine
         };
 
     public void UpdateFrom(MessageLive m)
     {
-        Header = m.Header;
-        Text = m.Text;
-        When = m.When;
+        Header = m.Header ?? "";
+        Text = m.Text ?? "";
+        When = m.When ?? "";
         HeardVisible = (m.IsMine && m.IsHeard) ? Visibility.Visible : Visibility.Collapsed;
         DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed;
+        PacketId = m.PacketId;
+        IsMine = m.IsMine;
     }
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

@@ -63,10 +63,10 @@
 	            <!-- Header -->
 	            <TextBlock Text="{x:Bind ActiveChatTitle, Mode=OneWay}" FontSize="30" FontWeight="SemiBold" />
 
-	            <!-- Messages -->
-	            <ListView Grid.Row="2"
-	                      x:Name="MessagesList"
-	                      ItemsSource="{x:Bind ViewMessages, Mode=OneWay}">
+            <!-- Messages -->
+            <ListView Grid.Row="2"
+                      x:Name="MessagesList"
+                      ItemsSource="{x:Bind SelectedChatMessages, Mode=OneWay}">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="local:MessageVm">
                         <StackPanel Spacing="4" Padding="10"
