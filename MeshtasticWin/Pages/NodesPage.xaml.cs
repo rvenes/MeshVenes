@@ -21,6 +21,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using System.Xml;
+using Windows.UI.Xaml.Data;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -790,25 +791,20 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         switch (_sortMode)
         {
             case SortMode.LastActive:
-                NodesView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(NodeLive.LastHeardUtc), ListSortDirection.Descending));
-                NodesView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(NodeLive.SortNameKey), ListSortDirection.Ascending));
-                NodesView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(NodeLive.SortIdKey), ListSortDirection.Ascending));
+                NodesView.SortDescriptions.Add(new SortDescription(nameof(NodeLive.LastHeardUtc), ListSortDirection.Descending));
+                NodesView.SortDescriptions.Add(new SortDescription(nameof(NodeLive.SortNameKey), ListSortDirection.Ascending));
+                NodesView.SortDescriptions.Add(new SortDescription(nameof(NodeLive.SortIdKey), ListSortDirection.Ascending));
                 break;
             default:
-                NodesView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(NodeLive.SortNameKey), ListSortDirection.Ascending));
-                NodesView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(NodeLive.SortIdKey), ListSortDirection.Ascending));
+                NodesView.SortDescriptions.Add(new SortDescription(nameof(NodeLive.SortNameKey), ListSortDirection.Ascending));
+                NodesView.SortDescriptions.Add(new SortDescription(nameof(NodeLive.SortIdKey), ListSortDirection.Ascending));
                 break;
         }
-
-        NodesView.View?.Refresh();
     }
 
     private void RefreshNodeSorting()
     {
-        if (NodesView.View is null)
-            return;
-
-        NodesView.View.Refresh();
+        ApplyNodeSorting();
     }
 
     private void HideInactiveToggle_Click(object sender, RoutedEventArgs e)

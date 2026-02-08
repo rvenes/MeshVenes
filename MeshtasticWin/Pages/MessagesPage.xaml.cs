@@ -14,6 +14,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
+using Windows.UI.Xaml.Data;
 
 namespace MeshtasticWin.Pages;
 
@@ -444,25 +445,20 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         switch (_sortMode)
         {
             case SortMode.LastActive:
-                ChatsView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(ChatListItemVm.LastHeardUtc), ListSortDirection.Descending));
-                ChatsView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(ChatListItemVm.SortNameKey), ListSortDirection.Ascending));
-                ChatsView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(ChatListItemVm.SortIdKey), ListSortDirection.Ascending));
+                ChatsView.SortDescriptions.Add(new SortDescription(nameof(ChatListItemVm.LastHeardUtc), ListSortDirection.Descending));
+                ChatsView.SortDescriptions.Add(new SortDescription(nameof(ChatListItemVm.SortNameKey), ListSortDirection.Ascending));
+                ChatsView.SortDescriptions.Add(new SortDescription(nameof(ChatListItemVm.SortIdKey), ListSortDirection.Ascending));
                 break;
             default:
-                ChatsView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(ChatListItemVm.SortNameKey), ListSortDirection.Ascending));
-                ChatsView.SortDescriptions.Add(new Microsoft.UI.Xaml.Data.SortDescription(nameof(ChatListItemVm.SortIdKey), ListSortDirection.Ascending));
+                ChatsView.SortDescriptions.Add(new SortDescription(nameof(ChatListItemVm.SortNameKey), ListSortDirection.Ascending));
+                ChatsView.SortDescriptions.Add(new SortDescription(nameof(ChatListItemVm.SortIdKey), ListSortDirection.Ascending));
                 break;
         }
-
-        ChatsView.View?.Refresh();
     }
 
     private void RefreshChatSorting()
     {
-        if (ChatsView.View is null)
-            return;
-
-        ChatsView.View.Refresh();
+        ApplyChatSorting();
     }
 
     private MessageVm CreateMessageVm(MessageLive message)
