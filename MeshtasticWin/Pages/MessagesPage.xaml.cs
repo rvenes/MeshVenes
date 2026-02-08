@@ -1072,3 +1072,5 @@ public sealed class MessageVm : INotifyPropertyChanged
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
+// TEMP: noop commit to advance main so Codex environment refreshes.
+// Can be removed once sorting fix PR is merged.
