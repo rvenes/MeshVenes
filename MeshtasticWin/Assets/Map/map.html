@@ -235,6 +235,7 @@
     function zoomTo(idHex){
       const m = markers.get(idHex);
       if (!m) return;
+      closeAllTooltips();
       map.setView(m.getLatLng(), Math.max(map.getZoom(), 14));
       m.openTooltip();
     }
@@ -336,6 +337,12 @@
       clearPeek();
     }
 
+    function closeAllTooltips(){
+      for (const m of markers.values()){
+        m.closeTooltip();
+      }
+    }
+
     window.mwTrackSet = mwTrackSet;
     window.mwTrackAppend = mwTrackAppend;
     window.mwTrackClear = mwTrackClear;
@@ -347,7 +354,7 @@
         if (!msg || !msg.type) return;
 
         if (msg.type === "nodes") { setNodes(msg.nodes || []); return; }
-        if (msg.type === "selected") { selectedId = msg.idHex || null; highlight(); if (selectedId) zoomTo(selectedId); return; }
+        if (msg.type === "selected") { selectedId = msg.idHex || null; highlight(); closeAllTooltips(); if (selectedId) zoomTo(selectedId); return; }
         if (msg.type === "fitAll") { fitAll(); return; }
         if (msg.type === "zoomTo") { zoomTo(msg.idHex); return; }
         if (msg.type === "positionPeek") { showPositionPeek(msg.lat, msg.lon); return; }
