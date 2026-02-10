@@ -252,28 +252,31 @@
                             </StackPanel>
                         </controls:TabViewItem.Header>
                         <Grid RowDefinitions="Auto,*" Padding="12">
-                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Button Content="Show folder"
-                                        Tag="Position"
-                                        Click="ShowLogFolder_Click"
-                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
-                                <TextBlock Text="Delete older than (days):" VerticalAlignment="Center"/>
-                                <controls:NumberBox Width="96"
-                                                    Value="{x:Bind PositionLogRetentionDaysValue, Mode=TwoWay}"
-                                                    Minimum="1"
-                                                    SpinButtonPlacementMode="Inline"/>
-                                <Button Content="Delete"
-                                        Tag="Position"
-                                        Click="DeleteLogOlder_Click"
-                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
-                                <Button Content="Delete all"
-                                        Tag="Position"
-                                        Click="DeleteLogAll_Click"
-                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
-                                <Button Content="Export..."
-                                        Click="ExportPositionLog_Click"
-                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
-                            </StackPanel>
+                            <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+                                <TextBlock Text="{x:Bind PositionLogCountText, Mode=OneWay}" FontWeight="SemiBold"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Button Content="Show folder"
+                                            Tag="Position"
+                                            Click="ShowLogFolder_Click"
+                                            IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                    <TextBlock Text="Delete older than (days):" VerticalAlignment="Center"/>
+                                    <controls:NumberBox Width="96"
+                                                        Value="{x:Bind PositionLogRetentionDaysValue, Mode=TwoWay}"
+                                                        Minimum="1"
+                                                        SpinButtonPlacementMode="Inline"/>
+                                    <Button Content="Delete"
+                                            Tag="Position"
+                                            Click="DeleteLogOlder_Click"
+                                            IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                    <Button Content="Delete all"
+                                            Tag="Position"
+                                            Click="DeleteLogAll_Click"
+                                            IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                    <Button Content="Export..."
+                                            Click="ExportPositionLog_Click"
+                                            IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                </StackPanel>
+                            </Grid>
                             <ListView Grid.Row="1"
                                       x:Name="PositionLogList"
                                       ItemsSource="{x:Bind PositionLogEntries, Mode=OneWay}"
@@ -283,20 +286,38 @@
                                       ItemClick="PositionLogList_ItemClick">
                                 <ListView.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding DisplayText}"
-                                                   TextWrapping="NoWrap"
-                                                   FontFamily="Consolas"
-                                                   IsRightTapEnabled="True"
-                                                   RightTapped="PositionLogEntry_RightTapped">
-                                            <TextBlock.ContextFlyout>
+                                        <Grid ColumnDefinitions="190,280,120,180"
+                                              ColumnSpacing="12"
+                                              Padding="2"
+                                              IsRightTapEnabled="True"
+                                              RightTapped="PositionLogEntry_RightTapped">
+                                            <Grid.ContextFlyout>
                                                 <MenuFlyout>
                                                     <MenuFlyoutItem Text="Open position in Google Maps"
                                                                     Click="PositionLogOpenMaps_Click"
                                                                     CommandParameter="{Binding}"
                                                                     IsEnabled="{Binding HasValidPosition}"/>
                                                 </MenuFlyout>
-                                            </TextBlock.ContextFlyout>
-                                        </TextBlock>
+                                            </Grid.ContextFlyout>
+                                            <TextBlock Text="{Binding TimestampText}"
+                                                       TextWrapping="NoWrap"
+                                                       FontFamily="Consolas"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding CoordinatesDisplay}"
+                                                       TextWrapping="NoWrap"
+                                                       FontFamily="Consolas"
+                                                       Foreground="#FF64B5F6"/>
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding AltitudeDisplay}"
+                                                       TextWrapping="NoWrap"
+                                                       FontFamily="Consolas"
+                                                       Foreground="#FFFFB74D"/>
+                                            <TextBlock Grid.Column="3"
+                                                       Text="{Binding SourceDisplay}"
+                                                       TextWrapping="NoWrap"
+                                                       FontFamily="Consolas"
+                                                       Foreground="#FF81C784"/>
+                                        </Grid>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
                             </ListView>
@@ -312,26 +333,29 @@
                             </StackPanel>
                         </controls:TabViewItem.Header>
                         <Grid RowDefinitions="Auto,*" Padding="12">
-                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Button Content="Show folder"
-                                        Tag="TraceRoute"
-                                        Click="ShowLogFolder_Click"
-                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
-                                <TextBlock Text="Delete older than (days):" VerticalAlignment="Center"/>
-                                <controls:NumberBox Width="96"
-                                                    Value="{x:Bind PositionLogRetentionDaysValue, Mode=TwoWay}"
-                                                    Minimum="1"
-                                                    SpinButtonPlacementMode="Inline"/>
-                                <Button Content="Delete"
-                                        Tag="TraceRoute"
-                                        Click="DeleteLogOlder_Click"
-                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
-                                <Button Content="Delete all"
-                                        Tag="TraceRoute"
-                                        Click="DeleteLogAll_Click"
-                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
-                                <Button Content="Export..." IsEnabled="False"/>
-                            </StackPanel>
+                            <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+                                <TextBlock Text="{x:Bind TraceRouteLogCountText, Mode=OneWay}" FontWeight="SemiBold"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Button Content="Show folder"
+                                            Tag="TraceRoute"
+                                            Click="ShowLogFolder_Click"
+                                            IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                    <TextBlock Text="Delete older than (days):" VerticalAlignment="Center"/>
+                                    <controls:NumberBox Width="96"
+                                                        Value="{x:Bind PositionLogRetentionDaysValue, Mode=TwoWay}"
+                                                        Minimum="1"
+                                                        SpinButtonPlacementMode="Inline"/>
+                                    <Button Content="Delete"
+                                            Tag="TraceRoute"
+                                            Click="DeleteLogOlder_Click"
+                                            IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                    <Button Content="Delete all"
+                                            Tag="TraceRoute"
+                                            Click="DeleteLogAll_Click"
+                                            IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                    <Button Content="Export..." IsEnabled="False"/>
+                                </StackPanel>
+                            </Grid>
                             <Grid Grid.Row="1" Margin="0,8,0,0">
                                 <ListView x:Name="TraceRouteLogList"
                                           ItemsSource="{x:Bind TraceRouteLogEntries, Mode=OneWay}"
@@ -347,16 +371,16 @@
                                                 <StackPanel Spacing="2">
                                                     <TextBlock Text="{x:Bind HeaderText}"
                                                                FontFamily="Consolas"
+                                                               Foreground="{x:Bind HeaderBrush}"
+                                                               FontWeight="SemiBold"
                                                                TextWrapping="Wrap"/>
                                                     <TextBlock Text="{x:Bind PathText}"
                                                                FontFamily="Consolas"
+                                                               Foreground="{x:Bind PathBrush}"
                                                                TextWrapping="Wrap"/>
                                                     <TextBlock Text="{x:Bind RouteBackHeaderText}"
                                                                FontFamily="Consolas"
-                                                               TextWrapping="Wrap"
-                                                               Visibility="{x:Bind RouteBackVisibility}"/>
-                                                    <TextBlock Text="{x:Bind RouteBackPathText}"
-                                                               FontFamily="Consolas"
+                                                               Foreground="{x:Bind RouteBackBrush}"
                                                                TextWrapping="Wrap"
                                                                Visibility="{x:Bind RouteBackVisibility}"/>
                                                 </StackPanel>
