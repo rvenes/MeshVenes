@@ -1,6 +1,7 @@
 using System;
+using System.Threading;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using Microsoft.WindowsAppRuntime.Bootstrap;
 using WinRT;
 
 namespace MeshtasticWin;
@@ -10,19 +11,13 @@ public static class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        Bootstrap.Initialize(0x00010008);
         ComWrappersSupport.InitializeComWrappers();
 
-        try
+        Application.Start(_ =>
         {
-            Application.Start(_ =>
-            {
-                _ = new App();
-            });
-        }
-        finally
-        {
-            Bootstrap.Shutdown();
-        }
+            var context = new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread());
+            SynchronizationContext.SetSynchronizationContext(context);
+            _ = new App();
+        });
     }
 }
