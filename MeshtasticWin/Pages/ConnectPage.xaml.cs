@@ -4,9 +4,11 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using MeshtasticWin.Services;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Devices.Bluetooth;
@@ -21,6 +23,8 @@ public sealed partial class ConnectPage : Page
     private const string TcpHostSettingKey = "LastTcpHost";
     private const string TcpPortSettingKey = "LastTcpPort";
     private const string BluetoothDeviceIdSettingKey = "LastBluetoothDeviceId";
+    private static readonly object _fallbackSettingsLock = new();
+    private static Dictionary<string, string>? _fallbackSettings;
 
     private bool _handlersHooked;
     private bool _hasPorts;
@@ -359,13 +363,90 @@ public sealed partial class ConnectPage : Page
 
     private static string? LoadSetting(string key)
     {
-        var settings = ApplicationData.Current.LocalSettings.Values;
-        return settings.TryGetValue(key, out var value) ? value as string : null;
+        try
+        {
+            var settings = ApplicationData.Current.LocalSettings.Values;
+            return settings.TryGetValue(key, out var value) ? value as string : null;
+        }
+        catch
+        {
+            return LoadFallbackSetting(key);
+        }
     }
 
     private static void SaveSetting(string key, string value)
     {
-        ApplicationData.Current.LocalSettings.Values[key] = value;
+        try
+        {
+            ApplicationData.Current.LocalSettings.Values[key] = value;
+            return;
+        }
+        catch
+        {
+            SaveFallbackSetting(key, value);
+        }
+    }
+
+    private static string? LoadFallbackSetting(string key)
+    {
+        lock (_fallbackSettingsLock)
+        {
+            EnsureFallbackSettingsLoaded();
+            return _fallbackSettings is not null && _fallbackSettings.TryGetValue(key, out var value) ? value : null;
+        }
+    }
+
+    private static void SaveFallbackSetting(string key, string value)
+    {
+        lock (_fallbackSettingsLock)
+        {
+            EnsureFallbackSettingsLoaded();
+            _fallbackSettings ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _fallbackSettings[key] = value;
+            PersistFallbackSettings();
+        }
+    }
+
+    private static void EnsureFallbackSettingsLoaded()
+    {
+        if (_fallbackSettings is not null)
+            return;
+
+        var path = Path.Combine(AppDataPaths.BasePath, "connect_settings.json");
+        if (!File.Exists(path))
+        {
+            _fallbackSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            return;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            _fallbackSettings = JsonSerializer.Deserialize<Dictionary<string, string>>(json)
+                ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            _fallbackSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static void PersistFallbackSettings()
+    {
+        try
+        {
+            var path = Path.Combine(AppDataPaths.BasePath, "connect_settings.json");
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            var json = JsonSerializer.Serialize(_fallbackSettings ?? new Dictionary<string, string>());
+            File.WriteAllText(path, json);
+        }
+        catch
+        {
+            // Ignore settings persistence errors in unpackaged mode.
+        }
     }
 
     private async void Disconnect_Click(object sender, RoutedEventArgs e)
