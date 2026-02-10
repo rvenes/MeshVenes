@@ -1,12 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 
 namespace MeshtasticWin.Pages;
 
 public sealed class TraceRouteLogEntry : INotifyPropertyChanged
 {
+    private static readonly SolidColorBrush ActiveHeaderBrush = new(ColorHelper.FromArgb(255, 79, 195, 247));
+    private static readonly SolidColorBrush PassiveHeaderBrush = new(ColorHelper.FromArgb(255, 255, 183, 77));
+    private static readonly SolidColorBrush ForwardPathBrush = new(ColorHelper.FromArgb(255, 224, 224, 224));
+    private static readonly SolidColorBrush BackPathBrush = new(ColorHelper.FromArgb(255, 129, 199, 132));
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public TraceRouteLogEntry(
@@ -49,6 +56,9 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
             ? Visibility.Collapsed
             : Visibility.Visible;
         MetricsVisibility = string.IsNullOrWhiteSpace(overlayMetricsText) ? Visibility.Collapsed : Visibility.Visible;
+        HeaderBrush = isPassive ? PassiveHeaderBrush : ActiveHeaderBrush;
+        PathBrush = ForwardPathBrush;
+        RouteBackBrush = BackPathBrush;
     }
 
     public string RawLine { get; }
@@ -66,6 +76,9 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
     public string? RouteBackHeaderText { get; private set; }
     public string? RouteBackPathText { get; private set; }
     public Visibility RouteBackVisibility { get; private set; }
+    public Brush HeaderBrush { get; private set; }
+    public Brush PathBrush { get; private set; }
+    public Brush RouteBackBrush { get; private set; }
 
     public string OverlayHeaderText { get; private set; }
     public string OverlayRouteText { get; private set; }
@@ -94,12 +107,18 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
             ? Visibility.Collapsed
             : Visibility.Visible;
         MetricsVisibility = string.IsNullOrWhiteSpace(OverlayMetricsText) ? Visibility.Collapsed : Visibility.Visible;
+        HeaderBrush = IsPassive ? PassiveHeaderBrush : ActiveHeaderBrush;
+        PathBrush = ForwardPathBrush;
+        RouteBackBrush = BackPathBrush;
 
         OnChanged(nameof(HeaderText));
         OnChanged(nameof(PathText));
         OnChanged(nameof(RouteBackHeaderText));
         OnChanged(nameof(RouteBackPathText));
         OnChanged(nameof(RouteBackVisibility));
+        OnChanged(nameof(HeaderBrush));
+        OnChanged(nameof(PathBrush));
+        OnChanged(nameof(RouteBackBrush));
         OnChanged(nameof(OverlayHeaderText));
         OnChanged(nameof(OverlayRouteText));
         OnChanged(nameof(OverlayRouteBackText));
