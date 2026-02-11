@@ -7,12 +7,17 @@ using System.Threading;
 using System.Threading.Tasks;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
+using Windows.Devices.Enumeration;
 using Windows.Storage.Streams;
 
 namespace MeshtasticWin.Services;
 
 public sealed class BluetoothLeTransport : IRadioTransport
 {
+    // Some Meshtastic BLE firmwares/devices throw COMException on CCCD writes.
+    // Polling mode avoids that failure path and keeps connection stable.
+    private static readonly bool PreferPollingMode = false;
+
     private static readonly Guid MeshtasticServiceUuid = new("6ba1b218-15a8-461f-9fa8-5dcae273eafd");
     private static readonly Guid ToRadioUuid = new("f75c76d2-129e-4dad-a1dd-7866124401e7");
     private static readonly Guid FromRadioUuid = new("2c55e69e-4993-11ed-b878-0242ac120002");
@@ -37,7 +42,7 @@ public sealed class BluetoothLeTransport : IRadioTransport
     public event Action<string>? Log;
     public event Action<byte[]>? BytesReceived;
 
-    public bool IsConnected => _device is not null && _toRadio is not null && _fromRadio is not null && _notifyCharacteristic is not null;
+    public bool IsConnected => _device is not null && _toRadio is not null && _fromRadio is not null;
 
     public BluetoothLeTransport(string deviceId)
     {
@@ -85,19 +90,63 @@ public sealed class BluetoothLeTransport : IRadioTransport
                     $"Meshtastic FromRadio characteristic not found. Available chars: {await DescribeCharacteristicsAsync(service)}");
             }
 
-            notifyCharacteristic = SelectNotifyCharacteristic(fromRadio, fromNum);
-            if (notifyCharacteristic is null)
-                throw new InvalidOperationException("Meshtastic BLE does not expose a notify/indicate characteristic (FromRadio/FromNum).");
-
-            notifyCharacteristic.ValueChanged += Notify_ValueChanged;
-            try
+            if (PreferPollingMode)
             {
-                await EnableNotificationsAsync(notifyCharacteristic);
+                Log?.Invoke("BLE: using polling mode (notifications disabled for compatibility).");
             }
-            catch
+            else
             {
-                notifyCharacteristic.ValueChanged -= Notify_ValueChanged;
-                throw;
+                await TryEnsurePairedAsync(_deviceId).ConfigureAwait(false);
+
+                var notifyCandidates = GetNotifyCandidates(fromRadio, fromNum);
+                string? notifyError = null;
+                foreach (var candidate in notifyCandidates)
+                {
+                    candidate.ValueChanged += Notify_ValueChanged;
+                    try
+                    {
+                        var enableError = await EnableNotificationsAsync(candidate);
+                        if (enableError is not null && IsGattPermissionError(enableError))
+                        {
+                            var pairedNow = await TryEnsurePairedAsync(_deviceId).ConfigureAwait(false);
+                            if (pairedNow)
+                                enableError = await EnableNotificationsAsync(candidate).ConfigureAwait(false);
+                        }
+
+                        if (enableError is null)
+                        {
+                            notifyCharacteristic = candidate;
+                            Log?.Invoke($"BLE: notifications enabled on {candidate.Uuid:D}");
+                            break;
+                        }
+
+                        notifyError = $"{candidate.Uuid:D}: {enableError}";
+                    }
+                    catch (Exception ex)
+                    {
+                        notifyError = $"{candidate.Uuid:D}: {ex.Message}";
+                        try { candidate.ValueChanged -= Notify_ValueChanged; }
+                        catch (ObjectDisposedException) { }
+                        catch (NullReferenceException) { }
+                        catch (IOException) { }
+                        catch (COMException) { }
+                        continue;
+                    }
+
+                    try { candidate.ValueChanged -= Notify_ValueChanged; }
+                    catch (ObjectDisposedException) { }
+                    catch (NullReferenceException) { }
+                    catch (IOException) { }
+                    catch (COMException) { }
+                }
+
+                if (notifyCharacteristic is null)
+                {
+                    if (notifyCandidates.Count == 0)
+                        Log?.Invoke("BLE: no Notify/Indicate characteristic found; using polling fallback.");
+                    else
+                        Log?.Invoke($"BLE: unable to enable notifications; using polling fallback. {notifyError}");
+                }
             }
 
             lock (_sync)
@@ -198,16 +247,6 @@ public sealed class BluetoothLeTransport : IRadioTransport
             catch (NullReferenceException) { }
             catch (IOException) { }
             catch (COMException) { }
-
-            try
-            {
-                await notifyCharacteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
-                    GattClientCharacteristicConfigurationDescriptorValue.None);
-            }
-            catch (ObjectDisposedException) { }
-            catch (NullReferenceException) { }
-            catch (IOException) { }
-            catch (COMException) { }
         }
 
         try { service?.Dispose(); }
@@ -230,8 +269,11 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
     public async Task SendAsync(byte[] data, CancellationToken ct = default)
     {
+        if (Volatile.Read(ref _isDisconnecting) != 0)
+            return;
+
         var toRadio = _toRadio;
-        if (toRadio is null || Volatile.Read(ref _isDisconnecting) != 0)
+        if (toRadio is null)
             throw new InvalidOperationException("Not connected");
 
         var payload = TryExtractFramedPayload(data);
@@ -439,31 +481,24 @@ public sealed class BluetoothLeTransport : IRadioTransport
         }
     }
 
-    private static GattCharacteristic? SelectNotifyCharacteristic(
+    private static System.Collections.Generic.List<GattCharacteristic> GetNotifyCandidates(
         GattCharacteristic? fromRadio,
         GattCharacteristic? fromNum)
     {
+        var candidates = new System.Collections.Generic.List<GattCharacteristic>(2);
+        // Prefer FromRadio first, then FromNum fallback.
+
         if (fromRadio is not null)
         {
-            var p = fromRadio.CharacteristicProperties;
-            if ((p & GattCharacteristicProperties.Notify) != 0 ||
-                (p & GattCharacteristicProperties.Indicate) != 0)
-            {
-                return fromRadio;
-            }
+            candidates.Add(fromRadio);
         }
 
-        if (fromNum is not null)
+        if (fromNum is not null && !candidates.Any(c => c.Uuid == fromNum.Uuid))
         {
-            var p = fromNum.CharacteristicProperties;
-            if ((p & GattCharacteristicProperties.Notify) != 0 ||
-                (p & GattCharacteristicProperties.Indicate) != 0)
-            {
-                return fromNum;
-            }
+            candidates.Add(fromNum);
         }
 
-        return null;
+        return candidates;
     }
 
     private async Task DrainFromRadioMailboxAsync(uint? targetFromNum)
@@ -501,15 +536,11 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
     private async Task<bool> TryReadOneFromRadioAsync(GattCharacteristic fromRadio)
     {
-        GattReadResult readResult;
-        try
-        {
-            readResult = await fromRadio.ReadValueAsync(BluetoothCacheMode.Uncached);
-        }
-        catch (ObjectDisposedException) { return false; }
-        catch (NullReferenceException) { return false; }
-        catch (IOException) { return false; }
-        catch (COMException) { return false; }
+        var readResult = await TryReadCharacteristicAsync(fromRadio, BluetoothCacheMode.Uncached).ConfigureAwait(false)
+            ?? await TryReadCharacteristicAsync(fromRadio, BluetoothCacheMode.Cached).ConfigureAwait(false);
+
+        if (readResult is null)
+            return false;
 
         if (readResult.Status != GattCommunicationStatus.Success || readResult.Value is null)
             return false;
@@ -530,17 +561,27 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
     private static async Task<uint?> TryReadFromNumAsync(GattCharacteristic fromNum)
     {
+        var result = await TryReadCharacteristicAsync(fromNum, BluetoothCacheMode.Uncached).ConfigureAwait(false)
+            ?? await TryReadCharacteristicAsync(fromNum, BluetoothCacheMode.Cached).ConfigureAwait(false);
+
+        if (result is null)
+            return null;
+
+        if (result.Status != GattCommunicationStatus.Success || result.Value is null)
+            return null;
+
+        var reader = DataReader.FromBuffer(result.Value);
+        if (reader.UnconsumedBufferLength < 4)
+            return null;
+
+        return reader.ReadUInt32();
+    }
+
+    private static async Task<GattReadResult?> TryReadCharacteristicAsync(GattCharacteristic characteristic, BluetoothCacheMode cacheMode)
+    {
         try
         {
-            var result = await fromNum.ReadValueAsync(BluetoothCacheMode.Uncached);
-            if (result.Status != GattCommunicationStatus.Success || result.Value is null)
-                return null;
-
-            var reader = DataReader.FromBuffer(result.Value);
-            if (reader.UnconsumedBufferLength < 4)
-                return null;
-
-            return reader.ReadUInt32();
+            return await characteristic.ReadValueAsync(cacheMode);
         }
         catch (ObjectDisposedException) { return null; }
         catch (NullReferenceException) { return null; }
@@ -548,30 +589,25 @@ public sealed class BluetoothLeTransport : IRadioTransport
         catch (COMException) { return null; }
     }
 
-    private static async Task EnableNotificationsAsync(GattCharacteristic characteristic)
+    private static async Task<string?> EnableNotificationsAsync(GattCharacteristic characteristic)
     {
+        var hasCccd = await HasCccdAsync(characteristic).ConfigureAwait(false);
+        if (!hasCccd)
+            return "Characteristic has no CCCD descriptor.";
+
         var props = characteristic.CharacteristicProperties;
 
         var tryNotify = (props & GattCharacteristicProperties.Notify) != 0;
         var tryIndicate = (props & GattCharacteristicProperties.Indicate) != 0;
 
         if (!tryNotify && !tryIndicate)
-            throw new InvalidOperationException("Meshtastic FromRadio characteristic does not support Notify/Indicate.");
-
-        if (tryNotify)
         {
-            try
-            {
-                var notifyStatus = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
-                    GattClientCharacteristicConfigurationDescriptorValue.Notify);
-                if (notifyStatus == GattCommunicationStatus.Success)
-                    return;
-            }
-            catch (COMException)
-            {
-                // Fallback to Indicate when Notify CCCD write is rejected by the BLE stack/device.
-            }
+            // Some BLE stacks/firmware report incomplete properties; probe both modes anyway.
+            tryNotify = true;
+            tryIndicate = true;
         }
+
+        string? lastError = null;
 
         if (tryIndicate)
         {
@@ -580,23 +616,129 @@ public sealed class BluetoothLeTransport : IRadioTransport
                 var indicateStatus = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
                     GattClientCharacteristicConfigurationDescriptorValue.Indicate);
                 if (indicateStatus == GattCommunicationStatus.Success)
-                    return;
+                    return null;
+
+                lastError = $"Indicate status={indicateStatus}";
             }
-            catch (COMException ex)
+            catch (Exception ex)
             {
-                throw new InvalidOperationException(
-                    $"Unable to enable BLE notifications/indications (0x{ex.HResult:X8}).", ex);
+                lastError = ex is COMException comEx
+                    ? $"Indicate COMException 0x{comEx.HResult:X8}"
+                    : $"Indicate {ex.GetType().Name}: {ex.Message}";
             }
         }
 
-        throw new InvalidOperationException("Unable to enable BLE notifications/indications.");
+        if (tryNotify)
+        {
+            try
+            {
+                var notifyStatus = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
+                    GattClientCharacteristicConfigurationDescriptorValue.Notify);
+                if (notifyStatus == GattCommunicationStatus.Success)
+                    return null;
+
+                lastError = $"Notify status={notifyStatus}";
+            }
+            catch (Exception ex)
+            {
+                // Fallback to Notify after Indicate, some devices only accept one mode.
+                lastError = ex is COMException comEx
+                    ? $"Notify COMException 0x{comEx.HResult:X8}"
+                    : $"Notify {ex.GetType().Name}: {ex.Message}";
+            }
+        }
+
+        return lastError ?? "Unable to enable BLE notifications/indications.";
+    }
+
+    private static async Task<bool> HasCccdAsync(GattCharacteristic characteristic)
+    {
+        try
+        {
+            var result = await characteristic.GetDescriptorsAsync(BluetoothCacheMode.Uncached);
+            if (result.Status != GattCommunicationStatus.Success)
+                return false;
+
+            return result.Descriptors.Any(d => d.Uuid == GattDescriptorUuids.ClientCharacteristicConfiguration);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsGattPermissionError(string? error)
+    {
+        if (string.IsNullOrWhiteSpace(error))
+            return false;
+
+        return error.IndexOf("0x80650005", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               error.IndexOf("0x80650003", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private async Task<bool> TryEnsurePairedAsync(string deviceId)
+    {
+        try
+        {
+            var info = await DeviceInformation.CreateFromIdAsync(deviceId);
+            if (info?.Pairing is null)
+                return false;
+
+            if (info.Pairing.IsPaired)
+                return true;
+
+            if (!info.Pairing.CanPair)
+                return false;
+
+            DevicePairingResult pairResult;
+            try
+            {
+                pairResult = await info.Pairing.PairAsync(DevicePairingProtectionLevel.Encryption);
+            }
+            catch
+            {
+                pairResult = await info.Pairing.PairAsync();
+            }
+
+            if (pairResult.Status == DevicePairingResultStatus.Paired ||
+                pairResult.Status == DevicePairingResultStatus.AlreadyPaired)
+            {
+                Log?.Invoke("BLE: pairing completed.");
+                return true;
+            }
+
+            Log?.Invoke($"BLE: pairing status={pairResult.Status}.");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log?.Invoke($"BLE: pairing failed: {ex.Message}");
+            return false;
+        }
     }
 
     private async Task PollLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested && Volatile.Read(ref _isDisconnecting) == 0)
         {
-            await DrainFromRadioMailboxAsync(null).ConfigureAwait(false);
+            var fromNum = _fromNum;
+            if (fromNum is not null)
+            {
+                var currentFromNum = await TryReadFromNumAsync(fromNum).ConfigureAwait(false);
+                if (currentFromNum.HasValue && currentFromNum.Value != _lastFromNum)
+                {
+                    await DrainFromRadioMailboxAsync(currentFromNum.Value).ConfigureAwait(false);
+                }
+                else
+                {
+                    await DrainFromRadioMailboxAsync(null).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                await DrainFromRadioMailboxAsync(null).ConfigureAwait(false);
+            }
+
             try
             {
                 await Task.Delay(250, ct).ConfigureAwait(false);
