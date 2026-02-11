@@ -9,6 +9,7 @@ using System.IO;
 using System.IO.Ports;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Devices.Bluetooth;
@@ -216,6 +217,7 @@ public sealed partial class ConnectPage : Page
                 return;
             }
 
+            AddLogLineUi($"Connecting to Bluetooth {option.DisplayName}...");
             await RadioClient.Instance.ConnectBluetoothAsync(option.DeviceId, option.DisplayName, RunOnUi(), LogToUi);
 
             SaveSetting(BluetoothDeviceIdSettingKey, option.DeviceId);
@@ -224,7 +226,7 @@ public sealed partial class ConnectPage : Page
         catch (Exception ex)
         {
             StatusText.Text = "Error";
-            AddLogLineUi(ex.Message);
+            AddLogLineUi($"Bluetooth connect failed: {ex.Message}");
             UpdateUiFromClient();
         }
     }
@@ -297,15 +299,24 @@ public sealed partial class ConnectPage : Page
         try
         {
             BluetoothCombo.Items.Clear();
+            BluetoothCombo.Items.Add(new ComboBoxItem
+            {
+                Content = "(scanning...)",
+                IsEnabled = false
+            });
+            BluetoothCombo.SelectedIndex = 0;
+            BluetoothCombo.IsEnabled = false;
+            _hasBluetoothDevices = false;
+            UpdateUiFromClient();
 
-            var selector = BluetoothLEDevice.GetDeviceSelector();
-            var devices = await DeviceInformation.FindAllAsync(selector);
+            var devices = await ScanBluetoothDevicesAsync();
 
             var options = devices
                 .Select(d => new BluetoothDeviceOption(
                     d.Id,
-                    string.IsNullOrWhiteSpace(d.Name) ? "(Unnamed device)" : d.Name))
-                .OrderBy(d => d.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    BuildBluetoothDisplayName(d)))
+                .OrderBy(d => GetBluetoothSortKey(d.DisplayName))
+                .ThenBy(d => d.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             if (options.Count == 0)
@@ -318,6 +329,7 @@ public sealed partial class ConnectPage : Page
                 BluetoothCombo.SelectedIndex = 0;
                 BluetoothCombo.IsEnabled = false;
                 _hasBluetoothDevices = false;
+                UpdateUiFromClient();
                 return;
             }
 
@@ -333,6 +345,7 @@ public sealed partial class ConnectPage : Page
                 : options[0];
 
             BluetoothCombo.SelectedItem = initial;
+            UpdateUiFromClient();
         }
         catch (Exception ex)
         {
@@ -346,7 +359,106 @@ public sealed partial class ConnectPage : Page
             BluetoothCombo.IsEnabled = false;
             _hasBluetoothDevices = false;
             AddLogLineUi($"Bluetooth scan failed: {ex.Message}");
+            UpdateUiFromClient();
         }
+    }
+
+    private static async Task<IReadOnlyList<DeviceInformation>> ScanBluetoothDevicesAsync()
+    {
+        const string BleProtocolAqs = "System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\"";
+        var perSelectorTimeout = TimeSpan.FromSeconds(4);
+
+        var selectors = new[]
+        {
+            BluetoothLEDevice.GetDeviceSelector(),
+            BluetoothLEDevice.GetDeviceSelectorFromPairingState(true),
+            BluetoothLEDevice.GetDeviceSelectorFromPairingState(false),
+            BleProtocolAqs
+        };
+
+        var byId = new Dictionary<string, DeviceInformation>(StringComparer.OrdinalIgnoreCase);
+        var errors = new List<Exception>();
+        var results = await Task.WhenAll(selectors
+            .Distinct(StringComparer.Ordinal)
+            .Select(selector => ScanSelectorAsync(selector, perSelectorTimeout)));
+        var anySelectorSucceeded = false;
+        foreach (var result in results)
+        {
+            if (result.Error is not null)
+            {
+                errors.Add(result.Error);
+                continue;
+            }
+
+            if (result.TimedOut)
+                continue;
+
+            anySelectorSucceeded = true;
+
+            foreach (var d in result.Devices)
+            {
+                if (string.IsNullOrWhiteSpace(d.Id))
+                    continue;
+
+                if (!byId.TryGetValue(d.Id, out var existing))
+                {
+                    byId[d.Id] = d;
+                    continue;
+                }
+
+                // Prefer entries with a readable name.
+                if (string.IsNullOrWhiteSpace(existing.Name) && !string.IsNullOrWhiteSpace(d.Name))
+                    byId[d.Id] = d;
+            }
+        }
+
+        if (!anySelectorSucceeded && errors.Count > 0)
+            throw new InvalidOperationException($"Bluetooth scan failed: {errors[0].Message}", errors[0]);
+
+        return byId.Values.ToList();
+    }
+
+    private static async Task<BluetoothSelectorScanResult> ScanSelectorAsync(string selector, TimeSpan timeout)
+    {
+        try
+        {
+            var queryTask = DeviceInformation.FindAllAsync(selector).AsTask();
+            var completedTask = await Task.WhenAny(queryTask, Task.Delay(timeout));
+            if (completedTask != queryTask)
+            {
+                // Consume potential late exceptions from timed out discovery task.
+                _ = queryTask.ContinueWith(
+                    t => _ = t.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted,
+                    TaskScheduler.Default);
+                return new BluetoothSelectorScanResult(Array.Empty<DeviceInformation>(), null, true);
+            }
+
+            return new BluetoothSelectorScanResult(await queryTask, null, false);
+        }
+        catch (Exception ex)
+        {
+            return new BluetoothSelectorScanResult(Array.Empty<DeviceInformation>(), ex, false);
+        }
+    }
+
+    private static string BuildBluetoothDisplayName(DeviceInformation device)
+    {
+        var name = string.IsNullOrWhiteSpace(device.Name) ? "(Unnamed device)" : device.Name.Trim();
+        var isPaired = device.Pairing?.IsPaired == true;
+        return isPaired ? $"{name} [paired]" : name;
+    }
+
+    private static (int group, string name) GetBluetoothSortKey(string displayName)
+    {
+        if (!string.IsNullOrWhiteSpace(displayName) &&
+            displayName.IndexOf("meshtastic", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return (0, displayName);
+        }
+
+        return (1, displayName ?? "");
     }
 
     private static (int group, int number, string name) GetPortSortKey(string port)
@@ -522,4 +634,5 @@ public sealed partial class ConnectPage : Page
     }
 
     private sealed record BluetoothDeviceOption(string DeviceId, string DisplayName);
+    private sealed record BluetoothSelectorScanResult(IReadOnlyList<DeviceInformation> Devices, Exception? Error, bool TimedOut);
 }

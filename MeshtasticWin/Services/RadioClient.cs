@@ -193,15 +193,18 @@ public sealed class RadioClient
 
         StopHeartbeatPump();
 
-        try
+        if (transport is not BluetoothLeTransport)
         {
-            var disconnectMsg = ToRadioFactory.CreateDisconnectNotice();
-            var disconnectFrame = MeshtasticWire.Wrap((Google.Protobuf.IMessage)disconnectMsg);
-            await transport.SendAsync(disconnectFrame);
-        }
-        catch
-        {
-            // Optional notice; ignore on shutdown.
+            try
+            {
+                var disconnectMsg = ToRadioFactory.CreateDisconnectNotice();
+                var disconnectFrame = MeshtasticWire.Wrap((Google.Protobuf.IMessage)disconnectMsg);
+                await transport.SendAsync(disconnectFrame);
+            }
+            catch
+            {
+                // Optional notice; ignore on shutdown.
+            }
         }
 
         StopRxPump();
