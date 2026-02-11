@@ -29,12 +29,33 @@ Connect via COM, TCP/IP or Bluetooth
 <img width="1470" height="999" alt="Connect view" src="https://github.com/user-attachments/assets/dcce5480-e148-4410-ace3-40ec1c630f64" />
 Installation
 
-Download the latest release from the Releases section, extract the ZIP file, and run MeshtasticWin.exe. No installer required.
+Download the latest release from the Releases section, extract the ZIP file, and run MeshtasticWin.exe.
+No installer required.
 
 Reporting Bugs
 
-This project is under active development and bugs may occur. If you encounter an issue, go to the Issues tab on GitHub and create a new issue. Please describe what you expected to happen, what actually happened, how to reproduce it, and which connection type you used (COM / TCP / BLE). Screenshots and debug logs are appreciated.
+This project is under active development and bugs may occur.
+If you encounter an issue, go to the Issues tab on GitHub and create a new issue.
 
-Open Source
+Please include:
 
-MeshtasticWin is open source. Contributions, bug reports and suggestions are welcome. Feel free to open issues, submit pull requests or suggest features.
+What you expected to happen
+
+What actually happened
+
+Steps to reproduce
+
+Connection type used (COM / TCP / BLE)
+
+Screenshots and debug logs if possible
+
+License
+
+MeshtasticWin is licensed under the GNU General Public License v3.0 (GPL-3.0).
+You are free to use, modify and distribute this software under the terms of the GPL-3.0 license.
+See the LICENSE file for full details.
+
+Contributing
+
+Contributions, bug reports and feature suggestions are welcome.
+Feel free to open issues or submit pull requests.
