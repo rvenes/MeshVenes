@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using MeshtasticWin.Models;
 using MeshtasticWin.Services;
+using AppDataPaths = MeshtasticWin.Services.AppDataPaths;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -14,7 +15,10 @@ using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.IO;
+using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 using Windows.System;
 
 namespace MeshtasticWin.Pages;
@@ -22,8 +26,13 @@ namespace MeshtasticWin.Pages;
 public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 {
     private const int MaxMessageBytes = 200;
+    private const int MaxArchiveMessagesPerChat = 800;
+    private const string MessageLogRetentionDaysKey = "MessageLogRetentionDays";
     private bool _isAdjustingInputText;
     private bool _inputWasTruncated;
+    private ScrollViewer? _messagesScrollViewer;
+    private bool _autoScrollEnabled = true;
+    private bool _suppressScrollTracking;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ObservableCollection<ChatListItemVm> ChatListItems { get; } = new();
@@ -67,6 +76,24 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private readonly Dictionary<string, ChatListItemVm> _chatItemsByPeer = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _chatFilterRefreshTimer = new();
     private readonly DispatcherTimer _chatSortRefreshTimer = new();
+    private bool _handlersHooked;
+
+    private int _messageLogRetentionDays = 7;
+    public double MessageLogRetentionDaysValue
+    {
+        get => _messageLogRetentionDays;
+        set
+        {
+            var next = (int)Math.Max(1, Math.Round(value));
+            if (_messageLogRetentionDays == next)
+                return;
+            _messageLogRetentionDays = next;
+            SettingsStore.SetString(MessageLogRetentionDaysKey, _messageLogRetentionDays.ToString(CultureInfo.InvariantCulture));
+            OnChanged(nameof(MessageLogRetentionDaysValue));
+        }
+    }
+
+    public bool HasAnyChatSelection => _selectedChatItem is not null;
 
     private enum SortMode
     {
@@ -80,6 +107,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     {
         InitializeComponent();
 
+        MessagesList.Loaded += MessagesList_Loaded;
+        MessagesList.Unloaded += MessagesList_Unloaded;
+
         SortCombo.Items.Add("Sort: Alphabetical A–Z");
         SortCombo.Items.Add("Sort: Alphabetical Z–A");
         SortCombo.Items.Add("Sort: Last active");
@@ -90,10 +120,11 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         ChatsView = VisibleChatItems;
         ApplyChatSorting();
 
-        MeshtasticWin.AppState.Messages.CollectionChanged += Messages_CollectionChanged;
-        MeshtasticWin.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
-        MeshtasticWin.AppState.ActiveChatChanged += ActiveChatChanged;
-        MeshtasticWin.AppState.UnreadChanged += UnreadChanged;
+        _messageLogRetentionDays = LoadMessageRetentionDays();
+
+        Loaded += (_, __) => HookAppStateEvents();
+        Unloaded += (_, __) => UnhookAppStateEvents();
+        HookAppStateEvents();
 
         _chatFilterRefreshTimer.Interval = TimeSpan.FromMilliseconds(200);
         _chatFilterRefreshTimer.Tick += (_, __) =>
@@ -118,8 +149,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             AddChatItemForNode(node);
         }
 
-        foreach (var message in MeshtasticWin.AppState.Messages)
-            AddMessageToChat(message, insertAtStart: false);
+        foreach (var message in MeshtasticWin.AppState.Messages.OrderBy(m => m.WhenUtc))
+            AddMessageToChat(message);
 
         RebuildVisibleChats();
         ApplyMessageVisibilityToAll();
@@ -127,6 +158,32 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         UpdateMessageLengthCounter();
         UpdateSendButtonState();
         OnChanged(nameof(ActiveChatTitle));
+    }
+
+    private void HookAppStateEvents()
+    {
+        if (_handlersHooked)
+            return;
+
+        _handlersHooked = true;
+        MeshtasticWin.AppState.Messages.CollectionChanged += Messages_CollectionChanged;
+        MeshtasticWin.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
+        MeshtasticWin.AppState.ActiveChatChanged += ActiveChatChanged;
+        MeshtasticWin.AppState.UnreadChanged += UnreadChanged;
+        MeshtasticWin.AppState.ConnectedNodeChanged += ConnectedNodeChanged;
+    }
+
+    private void UnhookAppStateEvents()
+    {
+        if (!_handlersHooked)
+            return;
+
+        _handlersHooked = false;
+        MeshtasticWin.AppState.Messages.CollectionChanged -= Messages_CollectionChanged;
+        MeshtasticWin.AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
+        MeshtasticWin.AppState.ActiveChatChanged -= ActiveChatChanged;
+        MeshtasticWin.AppState.UnreadChanged -= UnreadChanged;
+        MeshtasticWin.AppState.ConnectedNodeChanged -= ConnectedNodeChanged;
     }
 
     private void Messages_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -142,7 +199,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             {
                 foreach (MessageLive message in e.NewItems)
                 {
-                    AddMessageToChat(message, insertAtStart: e.NewStartingIndex == 0);
+                    AddMessageToChat(message);
                 }
                 return;
             }
@@ -194,6 +251,38 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             ApplyMessageVisibilityToAll();
             OnChanged(nameof(ActiveChatTitle));
         });
+
+    private void ConnectedNodeChanged()
+    {
+        try
+        {
+            var dq = DispatcherQueue;
+            if (dq is null)
+                return;
+
+            _ = dq.TryEnqueue(() =>
+            {
+                try
+                {
+                    // Logs are scoped to the connected node; clear cached history so the next selection reloads from the new scope.
+                    var snapshot = ChatListItems.ToList();
+                    foreach (var chat in snapshot)
+                        chat.ClearArchiveSection();
+
+                    EnsureChatHistoryLoaded(_selectedChatItem);
+                    OnChanged(nameof(SelectedChatMessages));
+                }
+                catch
+                {
+                    // Page/window may be shutting down.
+                }
+            });
+        }
+        catch
+        {
+            // Ignore late callbacks during app shutdown.
+        }
+    }
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
@@ -357,7 +446,13 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             match = ChatListItems.FirstOrDefault(x => string.Equals(x.PeerIdHex, peer, StringComparison.OrdinalIgnoreCase));
 
         if (match is not null && IsChatItemVisible(match))
+        {
             ChatList.SelectedItem = match;
+            _selectedChatItem = match;
+            EnsureChatHistoryLoaded(match);
+            OnChanged(nameof(SelectedChatMessages));
+            OnChanged(nameof(HasAnyChatSelection));
+        }
         else
             SetActiveChatSelection(VisibleChatItems.FirstOrDefault());
 
@@ -369,7 +464,11 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         ChatList.SelectedItem = chat;
         _selectedChatItem = chat;
         MeshtasticWin.AppState.SetActiveChatPeer(chat?.PeerIdHex);
+        _autoScrollEnabled = true;
+        EnsureChatHistoryLoaded(chat);
         OnChanged(nameof(SelectedChatMessages));
+        OnChanged(nameof(HasAnyChatSelection));
+        RequestInitialScrollPosition(force: true);
     }
 
     private void ChatList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -383,8 +482,71 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         _selectedChatItem = target;
         MeshtasticWin.AppState.SetActiveChatPeer(target.PeerIdHex);
         MeshtasticWin.AppState.MarkChatRead(target.PeerIdHex);
+        _autoScrollEnabled = true;
+        EnsureChatHistoryLoaded(target);
         OnChanged(nameof(SelectedChatMessages));
+        OnChanged(nameof(HasAnyChatSelection));
         SyncListToActiveChat();
+        RequestInitialScrollPosition(force: true);
+    }
+
+    private static int LoadMessageRetentionDays()
+    {
+        try
+        {
+            var s = SettingsStore.GetString(MessageLogRetentionDaysKey);
+            if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days))
+                return Math.Max(1, days);
+        }
+        catch { }
+
+        return 7;
+    }
+
+    private void EnsureChatHistoryLoaded(ChatListItemVm? chat)
+    {
+        if (chat is null)
+            return;
+
+        if (chat.ArchiveLoaded)
+            return;
+
+        // Insert archive at top (oldest -> newest), then divider, then live messages.
+        var existingLiveCount = chat.Messages.Count(m => !m.IsDivider);
+
+        var archive = chat.PeerIdHex is null
+            ? MessageArchive.ReadRecent(MaxArchiveMessagesPerChat, daysBack: 0, channelName: "Primary")
+            : MessageArchive.ReadRecent(MaxArchiveMessagesPerChat, daysBack: 0, dmPeerIdHex: chat.PeerIdHex);
+
+        var orderedArchive = archive.OrderBy(m => m.When).ToList();
+        chat.ArchivedCount = orderedArchive.Count;
+        chat.LiveMessageCount = existingLiveCount;
+
+        var insertIndex = 0;
+        foreach (var msg in orderedArchive)
+        {
+            var local = msg.When.ToLocalTime();
+            chat.Messages.Insert(insertIndex++, new MessageVm
+            {
+                Header = msg.Header ?? "",
+                Text = msg.Text ?? "",
+                WhenUtc = msg.When.UtcDateTime,
+                When = local.ToString("yyyy-MM-dd HH:mm:ss"),
+                IsMine = string.Equals(msg.Header, "Me", StringComparison.OrdinalIgnoreCase),
+                PacketId = 0,
+                HeardVisible = Visibility.Collapsed,
+                DeliveredVisible = Visibility.Collapsed
+            });
+        }
+
+        chat.HistoryDivider ??= MessageVm.Divider();
+        chat.HistoryDivider.DividerEnabled = chat.ArchivedCount > 0;
+        chat.Messages.Insert(insertIndex, chat.HistoryDivider);
+
+        chat.ArchiveLoaded = true;
+
+        if (ReferenceEquals(chat, _selectedChatItem))
+            RequestInitialScrollPosition(force: true);
     }
 
     private void ChatSearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -558,10 +720,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private void SyncMessagesWithAppState()
     {
         foreach (var chat in ChatListItems)
-            chat.Messages.Clear();
+            chat.ResetMessages();
 
-        foreach (var message in MeshtasticWin.AppState.Messages)
-            AddMessageToChat(message, insertAtStart: false);
+        foreach (var message in MeshtasticWin.AppState.Messages.OrderBy(m => m.WhenUtc))
+            AddMessageToChat(message);
     }
 
     private static string NormalizePeerKey(string? peerIdHex)
@@ -584,14 +746,177 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         return $"dm:{NormalizePeerKey(peerIdHex)}";
     }
 
-    private void AddMessageToChat(MessageLive message, bool insertAtStart)
+    private void AddMessageToChat(MessageLive message)
     {
         var chat = GetOrCreateChatForMessage(message);
         var vm = CreateMessageVm(message);
-        if (insertAtStart)
-            chat.Messages.Insert(0, vm);
-        else
+        InsertLiveMessageSorted(chat, vm);
+
+        chat.LiveMessageCount++;
+
+        if (ReferenceEquals(chat, _selectedChatItem))
+            MaybeScrollToBottom(chat);
+    }
+
+    private static void InsertLiveMessageSorted(ChatListItemVm chat, MessageVm vm)
+    {
+        // Live messages always belong after the divider (if present).
+        var dividerIndex = chat.HistoryDivider is null ? -1 : chat.Messages.IndexOf(chat.HistoryDivider);
+        var startIndex = dividerIndex >= 0 ? dividerIndex + 1 : 0;
+
+        // Append fast path (most common).
+        if (chat.Messages.Count <= startIndex)
+        {
             chat.Messages.Add(vm);
+            return;
+        }
+
+        for (var i = chat.Messages.Count - 1; i >= startIndex; i--)
+        {
+            var existing = chat.Messages[i];
+            if (existing.IsDivider)
+                continue;
+
+            if (existing.WhenUtc <= vm.WhenUtc)
+            {
+                chat.Messages.Insert(i + 1, vm);
+                return;
+            }
+        }
+
+        chat.Messages.Insert(startIndex, vm);
+    }
+
+    private void MaybeScrollToBottom(ChatListItemVm chat)
+    {
+        RequestScrollToBottom(force: false);
+    }
+
+    private void RequestInitialScrollPosition(bool force)
+    {
+        if (_selectedChatItem is null)
+            return;
+
+        if (!force && !_autoScrollEnabled)
+            return;
+
+        // Prefer showing the "Chat history" divider so users immediately understand where history ends.
+        if (_selectedChatItem.HistoryDivider is { DividerEnabled: true } divider)
+        {
+            _ = DispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    _suppressScrollTracking = true;
+                    MessagesList.ScrollIntoView(divider);
+                }
+                finally
+                {
+                    _suppressScrollTracking = false;
+                }
+            });
+
+            return;
+        }
+
+        RequestScrollToBottom(force);
+    }
+
+    private void RequestScrollToBottom(bool force)
+    {
+        if (_selectedChatItem is null)
+            return;
+
+        if (!force && !_autoScrollEnabled)
+            return;
+
+        var last = _selectedChatItem.Messages.LastOrDefault(m => !m.IsDivider);
+        if (last is null)
+            return;
+
+        // Defer so the ListView has time to measure/realize items.
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                _suppressScrollTracking = true;
+                MessagesList.ScrollIntoView(last);
+            }
+            finally
+            {
+                _suppressScrollTracking = false;
+            }
+
+            // Some layouts require a second tick to land correctly.
+            _ = DispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    _suppressScrollTracking = true;
+                    MessagesList.ScrollIntoView(last);
+                }
+                finally
+                {
+                    _suppressScrollTracking = false;
+                }
+            });
+        });
+    }
+
+    private void MessagesList_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_messagesScrollViewer is not null)
+            return;
+
+        _messagesScrollViewer = FindScrollViewer(MessagesList);
+        if (_messagesScrollViewer is null)
+            return;
+
+        _messagesScrollViewer.ViewChanged += MessagesScrollViewer_ViewChanged;
+    }
+
+    private void MessagesList_Unloaded(object sender, RoutedEventArgs e)
+    {
+        if (_messagesScrollViewer is not null)
+            _messagesScrollViewer.ViewChanged -= MessagesScrollViewer_ViewChanged;
+        _messagesScrollViewer = null;
+    }
+
+    private void MessagesScrollViewer_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (_suppressScrollTracking)
+            return;
+
+        if (sender is not ScrollViewer viewer)
+            return;
+
+        if (viewer.ScrollableHeight <= 0.5)
+        {
+            _autoScrollEnabled = true;
+            return;
+        }
+
+        var atBottom = viewer.VerticalOffset >= (viewer.ScrollableHeight - 48);
+
+        // If the user scrolls up, disable auto-scroll until they return to the bottom.
+        _autoScrollEnabled = atBottom;
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        if (root is ScrollViewer viewer)
+            return viewer;
+
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            var found = FindScrollViewer(child);
+            if (found is not null)
+                return found;
+        }
+
+        return null;
     }
 
     private ChatListItemVm GetOrCreateChatForMessage(MessageLive message)
@@ -941,6 +1266,55 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         _ = ClipboardUtil.TrySetText(fullText);
     }
 
+    private void DeleteMessageLogOlder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedChatItem is null)
+            return;
+
+        var days = Math.Max(1, _messageLogRetentionDays);
+        if (_selectedChatItem.PeerIdHex is null)
+            _ = MessageArchive.DeleteOlderThanDays(days, channelName: "Primary");
+        else
+            _ = MessageArchive.DeleteOlderThanDays(days, dmPeerIdHex: _selectedChatItem.PeerIdHex);
+
+        _selectedChatItem.ClearArchiveSection();
+        EnsureChatHistoryLoaded(_selectedChatItem);
+        OnChanged(nameof(SelectedChatMessages));
+    }
+
+    private void DeleteMessageLogAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedChatItem is null)
+            return;
+
+        if (_selectedChatItem.PeerIdHex is null)
+            _ = MessageArchive.DeleteAll(channelName: "Primary");
+        else
+            _ = MessageArchive.DeleteAll(dmPeerIdHex: _selectedChatItem.PeerIdHex);
+
+        _selectedChatItem.ClearArchiveSection();
+        EnsureChatHistoryLoaded(_selectedChatItem);
+        OnChanged(nameof(SelectedChatMessages));
+    }
+
+    private async void ShowMessageLogFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var path = AppDataPaths.LogsPath;
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            Directory.CreateDirectory(path);
+            var folder = await StorageFolder.GetFolderFromPathAsync(path);
+            _ = await Launcher.LaunchFolderAsync(folder);
+        }
+        catch
+        {
+            // Ignore failures (e.g. during shutdown or explorer not available).
+        }
+    }
+
 }
 
 public sealed class ChatListItemVm : INotifyPropertyChanged
@@ -948,6 +1322,11 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ObservableCollection<MessageVm> Messages { get; } = new();
+
+    public bool ArchiveLoaded { get; set; }
+    public int ArchivedCount { get; set; }
+    public int LiveMessageCount { get; set; }
+    public MessageVm? HistoryDivider { get; set; }
 
     private string _chatKey = "channel:primary";
     public string ChatKey
@@ -1086,6 +1465,33 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             SortIdKey = (peerIdHex ?? "").ToUpperInvariant()
         };
 
+    public void ClearArchiveSection()
+    {
+        if (HistoryDivider is null)
+            return;
+
+        var index = Messages.IndexOf(HistoryDivider);
+        if (index < 0)
+            return;
+
+        // Remove divider and everything above it (archive); keep live messages.
+        for (var i = index; i >= 0; i--)
+            Messages.RemoveAt(i);
+
+        HistoryDivider = null;
+        ArchiveLoaded = false;
+        ArchivedCount = 0;
+    }
+
+    public void ResetMessages()
+    {
+        Messages.Clear();
+        ArchiveLoaded = false;
+        ArchivedCount = 0;
+        LiveMessageCount = 0;
+        HistoryDivider = null;
+    }
+
     public void UpdateFromNode(NodeLive n)
     {
         Title = string.IsNullOrWhiteSpace(n.ShortId) ? n.Name : n.Name;
@@ -1145,6 +1551,41 @@ public sealed class MessageVm : INotifyPropertyChanged
         set { if (_when != value) { _when = value; OnChanged(nameof(When)); } }
     }
 
+    private DateTime _whenUtc = DateTime.MinValue;
+    public DateTime WhenUtc
+    {
+        get => _whenUtc;
+        set { if (_whenUtc != value) { _whenUtc = value; OnChanged(nameof(WhenUtc)); } }
+    }
+
+    private bool _isDivider;
+    public bool IsDivider
+    {
+        get => _isDivider;
+        set
+        {
+            if (_isDivider == value) return;
+            _isDivider = value;
+            OnChanged(nameof(IsDivider));
+            OnChanged(nameof(DividerVisibility));
+            OnChanged(nameof(MessageVisibility));
+        }
+    }
+
+    private bool _dividerEnabled;
+    public bool DividerEnabled
+    {
+        get => _dividerEnabled;
+        set
+        {
+            if (_dividerEnabled == value) return;
+            _dividerEnabled = value;
+            OnChanged(nameof(DividerEnabled));
+            OnChanged(nameof(RowVisibility));
+            OnChanged(nameof(DividerVisibility));
+        }
+    }
+
     private uint _packetId;
     public uint PacketId
     {
@@ -1186,13 +1627,32 @@ public sealed class MessageVm : INotifyPropertyChanged
         }
     }
 
-    public Visibility RowVisibility => IsVisible ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility RowVisibility => (IsVisible && (!IsDivider || DividerEnabled)) ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility DividerVisibility => (IsDivider && DividerEnabled) ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility MessageVisibility => IsDivider ? Visibility.Collapsed : RowVisibility;
+
+    public static MessageVm Divider()
+        => new()
+        {
+            IsDivider = true,
+            DividerEnabled = false,
+            IsVisible = true,
+            Header = "",
+            Text = "",
+            When = "",
+            HeardVisible = Visibility.Collapsed,
+            DeliveredVisible = Visibility.Collapsed,
+            PacketId = 0,
+            IsMine = false
+        };
 
     public static MessageVm From(MessageLive m)
         => new()
         {
             Header = m.Header ?? "",
             Text = m.Text ?? "",
+            WhenUtc = m.WhenUtc,
             When = m.When ?? "",
             HeardVisible = (m.IsMine && m.IsHeard) ? Visibility.Visible : Visibility.Collapsed,
             DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed,
@@ -1204,6 +1664,7 @@ public sealed class MessageVm : INotifyPropertyChanged
     {
         Header = m.Header ?? "";
         Text = m.Text ?? "";
+        WhenUtc = m.WhenUtc;
         When = m.When ?? "";
         HeardVisible = (m.IsMine && m.IsHeard) ? Visibility.Visible : Visibility.Collapsed;
         DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed;
