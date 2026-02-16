@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Collections.Specialized;
+using System.IO;
 using System.Linq;
 using WinRT.Interop;
 
@@ -25,6 +26,7 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Closed += MainWindow_Closed;
         InitializeWindowSizing();
+        ApplyWindowIcon();
         SetInitialWindowSize(InitialWindowWidth, InitialWindowHeight);
         RadioClient.Instance.ConnectionChanged += OnConnectionChanged;
         AppState.ConnectedNodeChanged += OnConnectionChanged;
@@ -64,6 +66,23 @@ public sealed partial class MainWindow : Window
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         _appWindow.Changed += AppWindow_Changed;
+    }
+
+    private void ApplyWindowIcon()
+    {
+        if (_appWindow is null)
+            return;
+
+        try
+        {
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
+            if (File.Exists(iconPath))
+                _appWindow.SetIcon(iconPath);
+        }
+        catch
+        {
+            // Ignore icon set failures and keep app startup stable.
+        }
     }
 
     private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
