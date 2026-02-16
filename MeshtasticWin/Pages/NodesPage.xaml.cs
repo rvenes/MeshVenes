@@ -40,7 +40,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private bool _hideInactive = true;
     private string _filter = "";
-    private SortMode _sortMode = SortMode.AlphabeticalAsc;
+    private SortMode _sortMode = SortMode.LastActive;
     private readonly DispatcherTimer _throttle = new();
     private readonly DispatcherTimer _filterApplyTimer = new();
     private bool _mapReady;
@@ -401,7 +401,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         SortCombo.Items.Add("Sort: Alphabetical Z–A");
         SortCombo.Items.Add("Sort: Last active");
         SortCombo.Items.Add("Sort: Oldest active");
-        SortCombo.SelectedIndex = 0;
+        SortCombo.SelectedIndex = 2;
 
         HideInactiveToggle.IsChecked = _hideInactive;
         NodesView.Source = VisibleNodes;

@@ -67,7 +67,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private bool _suppressListEvent;
     private string _chatFilter = "";
-    private SortMode _sortMode = SortMode.AlphabeticalAsc;
+    private SortMode _sortMode = SortMode.LastActive;
     private ObservableCollection<ChatListItemVm> ChatsView { get; }
 
     private bool _hideInactive = true;
@@ -114,7 +114,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         SortCombo.Items.Add("Sort: Alphabetical Z–A");
         SortCombo.Items.Add("Sort: Last active");
         SortCombo.Items.Add("Sort: Oldest active");
-        SortCombo.SelectedIndex = 0;
+        SortCombo.SelectedIndex = 2;
 
         HideInactiveToggle.IsChecked = _hideInactive;
         ChatsView = VisibleChatItems;
@@ -799,25 +799,6 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         if (!force && !_autoScrollEnabled)
             return;
-
-        // Prefer showing the "Chat history" divider so users immediately understand where history ends.
-        if (_selectedChatItem.HistoryDivider is { DividerEnabled: true } divider)
-        {
-            _ = DispatcherQueue.TryEnqueue(() =>
-            {
-                try
-                {
-                    _suppressScrollTracking = true;
-                    MessagesList.ScrollIntoView(divider);
-                }
-                finally
-                {
-                    _suppressScrollTracking = false;
-                }
-            });
-
-            return;
-        }
 
         RequestScrollToBottom(force);
     }
