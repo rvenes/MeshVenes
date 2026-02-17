@@ -3,19 +3,47 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Grid Padding="16" RowDefinitions="Auto,12,Auto,12,Auto">
-        <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
-        <StackPanel Grid.Row="2" Spacing="12">
-            <ToggleSwitch x:Name="ShowPowerMetricsToggle"
-                          Header="Show Power Metrics tab"
-                          Toggled="ShowPowerMetricsToggle_Toggled"/>
-            <ToggleSwitch x:Name="ShowDetectionSensorToggle"
-                          Header="Show Detection Sensor Log tab"
-                          Toggled="ShowDetectionSensorToggle_Toggled"/>
-        </StackPanel>
-        <TextBlock Grid.Row="4"
-                   TextWrapping="Wrap"
-                   Opacity="0.85"
-                   Text="More settings and customization options will be added in future versions."/>
+    <Grid Padding="16" ColumnDefinitions="200,16,*" RowDefinitions="Auto,12,*">
+        <TextBlock Text="Settings" FontSize="28" FontWeight="SemiBold"/>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="14" Width="180" HorizontalAlignment="Left">
+                <TextBlock Text="Radio Configuration" FontSize="16" FontWeight="SemiBold" Opacity="0.92"/>
+                <Button Content="LoRa" Tag="lora" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Channels" Tag="channels" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Security" Tag="security" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Share QR Code" Tag="shareqr" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+
+                <TextBlock Text="Device Configuration" FontSize="16" FontWeight="SemiBold" Opacity="0.92" Margin="0,6,0,0"/>
+                <Button Content="User" Tag="device-user" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Bluetooth" Tag="device-bluetooth" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Device" Tag="device-device" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Display" Tag="device-display" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Network" Tag="device-network" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Position" Tag="device-position" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Power" Tag="device-power" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+
+                <TextBlock Text="Module Configuration" FontSize="16" FontWeight="SemiBold" Opacity="0.92" Margin="0,6,0,0"/>
+                <Button Content="Canned Messages" Tag="module-canned" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Detection Sensor" Tag="module-detection" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="External Notification" Tag="module-external-notification" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="MQTT" Tag="module-mqtt" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Range Test" Tag="module-range-test" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="PAX Counter" Tag="module-pax" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Ringtone" Tag="module-ringtone" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Serial" Tag="module-serial" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Store &amp; Forward" Tag="module-store-forward" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="Telemetry" Tag="module-telemetry" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+
+                <TextBlock Text="Logging" FontSize="16" FontWeight="SemiBold" Opacity="0.92" Margin="0,6,0,0"/>
+                <Button Content="Logs" Tag="logging" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button Content="App Settings" Tag="logging-app" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+
+                <TextBlock Text="Firmware" FontSize="16" FontWeight="SemiBold" Opacity="0.92" Margin="0,6,0,0"/>
+                <Button Content="Firmware Updates" Tag="firmware" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Frame x:Name="SettingsContentFrame" Grid.Column="2" Grid.Row="2"/>
     </Grid>
 </Page>

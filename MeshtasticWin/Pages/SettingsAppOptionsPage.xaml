@@ -1,0 +1,21 @@
+<Page
+    x:Class="MeshtasticWin.Pages.SettingsAppOptionsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid>
+        <StackPanel Spacing="12">
+            <TextBlock Text="App Settings" FontSize="22" FontWeight="SemiBold"/>
+            <ToggleSwitch x:Name="ShowPowerMetricsToggle"
+                          Header="Show Power Metrics tab"
+                          Toggled="ShowPowerMetricsToggle_Toggled"/>
+            <ToggleSwitch x:Name="ShowDetectionSensorToggle"
+                          Header="Show Detection Sensor Log tab"
+                          Toggled="ShowDetectionSensorToggle_Toggled"/>
+            <TextBlock
+                TextWrapping="Wrap"
+                Opacity="0.85"
+                Text="Additional app logging and retention settings will be expanded in later phases."/>
+        </StackPanel>
+    </Grid>
+</Page>

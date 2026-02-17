@@ -13,6 +13,7 @@ public static class AppState
     private const string ShowPowerMetricsKey = "ShowPowerMetricsTab";
     private const string ShowDetectionSensorKey = "ShowDetectionSensorLogTab";
     private const string UnreadLastReadKey = "UnreadLastReadUtcByPeerJson";
+    private const string ActiveChatPeerKey = "ActiveChatPeerIdHex";
 
     public static ObservableCollection<NodeLive> Nodes { get; } = new();
     public static ObservableCollection<MessageLive> Messages { get; } = new();
@@ -158,6 +159,17 @@ private static string NormalizePeerKey(string? peerIdHex)
         {
             // Ignore settings corruption; defaults apply.
         }
+
+        // Last selected chat (null/empty = Primary channel).
+        try
+        {
+            var peer = SettingsStore.GetString(ActiveChatPeerKey);
+            ActiveChatPeerIdHex = string.IsNullOrWhiteSpace(peer) ? null : peer.Trim();
+        }
+        catch
+        {
+            ActiveChatPeerIdHex = null;
+        }
     }
 
     private static void PersistUnreadState()
@@ -191,6 +203,7 @@ private static string NormalizePeerKey(string? peerIdHex)
             return;
 
         ActiveChatPeerIdHex = peerIdHex;
+        SettingsStore.SetString(ActiveChatPeerKey, peerIdHex);
         ActiveChatChanged?.Invoke();
     }
 }

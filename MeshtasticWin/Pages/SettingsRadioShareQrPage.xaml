@@ -1,0 +1,40 @@
+<Page
+    x:Class="MeshtasticWin.Pages.SettingsRadioShareQrPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" MaxWidth="980" HorizontalAlignment="Left">
+            <TextBlock Text="Share QR Code" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock x:Name="StatusText" Text="Loading..." Opacity="0.85"/>
+
+            <CheckBox x:Name="ReplaceChannelsCheck" Content="Replace channels on receiver (uncheck to add only)" IsChecked="True" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+
+            <TextBlock Text="Include channels" FontWeight="SemiBold"/>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <CheckBox x:Name="Channel0Check" Content="0" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+                <CheckBox x:Name="Channel1Check" Content="1" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+                <CheckBox x:Name="Channel2Check" Content="2" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+                <CheckBox x:Name="Channel3Check" Content="3" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+                <CheckBox x:Name="Channel4Check" Content="4" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+                <CheckBox x:Name="Channel5Check" Content="5" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+                <CheckBox x:Name="Channel6Check" Content="6" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+                <CheckBox x:Name="Channel7Check" Content="7" Checked="SelectionChanged" Unchecked="SelectionChanged"/>
+            </StackPanel>
+
+            <TextBlock Text="Share URL" FontWeight="SemiBold"/>
+            <TextBox x:Name="ShareUrlBox" Width="760" IsReadOnly="True" TextWrapping="Wrap"/>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Reload" Click="Reload_Click"/>
+                <Button Content="Copy URL" Click="CopyUrl_Click"/>
+                <Button Content="Load QR image..." Click="LoadQrImage_Click"/>
+                <Button Content="Apply loaded settings" Click="ApplyLoadedSettings_Click"/>
+            </StackPanel>
+
+            <Border BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="8" Padding="8">
+                <Image x:Name="QrImage" Width="260" Height="260" Stretch="Uniform"/>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -131,15 +131,18 @@ public sealed class SerialTransport : IRadioTransport
     {
         var port = _port;
         if (port is null || !port.IsOpen || Volatile.Read(ref _isDisconnecting) != 0)
-            throw new InvalidOperationException("Not connected");
+        {
+            Log?.Invoke("TX dropped: serial not connected");
+            return Task.CompletedTask;
+        }
 
         try
         {
             port.Write(data, 0, data.Length);
         }
-        catch (ObjectDisposedException) when (Volatile.Read(ref _isDisconnecting) != 0) { return Task.CompletedTask; }
-        catch (NullReferenceException) when (Volatile.Read(ref _isDisconnecting) != 0) { return Task.CompletedTask; }
-        catch (IOException) when (Volatile.Read(ref _isDisconnecting) != 0) { return Task.CompletedTask; }
+        catch (ObjectDisposedException) { Log?.Invoke("TX dropped: serial disposed"); return Task.CompletedTask; }
+        catch (NullReferenceException) { Log?.Invoke("TX dropped: serial unavailable"); return Task.CompletedTask; }
+        catch (IOException) { Log?.Invoke("TX dropped: serial I/O unavailable"); return Task.CompletedTask; }
 
         Log?.Invoke($"TX {data.Length} bytes");
         return Task.CompletedTask;

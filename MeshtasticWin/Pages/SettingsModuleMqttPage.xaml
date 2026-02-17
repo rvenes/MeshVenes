@@ -1,0 +1,38 @@
+<Page
+    x:Class="MeshtasticWin.Pages.SettingsModuleMqttPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" MaxWidth="980" HorizontalAlignment="Left">
+            <TextBlock Text="MQTT Config" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock x:Name="StatusText" Text="Loading..." Opacity="0.85"/>
+            <TextBlock x:Name="NodeText" Opacity="0.8"/>
+
+            <Grid ColumnDefinitions="300,360" RowSpacing="8" ColumnSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Enabled"/><ToggleSwitch Grid.Row="0" Grid.Column="1" x:Name="EnabledToggle"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="MQTT client proxy"/><ToggleSwitch Grid.Row="1" Grid.Column="1" x:Name="ProxyToggle"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Encryption enabled"/><ToggleSwitch Grid.Row="2" Grid.Column="1" x:Name="EncryptionToggle"/>
+                <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="JSON enabled"/><ToggleSwitch Grid.Row="3" Grid.Column="1" x:Name="JsonToggle"/>
+                <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="Map report enabled"/><ToggleSwitch Grid.Row="4" Grid.Column="1" x:Name="MapReportToggle"/>
+                <TextBlock Grid.Row="5" Grid.Column="0" VerticalAlignment="Center" Text="Consent to share unencrypted map data"/><ToggleSwitch Grid.Row="5" Grid.Column="1" x:Name="ConsentToggle"/>
+                <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="Root topic"/><TextBox Grid.Row="6" Grid.Column="1" x:Name="RootBox"/>
+                <TextBlock Grid.Row="7" Grid.Column="0" VerticalAlignment="Center" Text="Address"/><TextBox Grid.Row="7" Grid.Column="1" x:Name="AddressBox"/>
+                <TextBlock Grid.Row="8" Grid.Column="0" VerticalAlignment="Center" Text="Username"/><TextBox Grid.Row="8" Grid.Column="1" x:Name="UsernameBox"/>
+                <TextBlock Grid.Row="9" Grid.Column="0" VerticalAlignment="Center" Text="Password"/><TextBox Grid.Row="9" Grid.Column="1" x:Name="PasswordBox"/>
+                <TextBlock Grid.Row="10" Grid.Column="0" VerticalAlignment="Center" Text="TLS enabled"/><ToggleSwitch Grid.Row="10" Grid.Column="1" x:Name="TlsToggle"/>
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Reload" Click="Reload_Click"/>
+                <Button Content="Save" Click="Save_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

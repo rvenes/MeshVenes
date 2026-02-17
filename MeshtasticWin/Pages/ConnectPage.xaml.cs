@@ -18,11 +18,6 @@ namespace MeshtasticWin.Pages;
 
 public sealed partial class ConnectPage : Page
 {
-    private const string PortSettingKey = "LastSerialPort";
-    private const string TcpHostSettingKey = "LastTcpHost";
-    private const string TcpPortSettingKey = "LastTcpPort";
-    private const string BluetoothDeviceIdSettingKey = "LastBluetoothDeviceId";
-
     private bool _handlersHooked;
     private bool _hasPorts;
     private bool _hasBluetoothDevices;
@@ -34,8 +29,8 @@ public sealed partial class ConnectPage : Page
 
         LogList.ItemsSource = RadioClient.Instance.LogLines;
 
-        TcpHostBox.Text = SettingsStore.GetString(TcpHostSettingKey) ?? "127.0.0.1";
-        TcpPortBox.Text = SettingsStore.GetString(TcpPortSettingKey) ?? "4403";
+        TcpHostBox.Text = SettingsStore.GetString(SettingsStore.LastTcpHostKey) ?? "127.0.0.1";
+        TcpPortBox.Text = SettingsStore.GetString(SettingsStore.LastTcpPortKey) ?? "4403";
 
         HookClientEvents();
         UpdateUiFromClient();
@@ -149,7 +144,8 @@ public sealed partial class ConnectPage : Page
 
             await RadioClient.Instance.ConnectAsync(port, RunOnUi(), LogToUi);
 
-            SettingsStore.SetString(PortSettingKey, port);
+            SettingsStore.SetString(SettingsStore.LastSerialPortKey, port);
+            SettingsStore.SetString(SettingsStore.LastConnectionTypeKey, "serial");
             UpdateUiFromClient();
         }
         catch (Exception ex)
@@ -188,8 +184,9 @@ public sealed partial class ConnectPage : Page
 
             await RadioClient.Instance.ConnectTcpAsync(host, port, RunOnUi(), LogToUi);
 
-            SettingsStore.SetString(TcpHostSettingKey, host);
-            SettingsStore.SetString(TcpPortSettingKey, port.ToString());
+            SettingsStore.SetString(SettingsStore.LastTcpHostKey, host);
+            SettingsStore.SetString(SettingsStore.LastTcpPortKey, port.ToString());
+            SettingsStore.SetString(SettingsStore.LastConnectionTypeKey, "tcp");
             UpdateUiFromClient();
         }
         catch (Exception ex)
@@ -221,7 +218,8 @@ public sealed partial class ConnectPage : Page
             AddLogLineUi($"Connecting to Bluetooth {option.DisplayName}...");
             await RadioClient.Instance.ConnectBluetoothAsync(option.DeviceId, option.DisplayName, RunOnUi(), LogToUi);
 
-            SettingsStore.SetString(BluetoothDeviceIdSettingKey, option.DeviceId);
+            SettingsStore.SetString(SettingsStore.LastBluetoothDeviceIdKey, option.DeviceId);
+            SettingsStore.SetString(SettingsStore.LastConnectionTypeKey, "ble");
             UpdateUiFromClient();
         }
         catch (Exception ex)
@@ -247,13 +245,13 @@ public sealed partial class ConnectPage : Page
     private void PortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (PortCombo.SelectedItem is string port)
-            SettingsStore.SetString(PortSettingKey, port);
+            SettingsStore.SetString(SettingsStore.LastSerialPortKey, port);
     }
 
     private void BluetoothCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (BluetoothCombo.SelectedItem is BluetoothDeviceOption option)
-            SettingsStore.SetString(BluetoothDeviceIdSettingKey, option.DeviceId);
+            SettingsStore.SetString(SettingsStore.LastBluetoothDeviceIdKey, option.DeviceId);
     }
 
     private void RefreshPorts()
@@ -287,7 +285,7 @@ public sealed partial class ConnectPage : Page
         PortCombo.IsEnabled = true;
         _hasPorts = true;
 
-        var savedPort = SettingsStore.GetString(PortSettingKey);
+        var savedPort = SettingsStore.GetString(SettingsStore.LastSerialPortKey);
         var initialPort = !string.IsNullOrWhiteSpace(savedPort) && sorted.Contains(savedPort, StringComparer.OrdinalIgnoreCase)
             ? sorted.First(p => string.Equals(p, savedPort, StringComparison.OrdinalIgnoreCase))
             : sorted[0];
@@ -341,7 +339,7 @@ public sealed partial class ConnectPage : Page
             BluetoothCombo.IsEnabled = true;
             _hasBluetoothDevices = true;
 
-            var savedDeviceId = SettingsStore.GetString(BluetoothDeviceIdSettingKey);
+            var savedDeviceId = SettingsStore.GetString(SettingsStore.LastBluetoothDeviceIdKey);
             var initial = !string.IsNullOrWhiteSpace(savedDeviceId)
                 ? options.FirstOrDefault(o => string.Equals(o.DeviceId, savedDeviceId, StringComparison.OrdinalIgnoreCase)) ?? options[0]
                 : options[0];
