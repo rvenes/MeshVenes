@@ -47,11 +47,11 @@ jobs:
 
       - name: Restore
         shell: pwsh
-        run: dotnet restore "${{ steps.target.outputs.restore_target }}"
+        run: dotnet restore "${{ steps.target.outputs.restore_target }}" -r $env:RUNTIME -p:Platform=x64
 
       - name: Build (Release)
         shell: pwsh
-        run: dotnet build "${{ steps.target.outputs.build_target }}" -c $env:CONFIGURATION --no-restore
+        run: dotnet build "${{ steps.target.outputs.build_target }}" -c $env:CONFIGURATION -p:Platform=x64 --no-restore
 
       - name: Publish self-contained win-x64
         shell: pwsh
@@ -60,8 +60,12 @@ jobs:
             -c $env:CONFIGURATION `
             -f $env:TARGET_FRAMEWORK `
             -r $env:RUNTIME `
+            -p:Platform=x64 `
             --self-contained true `
-            --no-build `
+            --no-restore `
+            /p:PublishReadyToRun=false `
+            /p:PublishSingleFile=true `
+            /p:IncludeNativeLibrariesForSelfExtract=true `
             -o $env:PUBLISH_DIR
 
       - name: Zip publish output
