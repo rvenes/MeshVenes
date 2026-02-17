@@ -18,11 +18,12 @@ public sealed class TcpTransport : IRadioTransport
     private CancellationTokenSource? _receiveCts;
     private Task? _receiveLoopTask;
     private int _isDisconnecting;
+    private int _isConnected;
 
     public event Action<string>? Log;
     public event Action<byte[]>? BytesReceived;
 
-    public bool IsConnected => _client?.Connected == true && _stream is not null;
+    public bool IsConnected => Volatile.Read(ref _isConnected) == 1 && _stream is not null;
 
     public TcpTransport(string host, int portNumber)
     {
@@ -48,6 +49,7 @@ public sealed class TcpTransport : IRadioTransport
             _receiveCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             _receiveLoopTask = Task.Run(() => ReceiveLoopAsync(stream, _receiveCts.Token));
         }
+        Volatile.Write(ref _isConnected, 1);
 
         Log?.Invoke($"Connected to TCP {_host}:{_portNumber}");
     }
@@ -71,6 +73,7 @@ public sealed class TcpTransport : IRadioTransport
             _stream = null;
             _client = null;
         }
+        Volatile.Write(ref _isConnected, 0);
 
         if (client is null)
             return;
@@ -111,19 +114,28 @@ public sealed class TcpTransport : IRadioTransport
     public async Task SendAsync(byte[] data, CancellationToken ct = default)
     {
         var stream = _stream;
-        if (stream is null || Volatile.Read(ref _isDisconnecting) != 0)
-        {
-            Log?.Invoke("TX dropped: TCP not connected");
-            return;
-        }
+        if (stream is null || Volatile.Read(ref _isDisconnecting) != 0 || Volatile.Read(ref _isConnected) == 0)
+            throw new InvalidOperationException("Not connected");
 
         try
         {
             await stream.WriteAsync(data, ct).ConfigureAwait(false);
         }
-        catch (ObjectDisposedException) { Log?.Invoke("TX dropped: TCP stream disposed"); return; }
-        catch (NullReferenceException) { Log?.Invoke("TX dropped: TCP stream unavailable"); return; }
-        catch (IOException) { Log?.Invoke("TX dropped: TCP I/O unavailable"); return; }
+        catch (ObjectDisposedException)
+        {
+            Volatile.Write(ref _isConnected, 0);
+            throw new InvalidOperationException("Not connected");
+        }
+        catch (NullReferenceException)
+        {
+            Volatile.Write(ref _isConnected, 0);
+            throw new InvalidOperationException("Not connected");
+        }
+        catch (IOException)
+        {
+            Volatile.Write(ref _isConnected, 0);
+            throw new InvalidOperationException("Not connected");
+        }
 
         Log?.Invoke($"TX {data.Length} bytes");
     }
@@ -145,19 +157,25 @@ public sealed class TcpTransport : IRadioTransport
             }
             catch (ObjectDisposedException)
             {
+                Volatile.Write(ref _isConnected, 0);
                 break;
             }
             catch (NullReferenceException)
             {
+                Volatile.Write(ref _isConnected, 0);
                 break;
             }
             catch (IOException)
             {
+                Volatile.Write(ref _isConnected, 0);
                 break;
             }
 
             if (n <= 0)
+            {
+                Volatile.Write(ref _isConnected, 0);
                 break;
+            }
 
             if (Volatile.Read(ref _isDisconnecting) != 0)
                 break;
@@ -167,6 +185,9 @@ public sealed class TcpTransport : IRadioTransport
             BytesReceived?.Invoke(payload);
             Log?.Invoke($"RX {n} bytes");
         }
+
+        if (Volatile.Read(ref _isDisconnecting) == 0)
+            Log?.Invoke("TCP connection closed by remote endpoint.");
     }
 
     public async ValueTask DisposeAsync()

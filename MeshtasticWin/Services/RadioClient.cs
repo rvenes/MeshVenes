@@ -210,7 +210,7 @@ public sealed class RadioClient
         }
     }
 
-    private async Task SendPacketWithQueueControlAsync(byte[] framedPayload, uint packetId)
+    private async Task<bool> SendPacketWithQueueControlAsync(byte[] framedPayload, uint packetId)
     {
         var transport = _transport;
         if (transport is null || !IsConnected)
@@ -224,7 +224,7 @@ public sealed class RadioClient
             if (!transport.IsConnected)
             {
                 await MarkConnectionLostAsync("Connection lost.").ConfigureAwait(false);
-                throw new InvalidOperationException("Not connected");
+                return false;
             }
 
             TaskCompletionSource<bool>? queueResult = null;
@@ -241,7 +241,7 @@ public sealed class RadioClient
                 if (!transport.IsConnected)
                 {
                     await MarkConnectionLostAsync("Connection lost.").ConfigureAwait(false);
-                    throw new InvalidOperationException("Not connected");
+                    return false;
                 }
             }
             catch (Exception ex)
@@ -259,7 +259,10 @@ public sealed class RadioClient
                 }
 
                 if (IsTransportNotConnectedException(ex) || !transport.IsConnected)
+                {
                     await MarkConnectionLostAsync(ex.Message).ConfigureAwait(false);
+                    return false;
+                }
 
                 throw;
             }
@@ -276,6 +279,8 @@ public sealed class RadioClient
                 if (!accepted)
                     throw new IOException($"Radio queue rejected packet 0x{packetId:x8}.");
             }
+
+            return true;
         }
         finally
         {
@@ -447,13 +452,13 @@ public sealed class RadioClient
 
         StopHeartbeatPump();
 
-        if (transport is not BluetoothLeTransport)
+        if (transport is SerialTransport && transport.IsConnected)
         {
             try
             {
                 var disconnectMsg = ToRadioFactory.CreateDisconnectNotice();
                 var disconnectFrame = MeshtasticWire.Wrap((Google.Protobuf.IMessage)disconnectMsg);
-                await transport.SendAsync(disconnectFrame);
+                await transport.SendAsync(disconnectFrame).ConfigureAwait(false);
             }
             catch
             {
@@ -746,7 +751,7 @@ public sealed class RadioClient
     public async System.Threading.Tasks.Task<uint> SendTextAsync(string text, uint? toNodeNum)
     {
         if (!IsConnected || _transport is null)
-            throw new InvalidOperationException("Not connected");
+            return 0;
 
         text = ToRadioFactory.NormalizeTextPayload((text ?? "").Trim(), ToRadioFactory.MaxTextPayloadBytes);
         if (text.Length == 0)
@@ -767,41 +772,41 @@ public sealed class RadioClient
 
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
 
-        await SendPacketWithQueueControlAsync(framed, packetId);
-        return packetId;
+        var sent = await SendPacketWithQueueControlAsync(framed, packetId);
+        return sent ? packetId : 0;
     }
 
     public async System.Threading.Tasks.Task<uint> SendNodeInfoRequestAsync(uint toNodeNum)
     {
         if (!IsConnected || _transport is null)
-            throw new InvalidOperationException("Not connected");
+            return 0;
 
         var msg = ToRadioFactory.CreateNodeInfoRequest(toNodeNum, out var packetId);
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
-        await SendPacketWithQueueControlAsync(framed, packetId);
-        return packetId;
+        var sent = await SendPacketWithQueueControlAsync(framed, packetId);
+        return sent ? packetId : 0;
     }
 
     public async System.Threading.Tasks.Task<uint> SendPositionRequestAsync(uint toNodeNum)
     {
         if (!IsConnected || _transport is null)
-            throw new InvalidOperationException("Not connected");
+            return 0;
 
         var msg = ToRadioFactory.CreatePositionRequest(toNodeNum, out var packetId);
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
-        await SendPacketWithQueueControlAsync(framed, packetId);
-        return packetId;
+        var sent = await SendPacketWithQueueControlAsync(framed, packetId);
+        return sent ? packetId : 0;
     }
 
     public async System.Threading.Tasks.Task<uint> SendTraceRouteRequestAsync(uint toNodeNum)
     {
         if (!IsConnected || _transport is null)
-            throw new InvalidOperationException("Not connected");
+            return 0;
 
         var msg = ToRadioFactory.CreateTraceRouteRequest(toNodeNum, out var packetId);
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
-        await SendPacketWithQueueControlAsync(framed, packetId);
-        return packetId;
+        var sent = await SendPacketWithQueueControlAsync(framed, packetId);
+        return sent ? packetId : 0;
     }
 
     public async System.Threading.Tasks.Task<uint> SendAdminMessageAsync(
@@ -810,15 +815,15 @@ public sealed class RadioClient
         bool wantResponse = true)
     {
         if (!IsConnected || _transport is null)
-            throw new InvalidOperationException("Not connected");
+            return 0;
 
         if (adminMessage is null)
             throw new ArgumentNullException(nameof(adminMessage));
 
         var msg = ToRadioFactory.CreateAdminMessage(toNodeNum, adminMessage, wantResponse, out var packetId);
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
-        await SendPacketWithQueueControlAsync(framed, packetId);
-        return packetId;
+        var sent = await SendPacketWithQueueControlAsync(framed, packetId);
+        return sent ? packetId : 0;
     }
 
     private static bool LooksLikeDebugText(string line)

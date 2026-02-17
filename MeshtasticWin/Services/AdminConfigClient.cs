@@ -330,7 +330,9 @@ public sealed class AdminConfigClient
     private async Task SendWithoutResponseAsync(uint nodeNum, AdminMessage message, CancellationToken ct)
     {
         AttachSessionPasskey(nodeNum, message);
-        _ = await RadioClient.Instance.SendAdminMessageAsync(nodeNum, message, wantResponse: false).ConfigureAwait(false);
+        var packetId = await RadioClient.Instance.SendAdminMessageAsync(nodeNum, message, wantResponse: false).ConfigureAwait(false);
+        if (packetId == 0)
+            throw new InvalidOperationException("Not connected");
         ct.ThrowIfCancellationRequested();
     }
 
@@ -364,7 +366,9 @@ public sealed class AdminConfigClient
         try
         {
             AttachSessionPasskey(nodeNum, request);
-            _ = await RadioClient.Instance.SendAdminMessageAsync(nodeNum, request, wantResponse: true).ConfigureAwait(false);
+            var packetId = await RadioClient.Instance.SendAdminMessageAsync(nodeNum, request, wantResponse: true).ConfigureAwait(false);
+            if (packetId == 0)
+                return new AdminMessage();
 
             try
             {
