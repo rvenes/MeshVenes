@@ -1,0 +1,86 @@
+name: Build MeshtasticWin
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - created
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    env:
+      CONFIGURATION: Release
+      TARGET_FRAMEWORK: net8.0-windows10.0.19041.0
+      RUNTIME: win-x64
+      PROJECT_PATH: MeshtasticWin/MeshtasticWin.csproj
+      PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish\win-x64
+      ZIP_PATH: ${{ github.workspace }}\artifacts\MeshtasticWin-win-x64-release.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve build target
+        id: target
+        shell: pwsh
+        run: |
+          $sln = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter *.sln -File | Select-Object -First 1
+          if ($null -ne $sln) {
+            "restore_target=$($sln.FullName)" >> $env:GITHUB_OUTPUT
+            "build_target=$($sln.FullName)" >> $env:GITHUB_OUTPUT
+          } else {
+            $project = Join-Path $env:GITHUB_WORKSPACE $env:PROJECT_PATH
+            "restore_target=$project" >> $env:GITHUB_OUTPUT
+            "build_target=$project" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore "${{ steps.target.outputs.restore_target }}"
+
+      - name: Build (Release)
+        shell: pwsh
+        run: dotnet build "${{ steps.target.outputs.build_target }}" -c $env:CONFIGURATION --no-restore
+
+      - name: Publish self-contained win-x64
+        shell: pwsh
+        run: |
+          dotnet publish $env:PROJECT_PATH `
+            -c $env:CONFIGURATION `
+            -f $env:TARGET_FRAMEWORK `
+            -r $env:RUNTIME `
+            --self-contained true `
+            --no-build `
+            -o $env:PUBLISH_DIR
+
+      - name: Zip publish output
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path (Split-Path -Parent $env:ZIP_PATH) -Force | Out-Null
+          if (Test-Path $env:ZIP_PATH) { Remove-Item $env:ZIP_PATH -Force }
+          Compress-Archive -Path "$env:PUBLISH_DIR\*" -DestinationPath $env:ZIP_PATH -Force
+
+      - name: Upload artifact (push)
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshtasticWin-win-x64-release
+          path: ${{ env.ZIP_PATH }}
+          if-no-files-found: error
+
+      - name: Upload ZIP to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_PATH }}
