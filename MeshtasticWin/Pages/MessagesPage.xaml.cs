@@ -1110,6 +1110,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         {
             // Send and capture packetId for ACK matching.
             packetId = await RadioClient.Instance.SendTextAsync(text, toNodeNum);
+            if (packetId == 0)
+                throw new InvalidOperationException("Not connected");
         }
         catch (Exception ex)
         {
