@@ -64,8 +64,6 @@ jobs:
             --self-contained true `
             --no-restore `
             /p:PublishReadyToRun=false `
-            /p:PublishSingleFile=true `
-            /p:IncludeNativeLibrariesForSelfExtract=true `
             -o $env:PUBLISH_DIR
 
       - name: Zip publish output
