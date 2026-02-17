@@ -66,7 +66,8 @@ jobs:
             /p:PublishReadyToRun=false `
             -o $env:PUBLISH_DIR
 
-      - name: Zip publish output
+      - name: Zip publish output (release only)
+        if: github.event_name == 'release'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path (Split-Path -Parent $env:ZIP_PATH) -Force | Out-Null
@@ -77,8 +78,8 @@ jobs:
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: MeshtasticWin-win-x64-release
-          path: ${{ env.ZIP_PATH }}
+          name: MeshtasticWin-win-x64
+          path: ${{ env.PUBLISH_DIR }}
           if-no-files-found: error
 
       - name: Upload ZIP to GitHub Release
