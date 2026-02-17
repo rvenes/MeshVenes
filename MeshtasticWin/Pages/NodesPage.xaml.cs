@@ -31,6 +31,7 @@ namespace MeshtasticWin.Pages;
 
 public sealed partial class NodesPage : Page, INotifyPropertyChanged
 {
+    private const string LastSelectedNodeKey = "NodesLastSelectedNodeIdHex";
     private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
         TypeInfoResolver = new DefaultJsonTypeInfoResolver()
@@ -89,6 +90,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private bool _isPublicKeyVisible;
 
     private NodeLive? _selected;
+    private string? _lastSelectedNodeIdHex;
     public NodeLive? Selected
     {
         get => _selected;
@@ -96,6 +98,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         {
             if (_selected == value) return;
             _selected = value;
+            if (!string.IsNullOrWhiteSpace(_selected?.IdHex))
+            {
+                _lastSelectedNodeIdHex = _selected.IdHex;
+                SettingsStore.SetString(LastSelectedNodeKey, _lastSelectedNodeIdHex);
+            }
             _isPublicKeyVisible = false;
 
             OnChanged(nameof(Selected));
@@ -387,6 +394,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     public NodesPage()
     {
         InitializeComponent();
+        _lastSelectedNodeIdHex = LoadLastSelectedNodeIdHex();
 
         _deviceMetricSamples.CollectionChanged += DeviceMetricSamples_CollectionChanged;
         _environmentMetricSamples.CollectionChanged += EnvironmentMetricSamples_CollectionChanged;
@@ -716,6 +724,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void Nodes_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        if (!EnsureOnUi(() => Nodes_CollectionChanged(sender, e)))
+            return;
+
         if (e.NewItems is not null)
             foreach (NodeLive n in e.NewItems)
             {
@@ -738,6 +749,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void Node_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (!EnsureOnUi(() => Node_PropertyChanged(sender, e)))
+            return;
+
         if (ReferenceEquals(sender, Selected))
         {
             OnChanged(nameof(SelectedLastHeardText));
@@ -920,9 +934,29 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         if (Selected is not null && VisibleNodes.Contains(Selected))
             return;
 
-        var firstVisible = VisibleNodes.FirstOrDefault();
-        NodesList.SelectedItem = firstVisible;
-        Selected = firstVisible;
+        NodeLive? preferred = null;
+        if (!string.IsNullOrWhiteSpace(_lastSelectedNodeIdHex))
+        {
+            preferred = VisibleNodes.FirstOrDefault(n =>
+                string.Equals(n.IdHex, _lastSelectedNodeIdHex, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var next = preferred ?? VisibleNodes.FirstOrDefault();
+        NodesList.SelectedItem = next;
+        Selected = next;
+    }
+
+    private static string? LoadLastSelectedNodeIdHex()
+    {
+        try
+        {
+            var value = SettingsStore.GetString(LastSelectedNodeKey);
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -1022,6 +1056,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void RefreshNodeSorting()
     {
+        if (!EnsureOnUi(RefreshNodeSorting))
+            return;
+
         if (_nodeSortRefreshTimer.IsEnabled)
             _nodeSortRefreshTimer.Stop();
         _nodeSortRefreshTimer.Start();
@@ -1076,6 +1113,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void ConnectedNodeChanged()
     {
+        if (!EnsureOnUi(ConnectedNodeChanged))
+            return;
+
         var scope = AppDataPaths.ActiveNodeScope;
         if (!string.Equals(_activeLogScope, scope, StringComparison.OrdinalIgnoreCase))
         {
@@ -1280,6 +1320,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void DeviceMetricSamples_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        if (!EnsureOnUi(() => DeviceMetricSamples_CollectionChanged(sender, e)))
+            return;
+
         if (_suspendMetricGraphRefresh)
             return;
 
@@ -1289,6 +1332,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void EnvironmentMetricSamples_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        if (!EnsureOnUi(() => EnvironmentMetricSamples_CollectionChanged(sender, e)))
+            return;
+
         if (_suspendMetricGraphRefresh)
             return;
 
@@ -1298,6 +1344,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void DeviceMetricsLogService_SampleAdded(string nodeId, DeviceMetricSample sample)
     {
+        if (!EnsureOnUi(() => DeviceMetricsLogService_SampleAdded(nodeId, sample)))
+            return;
+
         if (Selected is null || !string.Equals(NormalizeNodeId(Selected.IdHex), nodeId, StringComparison.OrdinalIgnoreCase))
             return;
 
@@ -1321,6 +1370,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void RefreshDeviceMetricsSamples()
     {
+        if (!EnsureOnUi(RefreshDeviceMetricsSamples))
+            return;
+
         if (Selected is null)
             return;
 
@@ -1353,6 +1405,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void RefreshEnvironmentMetricsSamples()
     {
+        if (!EnsureOnUi(RefreshEnvironmentMetricsSamples))
+            return;
+
         if (Selected is null)
             return;
 
@@ -1386,6 +1441,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void RefreshPositionEntries(IReadOnlyList<PositionLogEntry>? entries = null)
     {
+        if (!EnsureOnUi(() => RefreshPositionEntries(entries)))
+            return;
+
         var viewer = FindScrollViewer(PositionLogList);
         var wasAtTop = viewer is null || viewer.VerticalOffset <= 0.5;
         var priorOffset = viewer?.VerticalOffset ?? 0;
@@ -3285,5 +3343,31 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             _ => NodeLogType.DeviceMetrics
         };
 
-    private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    private bool EnsureOnUi(Action action)
+    {
+        try
+        {
+            var dq = DispatcherQueue;
+            if (dq is null)
+                return false;
+
+            if (dq.HasThreadAccess)
+                return true;
+
+            _ = dq.TryEnqueue(() => action());
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void OnChanged(string name)
+    {
+        if (!EnsureOnUi(() => OnChanged(name)))
+            return;
+
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
 }

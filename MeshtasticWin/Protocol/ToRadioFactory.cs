@@ -86,6 +86,24 @@ public static class ToRadioFactory
             out packetId);
     }
 
+    public static IMessage CreateAdminMessage(
+        uint to,
+        AdminMessage adminMessage,
+        bool wantResponse,
+        out uint packetId)
+    {
+        if (adminMessage is null)
+            throw new ArgumentNullException(nameof(adminMessage));
+
+        return CreateRequestMessage(
+            to,
+            portNum: PortNum.AdminApp,
+            wantResponse: wantResponse,
+            payload: adminMessage.ToByteArray(),
+            dest: to,
+            out packetId);
+    }
+
     private static IMessage CreateRequestMessage(
         uint to,
         PortNum portNum,

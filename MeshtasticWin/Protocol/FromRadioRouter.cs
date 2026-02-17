@@ -17,6 +17,7 @@ public static class FromRadioRouter
     private const int TextMessageCompressedPortNum = 7; // TEXT_MESSAGE_COMPRESSED_APP
     private const int PositionPortNum = 3;    // POSITION_APP
     private const int RoutingAppPortNum = 5;  // ROUTING_APP
+    private const int AdminAppPortNum = 6; // ADMIN_APP
     private const int DetectionSensorPortNum = 10; // DETECTION_SENSOR_APP
     private const int TelemetryAppPortNum = 67; // TELEMETRY_APP
     private const int TraceRoutePortNum = 70; // TRACEROUTE_APP
@@ -158,6 +159,14 @@ public static class FromRadioRouter
             if (TryHandleRoutingTraceRouteFromPayload(decodedObj, fromNodeNum, toNodeNum, channelIndex, rxSnr, rxRssi, logToUi, out var routingSummary))
                 logToUi("TraceRoute (passive): " + routingSummary);
             TryHandleAck(decodedObj, fromNodeNum, logToUi);
+            return;
+        }
+
+        // --- ADMIN_APP ---
+        if (portNum == AdminAppPortNum)
+        {
+            if (TryHandleAdminFromPayload(decodedObj, fromNodeNum, out var adminSummary))
+                logToUi("Admin: " + adminSummary);
             return;
         }
 
@@ -368,6 +377,30 @@ public static class FromRadioRouter
             return false;
 
         return LooksLikePlaceholderDebugText(existingText) && !LooksLikePlaceholderDebugText(incomingText);
+    }
+
+    private static bool TryHandleAdminFromPayload(object decodedObj, uint fromNodeNum, out string summary)
+    {
+        summary = "";
+        var payloadBytes = TryGetPayloadBytes(decodedObj);
+        if (payloadBytes is null || payloadBytes.Length == 0)
+        {
+            summary = "empty payload";
+            return false;
+        }
+
+        try
+        {
+            var admin = AdminMessage.Parser.ParseFrom(payloadBytes);
+            Services.AdminConfigClient.Instance.PublishIncomingAdminMessage(fromNodeNum, admin);
+            summary = admin.PayloadVariantCase.ToString();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            summary = $"parse error ({ex.GetType().Name})";
+            return false;
+        }
     }
 
     private static bool LooksLikePlaceholderDebugText(string? text)

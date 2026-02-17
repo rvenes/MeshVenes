@@ -274,7 +274,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
         var toRadio = _toRadio;
         if (toRadio is null)
-            throw new InvalidOperationException("Not connected");
+        {
+            Log?.Invoke("TX dropped: BLE not connected");
+            return;
+        }
 
         var payload = TryExtractFramedPayload(data);
         using var writer = new DataWriter();
@@ -291,9 +294,9 @@ public sealed class BluetoothLeTransport : IRadioTransport
                     throw new IOException("Bluetooth write failed.");
             }
         }
-        catch (ObjectDisposedException) when (Volatile.Read(ref _isDisconnecting) != 0) { return; }
-        catch (NullReferenceException) when (Volatile.Read(ref _isDisconnecting) != 0) { return; }
-        catch (IOException) when (Volatile.Read(ref _isDisconnecting) != 0) { return; }
+        catch (ObjectDisposedException) { Log?.Invoke("TX dropped: BLE disposed"); return; }
+        catch (NullReferenceException) { Log?.Invoke("TX dropped: BLE unavailable"); return; }
+        catch (IOException) { Log?.Invoke("TX dropped: BLE I/O unavailable"); return; }
 
         Log?.Invoke($"TX {payload.Length} bytes (BLE)");
     }

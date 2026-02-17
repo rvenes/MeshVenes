@@ -288,6 +288,16 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private void Node_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        var dq = DispatcherQueue;
+        if (dq is null)
+            return;
+
+        if (!dq.HasThreadAccess)
+        {
+            _ = dq.TryEnqueue(() => Node_PropertyChanged(sender, e));
+            return;
+        }
+
         if (sender is not NodeLive node)
             return;
 
@@ -350,6 +360,13 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private void ScheduleChatFilterRefresh()
     {
+        var dq = DispatcherQueue;
+        if (dq is not null && !dq.HasThreadAccess)
+        {
+            _ = dq.TryEnqueue(ScheduleChatFilterRefresh);
+            return;
+        }
+
         if (!_hideInactive && string.IsNullOrWhiteSpace(_chatFilter))
             return;
 
@@ -361,9 +378,17 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private void RebuildVisibleChats()
     {
         var desired = new List<ChatListItemVm>();
+        var activePeer = MeshtasticWin.AppState.ActiveChatPeerIdHex;
         foreach (var item in ChatListItems)
         {
             if (item.PeerIdHex is null)
+            {
+                desired.Add(item);
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(activePeer) &&
+                string.Equals(item.PeerIdHex, activePeer, StringComparison.OrdinalIgnoreCase))
             {
                 desired.Add(item);
                 continue;
@@ -405,8 +430,17 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         if (ChatList.SelectedItem is ChatListItemVm selected && IsChatItemVisible(selected))
             return;
 
-        var firstVisible = VisibleChatItems.FirstOrDefault();
-        SetActiveChatSelection(firstVisible);
+        var activePeer = MeshtasticWin.AppState.ActiveChatPeerIdHex;
+        ChatListItemVm? preferred = null;
+        if (string.IsNullOrWhiteSpace(activePeer))
+            preferred = VisibleChatItems.FirstOrDefault(x => x.PeerIdHex is null);
+        else
+            preferred = VisibleChatItems.FirstOrDefault(x => string.Equals(x.PeerIdHex, activePeer, StringComparison.OrdinalIgnoreCase));
+
+        if (preferred is null && !string.IsNullOrWhiteSpace(activePeer))
+            return;
+
+        SetActiveChatSelection(preferred ?? VisibleChatItems.FirstOrDefault());
     }
 
     private bool IsChatItemVisible(ChatListItemVm item)
@@ -450,6 +484,13 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             ChatList.SelectedItem = match;
             _selectedChatItem = match;
             EnsureChatHistoryLoaded(match);
+            OnChanged(nameof(SelectedChatMessages));
+            OnChanged(nameof(HasAnyChatSelection));
+        }
+        else if (!string.IsNullOrWhiteSpace(peer))
+        {
+            ChatList.SelectedItem = null;
+            _selectedChatItem = null;
             OnChanged(nameof(SelectedChatMessages));
             OnChanged(nameof(HasAnyChatSelection));
         }
@@ -676,6 +717,13 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private void RefreshChatSorting()
     {
+        var dq = DispatcherQueue;
+        if (dq is not null && !dq.HasThreadAccess)
+        {
+            _ = dq.TryEnqueue(RefreshChatSorting);
+            return;
+        }
+
         if (_chatSortRefreshTimer.IsEnabled)
             _chatSortRefreshTimer.Stop();
         _chatSortRefreshTimer.Start();

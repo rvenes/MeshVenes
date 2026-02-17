@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using WinRT.Interop;
@@ -33,7 +34,7 @@ public sealed partial class MainWindow : Window
         AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
         foreach (var node in AppState.Nodes)
             node.PropertyChanged += Node_PropertyChanged;
-        UpdateConnectionStatusText();
+        EnqueueConnectionStatusUpdate();
         NavigateTo("connect");
     }
 
@@ -148,7 +149,7 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnConnectionChanged()
-        => _ = DispatcherQueue.TryEnqueue(UpdateConnectionStatusText);
+        => EnqueueConnectionStatusUpdate();
 
     private void Nodes_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
@@ -170,10 +171,10 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        UpdateConnectionStatusText();
+        EnqueueConnectionStatusUpdate();
     }
 
-    private void Node_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    private void Node_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (sender is not Models.NodeLive node)
             return;
@@ -181,11 +182,46 @@ public sealed partial class MainWindow : Window
         if (!string.Equals(node.IdHex, AppState.ConnectedNodeIdHex, StringComparison.OrdinalIgnoreCase))
             return;
 
-        UpdateConnectionStatusText();
+        EnqueueConnectionStatusUpdate();
+    }
+
+    private void EnqueueConnectionStatusUpdate()
+    {
+        try
+        {
+            var dq = DispatcherQueue;
+            if (dq is null)
+                return;
+
+            if (dq.HasThreadAccess)
+            {
+                UpdateConnectionStatusText();
+                return;
+            }
+
+            _ = dq.TryEnqueue(UpdateConnectionStatusText);
+        }
+        catch
+        {
+            // Ignore late/invalid callbacks during reconnect or shutdown.
+        }
     }
 
     private void UpdateConnectionStatusText()
     {
+        var dq = DispatcherQueue;
+        if (dq is not null && !dq.HasThreadAccess)
+        {
+            _ = dq.TryEnqueue(UpdateConnectionStatusText);
+            return;
+        }
+
+        if (RadioClient.Instance.IsReconnecting)
+        {
+            ConnectionStatusText.Text = "Connecting...";
+            return;
+        }
+
         var label = "";
         if (RadioClient.Instance.IsConnected && !string.IsNullOrWhiteSpace(AppState.ConnectedNodeIdHex))
         {

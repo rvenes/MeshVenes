@@ -112,15 +112,18 @@ public sealed class TcpTransport : IRadioTransport
     {
         var stream = _stream;
         if (stream is null || Volatile.Read(ref _isDisconnecting) != 0)
-            throw new InvalidOperationException("Not connected");
+        {
+            Log?.Invoke("TX dropped: TCP not connected");
+            return;
+        }
 
         try
         {
             await stream.WriteAsync(data, ct).ConfigureAwait(false);
         }
-        catch (ObjectDisposedException) when (Volatile.Read(ref _isDisconnecting) != 0) { return; }
-        catch (NullReferenceException) when (Volatile.Read(ref _isDisconnecting) != 0) { return; }
-        catch (IOException) when (Volatile.Read(ref _isDisconnecting) != 0) { return; }
+        catch (ObjectDisposedException) { Log?.Invoke("TX dropped: TCP stream disposed"); return; }
+        catch (NullReferenceException) { Log?.Invoke("TX dropped: TCP stream unavailable"); return; }
+        catch (IOException) { Log?.Invoke("TX dropped: TCP I/O unavailable"); return; }
 
         Log?.Invoke($"TX {data.Length} bytes");
     }

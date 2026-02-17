@@ -8,6 +8,12 @@ namespace MeshtasticWin.Services;
 
 public static class SettingsStore
 {
+    public const string LastSerialPortKey = "LastSerialPort";
+    public const string LastTcpHostKey = "LastTcpHost";
+    public const string LastTcpPortKey = "LastTcpPort";
+    public const string LastBluetoothDeviceIdKey = "LastBluetoothDeviceId";
+    public const string LastConnectionTypeKey = "LastConnectionType";
+
     private static readonly object _lock = new();
     private static Dictionary<string, string>? _fallback;
     private static bool _fallbackLoaded;

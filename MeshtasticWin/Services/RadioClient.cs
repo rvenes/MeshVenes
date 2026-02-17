@@ -1,4 +1,5 @@
 ﻿using Meshtastic.Core;
+using Meshtastic.Protobufs;
 using Meshtastic.Transport.Serial;
 using MeshtasticWin.Parsing;
 using MeshtasticWin.Protocol;
@@ -51,6 +52,7 @@ public sealed class RadioClient
     private bool _hasTxQueueStatus;
 
     public bool IsConnected { get; private set; }
+    public bool IsReconnecting { get; private set; }
     public string? PortName { get; private set; }
 
     public ObservableCollection<string> LogLines { get; } = new();
@@ -58,6 +60,39 @@ public sealed class RadioClient
     public event Action? ConnectionChanged;
 
     private RadioClient() { }
+
+    public void SetReconnectingState(bool reconnecting)
+    {
+        if (IsReconnecting == reconnecting)
+            return;
+
+        IsReconnecting = reconnecting;
+        ConnectionChanged?.Invoke();
+    }
+
+    private static bool IsTransportNotConnectedException(Exception ex)
+    {
+        return ex is InvalidOperationException ioe &&
+               ioe.Message.IndexOf("Not connected", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private async Task MarkConnectionLostAsync(string? reason = null)
+    {
+        if (!IsConnected && _transport is null)
+            return;
+
+        try
+        {
+            await DisconnectAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort cleanup after transport loss.
+        }
+
+        IsConnected = false;
+        ResetTxQueueState(new IOException(reason ?? "Connection lost."));
+    }
 
     public void ApplyQueueStatus(int? free, int? maxLen, int? res, uint meshPacketId)
     {
@@ -186,6 +221,12 @@ public sealed class RadioClient
         {
             await WaitForTxQueueSpaceAsync().ConfigureAwait(false);
 
+            if (!transport.IsConnected)
+            {
+                await MarkConnectionLostAsync("Connection lost.").ConfigureAwait(false);
+                throw new InvalidOperationException("Not connected");
+            }
+
             TaskCompletionSource<bool>? queueResult = null;
             if (packetId != 0 && HasFreshQueueStatus())
             {
@@ -197,8 +238,13 @@ public sealed class RadioClient
             try
             {
                 await transport.SendAsync(framedPayload).ConfigureAwait(false);
+                if (!transport.IsConnected)
+                {
+                    await MarkConnectionLostAsync("Connection lost.").ConfigureAwait(false);
+                    throw new InvalidOperationException("Not connected");
+                }
             }
-            catch
+            catch (Exception ex)
             {
                 if (queueResult is not null)
                 {
@@ -211,6 +257,10 @@ public sealed class RadioClient
                         }
                     }
                 }
+
+                if (IsTransportNotConnectedException(ex) || !transport.IsConnected)
+                    await MarkConnectionLostAsync(ex.Message).ConfigureAwait(false);
+
                 throw;
             }
 
@@ -240,6 +290,25 @@ public sealed class RadioClient
             LogLines.RemoveAt(LogLines.Count - 1);
 
         AppendToLiveDebugLog(line);
+    }
+
+    public void AddSystemLog(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+            return;
+
+        try
+        {
+            var dq = MeshtasticWin.App.MainWindowInstance?.DispatcherQueue;
+            if (dq is not null)
+            {
+                _ = dq.TryEnqueue(() => AddLogFromUiThread(line));
+            }
+        }
+        catch
+        {
+            // Ignore logging failures; runtime behavior first.
+        }
     }
 
     private void AppendToLiveDebugLog(string line)
@@ -569,6 +638,12 @@ public sealed class RadioClient
 
                 try
                 {
+                    if (!transport.IsConnected)
+                    {
+                        await MarkConnectionLostAsync("Connection lost.").ConfigureAwait(false);
+                        break;
+                    }
+
                     var nonce = unchecked(++_heartbeatNonce);
                     var msg = ToRadioFactory.CreateHeartbeat(nonce);
                     var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
@@ -588,6 +663,11 @@ public sealed class RadioClient
                 }
                 catch (IOException) when (Volatile.Read(ref _disconnecting) != 0)
                 {
+                    break;
+                }
+                catch (InvalidOperationException ex) when (IsTransportNotConnectedException(ex))
+                {
+                    await MarkConnectionLostAsync(ex.Message).ConfigureAwait(false);
                     break;
                 }
                 catch
@@ -719,6 +799,23 @@ public sealed class RadioClient
             throw new InvalidOperationException("Not connected");
 
         var msg = ToRadioFactory.CreateTraceRouteRequest(toNodeNum, out var packetId);
+        var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
+        await SendPacketWithQueueControlAsync(framed, packetId);
+        return packetId;
+    }
+
+    public async System.Threading.Tasks.Task<uint> SendAdminMessageAsync(
+        uint toNodeNum,
+        AdminMessage adminMessage,
+        bool wantResponse = true)
+    {
+        if (!IsConnected || _transport is null)
+            throw new InvalidOperationException("Not connected");
+
+        if (adminMessage is null)
+            throw new ArgumentNullException(nameof(adminMessage));
+
+        var msg = ToRadioFactory.CreateAdminMessage(toNodeNum, adminMessage, wantResponse, out var packetId);
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
         await SendPacketWithQueueControlAsync(framed, packetId);
         return packetId;

@@ -1,0 +1,39 @@
+<Page
+    x:Class="MeshtasticWin.Pages.SettingsDeviceUserPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" MaxWidth="980" HorizontalAlignment="Left">
+            <TextBlock Text="User Config" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock x:Name="StatusText" Text="Loading..." Opacity="0.85"/>
+            <TextBlock x:Name="NodeText" Opacity="0.8"/>
+
+            <Grid ColumnDefinitions="220,360" RowSpacing="8" ColumnSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Long name"/>
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="LongNameBox"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Short name"/>
+                <TextBox Grid.Row="1" Grid.Column="1" x:Name="ShortNameBox"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Unmessagable"/>
+                <ToggleSwitch Grid.Row="2" Grid.Column="1" x:Name="UnmessagableToggle"/>
+
+                <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="Licensed operator"/>
+                <ToggleSwitch Grid.Row="3" Grid.Column="1" x:Name="LicensedToggle"/>
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Reload" Click="Reload_Click"/>
+                <Button Content="Save" Click="Save_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
