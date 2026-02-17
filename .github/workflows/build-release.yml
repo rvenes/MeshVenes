@@ -21,6 +21,7 @@ jobs:
       PROJECT_PATH: MeshtasticWin/MeshtasticWin.csproj
       PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish\win-x64
       ZIP_PATH: ${{ github.workspace }}\artifacts\MeshtasticWin-win-x64-release.zip
+      MSIX_DIR: ${{ github.workspace }}\artifacts\msix
 
     steps:
       - name: Checkout
@@ -74,6 +75,36 @@ jobs:
           if (Test-Path $env:ZIP_PATH) { Remove-Item $env:ZIP_PATH -Force }
           Compress-Archive -Path "$env:PUBLISH_DIR\*" -DestinationPath $env:ZIP_PATH -Force
 
+      - name: Build MSIX package (release only)
+        if: github.event_name == 'release'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:MSIX_DIR -Force | Out-Null
+          dotnet msbuild $env:PROJECT_PATH `
+            /restore `
+            /t:Build `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=x64 `
+            /p:RuntimeIdentifier=$env:RUNTIME `
+            /p:WindowsPackageType=MSIX `
+            /p:GenerateAppxPackageOnBuild=true `
+            /p:UapAppxPackageBuildMode=SideloadOnly `
+            /p:AppxBundle=Never `
+            /p:AppxPackageSigningEnabled=false `
+            /p:AppxPackageDir="$env:MSIX_DIR\\"
+
+      - name: Resolve MSIX path (release only)
+        if: github.event_name == 'release'
+        id: msix
+        shell: pwsh
+        run: |
+          $pkg = Get-ChildItem -Path $env:MSIX_DIR -Recurse -File |
+            Where-Object { $_.Extension -in '.msix', '.msixbundle' } |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if ($null -eq $pkg) { throw "No MSIX package found in $env:MSIX_DIR" }
+          "path=$($pkg.FullName)" >> $env:GITHUB_OUTPUT
+
       - name: Upload artifact (push)
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
@@ -86,4 +117,6 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ZIP_PATH }}
+          files: |
+            ${{ env.ZIP_PATH }}
+            ${{ steps.msix.outputs.path }}
