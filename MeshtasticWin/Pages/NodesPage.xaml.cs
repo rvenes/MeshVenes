@@ -52,6 +52,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private System.Threading.Tasks.Task? _mapInitializationTask;
     private bool _mapEventsAttached;
     private bool _mapConfigured;
+    private bool _pendingAutoFitOnLoad = true;
     private string? _mapFolderPath;
     private Uri? _mapUri;
     private readonly HashSet<string> _enabledTrackNodeIds = new(StringComparer.OrdinalIgnoreCase);
@@ -521,11 +522,13 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private async void NodesPage_Loaded(object sender, RoutedEventArgs e)
     {
+        _pendingAutoFitOnLoad = true;
         EnsureSelectedTabVisible();
         UpdateTabHeaderColors();
         await EnsureMapAsync();
         await PushAllNodesToMapAsync();
         await PushSelectionToMapAsync();
+        TryAutoFitMapOnLoad();
         SeedLogWriteTimes();
         DeviceMetricsLogService.SampleAdded += DeviceMetricsLogService_SampleAdded;
         _logPollTimer.Start();
@@ -651,6 +654,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 _ = PushAllNodesToMapAsync();
                 _ = PushSelectionToMapAsync();
                 _ = PushEnabledTracksToMapAsync();
+                TryAutoFitMapOnLoad();
                 return;
             }
 
@@ -1193,6 +1197,18 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private void FitAll_Click(object sender, RoutedEventArgs e)
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
+        MapView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"fitAll\"}");
+    }
+
+    private void TryAutoFitMapOnLoad()
+    {
+        if (!_pendingAutoFitOnLoad)
+            return;
+
+        if (!_mapReady || MapView.CoreWebView2 is null)
+            return;
+
+        _pendingAutoFitOnLoad = false;
         MapView.CoreWebView2.PostWebMessageAsJson("{\"type\":\"fitAll\"}");
     }
 

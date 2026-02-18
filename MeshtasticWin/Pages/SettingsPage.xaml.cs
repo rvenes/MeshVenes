@@ -24,6 +24,10 @@ public sealed partial class SettingsPage : Page
             _currentSectionTag = string.IsNullOrWhiteSpace(last) ? "lora" : last;
             NavigateToSection(_currentSectionTag);
         }
+        else
+        {
+            ExpandSectionForTag(_currentSectionTag);
+        }
     }
 
     private void SectionButton_Click(object sender, RoutedEventArgs e)
@@ -62,8 +66,68 @@ public sealed partial class SettingsPage : Page
     private static void ToggleSection(FrameworkElement panel, Button headerButton, string title)
     {
         var willExpand = panel.Visibility != Visibility.Visible;
-        panel.Visibility = willExpand ? Visibility.Visible : Visibility.Collapsed;
-        headerButton.Content = $"{(willExpand ? "▼" : "►")} {title}";
+        SetSectionExpanded(panel, headerButton, title, willExpand);
+    }
+
+    private static void SetSectionExpanded(FrameworkElement panel, Button headerButton, string title, bool isExpanded)
+    {
+        panel.Visibility = isExpanded ? Visibility.Visible : Visibility.Collapsed;
+        headerButton.Content = $"{(isExpanded ? "▼" : "►")} {title}";
+    }
+
+    private void CollapseAllSections()
+    {
+        SetSectionExpanded(RadioSectionPanel, RadioHeaderButton, "Radio Configuration", false);
+        SetSectionExpanded(DeviceSectionPanel, DeviceHeaderButton, "Device Configuration", false);
+        SetSectionExpanded(ModuleSectionPanel, ModuleHeaderButton, "Module Configuration", false);
+        SetSectionExpanded(LoggingSectionPanel, LoggingHeaderButton, "Logging", false);
+        SetSectionExpanded(FirmwareSectionPanel, FirmwareHeaderButton, "Firmware", false);
+    }
+
+    private void ExpandSectionForTag(string tag)
+    {
+        CollapseAllSections();
+        switch (tag)
+        {
+            case "lora":
+            case "channels":
+            case "security":
+            case "shareqr":
+                SetSectionExpanded(RadioSectionPanel, RadioHeaderButton, "Radio Configuration", true);
+                break;
+            case "device-user":
+            case "device-bluetooth":
+            case "device-device":
+            case "device-display":
+            case "device-network":
+            case "device-position":
+            case "device-power":
+                SetSectionExpanded(DeviceSectionPanel, DeviceHeaderButton, "Device Configuration", true);
+                break;
+            case "module-canned":
+            case "module-detection":
+            case "module-external-notification":
+            case "module-mqtt":
+            case "module-range-test":
+            case "module-pax":
+            case "module-ringtone":
+            case "module-serial":
+            case "module-store-forward":
+            case "module-telemetry":
+                SetSectionExpanded(ModuleSectionPanel, ModuleHeaderButton, "Module Configuration", true);
+                break;
+            case "logging":
+            case "logging-app":
+                SetSectionExpanded(LoggingSectionPanel, LoggingHeaderButton, "Logging", true);
+                break;
+            case "firmware":
+            case "firmware-remote-admin":
+            case "firmware-import-export":
+                SetSectionExpanded(FirmwareSectionPanel, FirmwareHeaderButton, "Firmware", true);
+                break;
+            default:
+                break;
+        }
     }
 
     private void NavigateToSection(string tag)
@@ -73,6 +137,7 @@ public sealed partial class SettingsPage : Page
 
         _currentSectionTag = tag;
         Services.SettingsStore.SetString(LastSettingsSectionKey, tag);
+        ExpandSectionForTag(tag);
 
         switch (tag)
         {

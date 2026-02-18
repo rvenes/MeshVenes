@@ -17,8 +17,11 @@ namespace MeshtasticWin.Pages;
 public sealed partial class SettingsImportExportPage : Page
 {
     private const string SelectionPresetFolderName = "Selection";
+    private const string LoraPresetEuStandard = "eu-standard";
+    private const string LoraPresetNorwayAlternative = "no-alt-869618";
 
     private readonly List<SelectionPresetEntry> _selectionPresets = new();
+    private readonly List<LoraFrequencyPresetEntry> _loraFrequencyPresets = new();
 
     public SettingsImportExportPage()
     {
@@ -28,8 +31,8 @@ public sealed partial class SettingsImportExportPage : Page
 
     private void SettingsImportExportPage_Loaded(object sender, RoutedEventArgs e)
     {
-        LoadPresets();
-        NotesBox.Text = string.Empty;
+        LoadLoraFrequencyPresets();
+        StatusText.Text = "Ready.";
     }
 
     private void LoadPresets()
@@ -133,7 +136,7 @@ public sealed partial class SettingsImportExportPage : Page
             var availableSelection = BuildAvailableSelection(backup);
             var defaultSelection = IntersectSelection(pageSelection, availableSelection);
 
-            var selected = await ShowImportSelectionDialogAsync(availableSelection, defaultSelection);
+            var selected = await ShowImportSelectionDialogAsync(backup, availableSelection, defaultSelection);
             if (selected is null)
             {
                 StatusText.Text = "Import cancelled.";
@@ -169,38 +172,162 @@ public sealed partial class SettingsImportExportPage : Page
         }
     }
 
-    private async Task<BackupSelection?> ShowImportSelectionDialogAsync(BackupSelection available, BackupSelection selected)
+    private void LoadLoraFrequencyPresets()
     {
-        CheckBox CreateOption(string label, bool isAvailable, bool isSelected)
-            => new()
+        _loraFrequencyPresets.Clear();
+        _loraFrequencyPresets.Add(new LoraFrequencyPresetEntry(
+            "EU standard frequency",
+            LoraPresetEuStandard,
+            "Use preset: true, Preset: LongFast, Region: EU_868, Override frequency: off."));
+        _loraFrequencyPresets.Add(new LoraFrequencyPresetEntry(
+            "Norway alternative frequency (869.618)",
+            LoraPresetNorwayAlternative,
+            "Use preset: false, Region: EU_868, Bandwidth: 62, Spread factor: 8, Coding rate: 5, Override frequency: 869.618."));
+
+        LoraFrequencyPresetCombo.ItemsSource = _loraFrequencyPresets.Select(x => x.Name).ToList();
+        LoraFrequencyPresetCombo.SelectedIndex = 0;
+        UpdateLoraFrequencyPresetDetails();
+    }
+
+    private void LoraFrequencyPresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateLoraFrequencyPresetDetails();
+    }
+
+    private void UpdateLoraFrequencyPresetDetails()
+    {
+        var idx = LoraFrequencyPresetCombo.SelectedIndex;
+        if (idx < 0 || idx >= _loraFrequencyPresets.Count)
+        {
+            LoraFrequencyPresetDetailsText.Text = string.Empty;
+            ToolTipService.SetToolTip(LoraFrequencyPresetCombo, null);
+            ToolTipService.SetToolTip(ApplyLoraFrequencyPresetButton, null);
+            return;
+        }
+
+        var details = _loraFrequencyPresets[idx].Details;
+        LoraFrequencyPresetDetailsText.Text = details;
+        ToolTipService.SetToolTip(LoraFrequencyPresetCombo, details);
+        ToolTipService.SetToolTip(ApplyLoraFrequencyPresetButton, details);
+    }
+
+    private async void ApplyLoraFrequencyPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTargetNode(out var nodeNum))
+            return;
+
+        var idx = LoraFrequencyPresetCombo.SelectedIndex;
+        if (idx < 0 || idx >= _loraFrequencyPresets.Count)
+        {
+            StatusText.Text = "Select a LoRa frequency preset first.";
+            return;
+        }
+
+        var preset = _loraFrequencyPresets[idx];
+        try
+        {
+            SetEnabled(false);
+            StatusText.Text = $"Applying LoRa preset '{preset.Name}' to node 0x{nodeNum:x8}...";
+
+            var config = await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.LoraConfig);
+            var lora = config.Lora?.Clone() ?? new Config.Types.LoRaConfig();
+            ApplyLoraFrequencyPreset(lora, preset.Key);
+
+            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, new Config { Lora = lora });
+            StatusText.Text = $"LoRa frequency preset applied: {preset.Name}.";
+
+            SettingsReconnectHelper.StartPostSaveReconnectWatchdog(
+                text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+        }
+        catch (Exception ex)
+        {
+            if (SettingsReconnectHelper.IsNotConnectedException(ex))
+            {
+                StatusText.Text = "Node reboot detected. Connecting...";
+                var ok = await SettingsReconnectHelper.TryReconnectAfterSaveAsync(
+                    text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+                StatusText.Text = ok
+                    ? $"LoRa frequency preset applied: {preset.Name}. Reconnected."
+                    : $"LoRa preset may be applied, but reconnect failed: {preset.Name}.";
+                return;
+            }
+
+            StatusText.Text = "Failed to apply LoRa frequency preset: " + ex.Message;
+        }
+        finally
+        {
+            SetEnabled(true);
+        }
+    }
+
+    private static void ApplyLoraFrequencyPreset(Config.Types.LoRaConfig lora, string presetKey)
+    {
+        var region = ParseEu868Region();
+        lora.Region = region;
+
+        switch (presetKey)
+        {
+            case LoraPresetEuStandard:
+                lora.UsePreset = true;
+                lora.ModemPreset = Config.Types.LoRaConfig.Types.ModemPreset.LongFast;
+                lora.OverrideFrequency = 0f;
+                break;
+
+            case LoraPresetNorwayAlternative:
+                lora.UsePreset = false;
+                lora.ModemPreset = Config.Types.LoRaConfig.Types.ModemPreset.LongFast;
+                lora.Bandwidth = 62;
+                lora.SpreadFactor = 8;
+                lora.CodingRate = 5;
+                lora.OverrideFrequency = 869.618f;
+                break;
+        }
+    }
+
+    private static Config.Types.LoRaConfig.Types.RegionCode ParseEu868Region()
+    {
+        return Enum.TryParse<Config.Types.LoRaConfig.Types.RegionCode>("Eu868", ignoreCase: true, out var region)
+            ? region
+            : Config.Types.LoRaConfig.Types.RegionCode.Unset;
+    }
+
+    private async Task<BackupSelection?> ShowImportSelectionDialogAsync(SettingsBackupFile backup, BackupSelection available, BackupSelection selected)
+    {
+        CheckBox CreateOption(string label, string sectionKey, bool isAvailable, bool isSelected)
+        {
+            var cb = new CheckBox
             {
                 Content = isAvailable ? label : $"{label} (not in file)",
                 IsEnabled = isAvailable,
                 IsChecked = isAvailable && isSelected,
                 Margin = new Thickness(0, 2, 0, 2)
             };
+            var preview = BuildSectionPreviewText(sectionKey, backup, isAvailable);
+            AttachTooltip(cb, preview);
+            return cb;
+        }
 
-        var cLora = CreateOption("LoRa config", available.IncludeLora, selected.IncludeLora);
-        var cChannels = CreateOption("Channels", available.IncludeChannels, selected.IncludeChannels);
-        var cSecurity = CreateOption("Security config", available.IncludeSecurity, selected.IncludeSecurity);
-        var cOwner = CreateOption("User / owner", available.IncludeOwner, selected.IncludeOwner);
-        var cBluetooth = CreateOption("Bluetooth config", available.IncludeBluetooth, selected.IncludeBluetooth);
-        var cDevice = CreateOption("Device config", available.IncludeDevice, selected.IncludeDevice);
-        var cDisplay = CreateOption("Display config", available.IncludeDisplay, selected.IncludeDisplay);
-        var cNetwork = CreateOption("Network config", available.IncludeNetwork, selected.IncludeNetwork);
-        var cPosition = CreateOption("Position config", available.IncludePosition, selected.IncludePosition);
-        var cPower = CreateOption("Power config", available.IncludePower, selected.IncludePower);
-        var cCanned = CreateOption("Canned messages config", available.IncludeCannedModule, selected.IncludeCannedModule);
-        var cCannedText = CreateOption("Canned messages text", available.IncludeCannedMessagesText, selected.IncludeCannedMessagesText);
-        var cDetection = CreateOption("Detection sensor config", available.IncludeDetectionSensor, selected.IncludeDetectionSensor);
-        var cExternal = CreateOption("External notification config", available.IncludeExternalNotification, selected.IncludeExternalNotification);
-        var cMqtt = CreateOption("MQTT config", available.IncludeMqtt, selected.IncludeMqtt);
-        var cRange = CreateOption("Range test config", available.IncludeRangeTest, selected.IncludeRangeTest);
-        var cPax = CreateOption("PAX counter config", available.IncludePaxCounter, selected.IncludePaxCounter);
-        var cRingtone = CreateOption("Ringtone text", available.IncludeRingtoneText, selected.IncludeRingtoneText);
-        var cSerial = CreateOption("Serial config", available.IncludeSerial, selected.IncludeSerial);
-        var cStoreForward = CreateOption("Store & forward config", available.IncludeStoreForward, selected.IncludeStoreForward);
-        var cTelemetry = CreateOption("Telemetry config", available.IncludeTelemetry, selected.IncludeTelemetry);
+        var cLora = CreateOption("LoRa config", "lora", available.IncludeLora, selected.IncludeLora);
+        var cChannels = CreateOption("Channels", "channels", available.IncludeChannels, selected.IncludeChannels);
+        var cSecurity = CreateOption("Security config", "security", available.IncludeSecurity, selected.IncludeSecurity);
+        var cOwner = CreateOption("User / owner", "owner", available.IncludeOwner, selected.IncludeOwner);
+        var cBluetooth = CreateOption("Bluetooth config", "bluetooth", available.IncludeBluetooth, selected.IncludeBluetooth);
+        var cDevice = CreateOption("Device config", "device", available.IncludeDevice, selected.IncludeDevice);
+        var cDisplay = CreateOption("Display config", "display", available.IncludeDisplay, selected.IncludeDisplay);
+        var cNetwork = CreateOption("Network config", "network", available.IncludeNetwork, selected.IncludeNetwork);
+        var cPosition = CreateOption("Position config", "position", available.IncludePosition, selected.IncludePosition);
+        var cPower = CreateOption("Power config", "power", available.IncludePower, selected.IncludePower);
+        var cCanned = CreateOption("Canned messages config", "module-canned", available.IncludeCannedModule, selected.IncludeCannedModule);
+        var cCannedText = CreateOption("Canned messages text", "module-canned-text", available.IncludeCannedMessagesText, selected.IncludeCannedMessagesText);
+        var cDetection = CreateOption("Detection sensor config", "module-detection", available.IncludeDetectionSensor, selected.IncludeDetectionSensor);
+        var cExternal = CreateOption("External notification config", "module-external", available.IncludeExternalNotification, selected.IncludeExternalNotification);
+        var cMqtt = CreateOption("MQTT config", "module-mqtt", available.IncludeMqtt, selected.IncludeMqtt);
+        var cRange = CreateOption("Range test config", "module-range", available.IncludeRangeTest, selected.IncludeRangeTest);
+        var cPax = CreateOption("PAX counter config", "module-pax", available.IncludePaxCounter, selected.IncludePaxCounter);
+        var cRingtone = CreateOption("Ringtone text", "module-ringtone", available.IncludeRingtoneText, selected.IncludeRingtoneText);
+        var cSerial = CreateOption("Serial config", "module-serial", available.IncludeSerial, selected.IncludeSerial);
+        var cStoreForward = CreateOption("Store & forward config", "module-storeforward", available.IncludeStoreForward, selected.IncludeStoreForward);
+        var cTelemetry = CreateOption("Telemetry config", "module-telemetry", available.IncludeTelemetry, selected.IncludeTelemetry);
 
         var allChecks = new[]
         {
@@ -209,10 +336,10 @@ public sealed partial class SettingsImportExportPage : Page
             cCanned, cCannedText, cDetection, cExternal, cMqtt, cRange, cPax, cRingtone, cSerial, cStoreForward, cTelemetry
         };
 
-        var columns = new Grid { ColumnSpacing = 20 };
-        columns.ColumnDefinitions.Add(new ColumnDefinition());
-        columns.ColumnDefinitions.Add(new ColumnDefinition());
-        columns.ColumnDefinitions.Add(new ColumnDefinition());
+        var columns = new Grid { ColumnSpacing = 8 };
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
 
         var radioCol = new StackPanel { Spacing = 4 };
         radioCol.Children.Add(new TextBlock { Text = "Radio Configuration", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
@@ -273,14 +400,24 @@ public sealed partial class SettingsImportExportPage : Page
         actionRow.Children.Add(selectAllButton);
         actionRow.Children.Add(selectNoneButton);
 
-        var container = new StackPanel { Spacing = 8, Width = 980 };
+        var optionsScroll = new ScrollViewer
+        {
+            Content = columns,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MaxHeight = 560,
+            MinHeight = 420,
+            Width = 1000
+        };
+
+        var container = new StackPanel { Spacing = 8, Width = 1020, MinHeight = 620 };
         container.Children.Add(new TextBlock
         {
             Text = "Select exactly which sections to restore from this file.",
             TextWrapping = TextWrapping.Wrap
         });
         container.Children.Add(actionRow);
-        container.Children.Add(columns);
+        container.Children.Add(optionsScroll);
 
         var dialog = new ContentDialog
         {
@@ -291,6 +428,8 @@ public sealed partial class SettingsImportExportPage : Page
             XamlRoot = XamlRoot,
             Content = container
         };
+        dialog.Resources["ContentDialogMinWidth"] = 1020d;
+        dialog.Resources["ContentDialogMaxWidth"] = 1240d;
 
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary)
@@ -622,6 +761,8 @@ public sealed partial class SettingsImportExportPage : Page
 
     private void SetEnabled(bool enabled)
     {
+        LoraFrequencyPresetCombo.IsEnabled = enabled;
+        ApplyLoraFrequencyPresetButton.IsEnabled = enabled;
         SelectionPresetCombo.IsEnabled = enabled;
         CustomPresetNameBox.IsEnabled = enabled;
         NotesBox.IsEnabled = enabled;
@@ -656,6 +797,256 @@ public sealed partial class SettingsImportExportPage : Page
 
     private static bool HasJson(JsonElement? value)
         => value.HasValue && value.Value.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null;
+
+    private static string? BuildLoraImportPreviewText(SettingsBackupFile backup)
+    {
+        if (!HasJson(backup.LoraConfig))
+            return null;
+
+        try
+        {
+            var root = backup.LoraConfig!.Value;
+            if (!root.TryGetProperty("lora", out var lora) || lora.ValueKind != JsonValueKind.Object)
+                return "LoRa section found in file.";
+
+            static string GetValue(JsonElement node, string name)
+            {
+                if (!node.TryGetProperty(name, out var value))
+                    return "—";
+                return value.ValueKind switch
+                {
+                    JsonValueKind.String => value.GetString() ?? "—",
+                    JsonValueKind.Number => value.GetRawText(),
+                    JsonValueKind.True => "true",
+                    JsonValueKind.False => "false",
+                    _ => value.GetRawText()
+                };
+            }
+
+            return string.Join('\n', new[]
+            {
+                "LoRa values from file:",
+                $"Use preset: {GetValue(lora, "usePreset")}",
+                $"Preset: {GetValue(lora, "modemPreset")}",
+                $"Region: {GetValue(lora, "region")}",
+                $"Bandwidth: {GetValue(lora, "bandwidth")}",
+                $"Spread factor: {GetValue(lora, "spreadFactor")}",
+                $"Coding rate: {GetValue(lora, "codingRate")}",
+                $"Hop limit: {GetValue(lora, "hopLimit")}",
+                $"Frequency offset: {GetValue(lora, "frequencyOffset")}",
+                $"Override frequency: {GetValue(lora, "overrideFrequency")}"
+            });
+        }
+        catch
+        {
+            return "LoRa section found in file.";
+        }
+    }
+
+    private static string BuildSectionPreviewText(string sectionKey, SettingsBackupFile backup, bool isAvailable)
+    {
+        if (!isAvailable)
+            return "Not present in file.";
+
+        return sectionKey switch
+        {
+            "lora" => BuildLoraImportPreviewText(backup) ?? "LoRa section found in file.",
+            "channels" => BuildChannelsPreviewText(backup),
+            "module-canned-text" => BuildStringPreviewText("Canned messages text", backup.CannedMessagesText),
+            "module-ringtone" => BuildStringPreviewText("Ringtone text", backup.RingtoneText),
+            _ => BuildJsonPreviewText(sectionKey, GetSectionJson(sectionKey, backup))
+        };
+    }
+
+    private static JsonElement? GetSectionJson(string sectionKey, SettingsBackupFile backup) => sectionKey switch
+    {
+        "security" => backup.SecurityConfig,
+        "owner" => backup.Owner,
+        "bluetooth" => backup.BluetoothConfig,
+        "device" => backup.DeviceConfig,
+        "display" => backup.DisplayConfig,
+        "network" => backup.NetworkConfig,
+        "position" => backup.PositionConfig,
+        "power" => backup.PowerConfig,
+        "module-canned" => backup.ModuleCanned,
+        "module-detection" => backup.ModuleDetection,
+        "module-external" => backup.ModuleExternalNotification,
+        "module-mqtt" => backup.ModuleMqtt,
+        "module-range" => backup.ModuleRangeTest,
+        "module-pax" => backup.ModulePaxCounter,
+        "module-serial" => backup.ModuleSerial,
+        "module-storeforward" => backup.ModuleStoreForward,
+        "module-telemetry" => backup.ModuleTelemetry,
+        _ => null
+    };
+
+    private static string BuildChannelsPreviewText(SettingsBackupFile backup)
+    {
+        if (backup.Channels is null || backup.Channels.Count == 0)
+            return "Channels section found in file (no entries).";
+
+        var lines = new List<string>
+        {
+            $"Channels in file: {backup.Channels.Count}"
+        };
+
+        for (var i = 0; i < Math.Min(backup.Channels.Count, 5); i++)
+        {
+            var ch = backup.Channels[i];
+            var role = ch.TryGetProperty("role", out var roleValue) ? roleValue.GetRawText() : "—";
+            var name = ch.TryGetProperty("settings", out var settings) && settings.TryGetProperty("name", out var nameValue)
+                ? (nameValue.GetString() ?? "—")
+                : "—";
+            lines.Add($"#{i}: role={role}, name={name}");
+        }
+
+        if (backup.Channels.Count > 5)
+            lines.Add("...");
+
+        return string.Join('\n', lines);
+    }
+
+    private static string BuildStringPreviewText(string title, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return $"{title}: (empty)";
+
+        var text = value.Trim();
+        if (text.Length > 260)
+            text = text[..260] + "...";
+        return $"{title}:\n{text}";
+    }
+
+    private static string BuildJsonPreviewText(string sectionKey, JsonElement? json)
+    {
+        if (!HasJson(json))
+            return "Section found in file.";
+
+        var entries = new List<(string Path, string Value)>();
+        FlattenJson(sectionKey, json!.Value, entries);
+        var lines = entries
+            .Select(e => $"{FormatFriendlyLabel(sectionKey, e.Path)}: {FormatFriendlyValue(e.Path, e.Value)}")
+            .ToList();
+        if (lines.Count == 0)
+            return $"{sectionKey}: (no values)";
+
+        const int maxLines = 16;
+        if (lines.Count > maxLines)
+        {
+            lines = lines.Take(maxLines).ToList();
+            lines.Add("...");
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static void FlattenJson(string path, JsonElement value, List<(string Path, string Value)> lines)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var prop in value.EnumerateObject())
+                    FlattenJson($"{path}.{prop.Name}", prop.Value, lines);
+                break;
+
+            case JsonValueKind.Array:
+            {
+                var i = 0;
+                foreach (var item in value.EnumerateArray())
+                {
+                    FlattenJson($"{path}[{i}]", item, lines);
+                    i++;
+                    if (i >= 6)
+                    {
+                        lines.Add(($"{path}[...]", "(truncated)"));
+                        break;
+                    }
+                }
+                break;
+            }
+
+            case JsonValueKind.String:
+            {
+                var text = value.GetString() ?? string.Empty;
+                if (text.Length > 140)
+                    text = text[..140] + "...";
+                lines.Add((path, text));
+                break;
+            }
+
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+            case JsonValueKind.Null:
+                lines.Add((path, value.GetRawText()));
+                break;
+        }
+    }
+
+    private static void AttachTooltip(FrameworkElement target, string text)
+    {
+        var tb = new TextBlock
+        {
+            Text = text,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 18,
+            MaxWidth = 540
+        };
+
+        var tip = new ToolTip { Content = tb };
+        ToolTipService.SetToolTip(target, tip);
+    }
+
+    private static string FormatFriendlyLabel(string sectionKey, string rawPath)
+    {
+        var path = rawPath;
+        if (path.StartsWith(sectionKey + ".", StringComparison.OrdinalIgnoreCase))
+            path = path[(sectionKey.Length + 1)..];
+
+        var parts = path.Split('.', StringSplitOptions.RemoveEmptyEntries).ToList();
+        while (parts.Count >= 2 && string.Equals(parts[0], parts[1], StringComparison.OrdinalIgnoreCase))
+            parts.RemoveAt(0);
+
+        var leaf = parts.Count == 0 ? path : parts[^1];
+
+        return leaf.ToLowerInvariant() switch
+        {
+            "screenonsecs" => "Screen on for",
+            "flipScreen" => "Flip screen",
+            "flipscreen" => "Flip screen",
+            _ => HumanizeToken(leaf)
+        };
+    }
+
+    private static string FormatFriendlyValue(string rawPath, string rawValue)
+    {
+        var key = rawPath.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? rawPath;
+        if (key.EndsWith("Secs", StringComparison.OrdinalIgnoreCase) ||
+            key.EndsWith("Seconds", StringComparison.OrdinalIgnoreCase))
+            return $"{rawValue} s";
+        return rawValue;
+    }
+
+    private static string HumanizeToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return token;
+
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < token.Length; i++)
+        {
+            var c = token[i];
+            if (i > 0 && char.IsUpper(c) && char.IsLower(token[i - 1]))
+                sb.Append(' ');
+            if (c == '_' || c == '-')
+                sb.Append(' ');
+            else
+                sb.Append(c);
+        }
+
+        var text = sb.ToString().Trim();
+        return char.ToUpperInvariant(text[0]) + text[1..];
+    }
 
     private static Config ParseConfig(JsonElement? value)
         => Config.Parser.ParseJson(ToJsonText(value));
@@ -849,6 +1240,20 @@ public sealed partial class SettingsImportExportPage : Page
     {
         public string? Name { get; set; }
         public BackupSelection? Selection { get; set; }
+    }
+
+    private sealed class LoraFrequencyPresetEntry
+    {
+        public LoraFrequencyPresetEntry(string name, string key, string details)
+        {
+            Name = name;
+            Key = key;
+            Details = details;
+        }
+
+        public string Name { get; }
+        public string Key { get; }
+        public string Details { get; }
     }
 
     private static class BuiltInSelectionPresets

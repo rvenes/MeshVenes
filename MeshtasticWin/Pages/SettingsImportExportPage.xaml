@@ -9,8 +9,7 @@
             <TextBlock x:Name="StatusText" Text="Ready." Opacity="0.85" TextWrapping="Wrap"/>
             <TextBlock Opacity="0.85" TextWrapping="Wrap"
                        Text="Note: Export/import can take time, especially for remote admin targets. Fetching all categories uses significant mesh bandwidth. Select only the sections you actually need."/>
-
-            <Grid ColumnDefinitions="180,420" RowSpacing="8" ColumnSpacing="12">
+            <Grid ColumnDefinitions="180,420" RowSpacing="8" ColumnSpacing="12" Visibility="Collapsed">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -26,7 +25,7 @@
                 <TextBox Grid.Row="2" Grid.Column="1" x:Name="NotesBox" Height="80" AcceptsReturn="True" TextWrapping="Wrap"/>
             </Grid>
 
-            <StackPanel Orientation="Horizontal" Spacing="8">
+            <StackPanel Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
                 <Button Content="Apply selection preset" Click="ApplySelectionPreset_Click"/>
                 <Button Content="Save selection preset file" Click="SaveSelectionPresetFile_Click"/>
                 <Button Content="Delete selected preset file" Click="DeleteSelectedSelectionPresetFile_Click"/>
@@ -38,7 +37,7 @@
                 <Button Content="Select all" Click="SelectAllSections_Click"/>
                 <Button Content="Select none" Click="SelectNoSections_Click"/>
             </StackPanel>
-            <Grid ColumnDefinitions="360,360,360" ColumnSpacing="16">
+            <Grid ColumnDefinitions="300,300,300" ColumnSpacing="4">
                 <StackPanel Grid.Column="0" Spacing="6">
                     <TextBlock Text="Radio Configuration" FontWeight="SemiBold"/>
                     <CheckBox x:Name="IncludeLoraCheck" Content="LoRa config" IsChecked="True"/>
@@ -75,6 +74,15 @@
                 <Button Content="Export selected to file" Click="ExportSelected_Click"/>
                 <Button Content="Import from file to selected sections" Click="ImportSelected_Click"/>
             </StackPanel>
+
+            <Grid ColumnDefinitions="180,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="LoRa frequency preset"/>
+                <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
+                    <ComboBox x:Name="LoraFrequencyPresetCombo" Width="340" HorizontalAlignment="Left" SelectionChanged="LoraFrequencyPresetCombo_SelectionChanged"/>
+                    <Button x:Name="ApplyLoraFrequencyPresetButton" Content="Apply LoRa frequency preset" Click="ApplyLoraFrequencyPreset_Click"/>
+                </StackPanel>
+                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="LoraFrequencyPresetDetailsText" Opacity="0.85" TextWrapping="Wrap" MaxWidth="860"/>
+            </Grid>
 
         </StackPanel>
     </ScrollViewer>
