@@ -48,6 +48,15 @@ Use standard .NET CLI commands from repo root (examples, adjust to the solution 
 
 If a build/test cannot be run in the current environment, state exactly what could not be run and why, and still keep changes minimal and safe.
 
+## Version bump rule (required)
+
+When the user asks for a version bump, update all relevant version sources so About and packaged builds show the same new version:
+
+- `MeshtasticWin.csproj`: `Version`, `AssemblyVersion`, `FileVersion`, `AssemblyInformationalVersion`
+- `MeshtasticWin/Package.appxmanifest`: `<Identity Version="...">`
+
+Never bump only one location.
+
 ## Git operations (automation)
 
 Codex should handle the full Git workflow so the user can simply review a PR link and then pull/merge from GitHub.
@@ -88,6 +97,16 @@ Then provide the GitHub URL to open a PR (or use `gh pr create` only if GitHub C
      - git switch main
      - git pull
      - git branch -d feature/<name>
+
+### Post-merge reset workflow (required)
+
+When the user confirms the PR is merged and asks to prepare for new work:
+
+1. `git switch main`
+2. `git pull`
+3. Verify clean state (`git status`)
+4. Create a fresh feature branch for the next task only when the user is ready to start coding:
+   - `git switch -c feature/<next-name>`
 
 ## Manual approval before commit & push (mandatory)
 
