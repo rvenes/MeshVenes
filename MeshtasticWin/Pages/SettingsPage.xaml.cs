@@ -7,9 +7,12 @@ public sealed partial class SettingsPage : Page
 {
     private const string LastSettingsSectionKey = "LastSettingsSection";
 
+    private string _currentSectionTag = "lora";
+
     public SettingsPage()
     {
         InitializeComponent();
+
         Loaded += SettingsPage_Loaded;
     }
 
@@ -18,7 +21,8 @@ public sealed partial class SettingsPage : Page
         if (SettingsContentFrame.Content is null)
         {
             var last = Services.SettingsStore.GetString(LastSettingsSectionKey);
-            NavigateToSection(string.IsNullOrWhiteSpace(last) ? "lora" : last);
+            _currentSectionTag = string.IsNullOrWhiteSpace(last) ? "lora" : last;
+            NavigateToSection(_currentSectionTag);
         }
     }
 
@@ -30,11 +34,44 @@ public sealed partial class SettingsPage : Page
         NavigateToSection(tag);
     }
 
+    private void SectionHeaderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not string tag)
+            return;
+
+        switch (tag)
+        {
+            case "radio-header":
+                ToggleSection(RadioSectionPanel, RadioHeaderButton, "Radio Configuration");
+                break;
+            case "device-header":
+                ToggleSection(DeviceSectionPanel, DeviceHeaderButton, "Device Configuration");
+                break;
+            case "module-header":
+                ToggleSection(ModuleSectionPanel, ModuleHeaderButton, "Module Configuration");
+                break;
+            case "logging-header":
+                ToggleSection(LoggingSectionPanel, LoggingHeaderButton, "Logging");
+                break;
+            case "firmware-header":
+                ToggleSection(FirmwareSectionPanel, FirmwareHeaderButton, "Firmware");
+                break;
+        }
+    }
+
+    private static void ToggleSection(FrameworkElement panel, Button headerButton, string title)
+    {
+        var willExpand = panel.Visibility != Visibility.Visible;
+        panel.Visibility = willExpand ? Visibility.Visible : Visibility.Collapsed;
+        headerButton.Content = $"{(willExpand ? "▼" : "►")} {title}";
+    }
+
     private void NavigateToSection(string tag)
     {
         if (string.IsNullOrWhiteSpace(tag))
             tag = "lora";
 
+        _currentSectionTag = tag;
         Services.SettingsStore.SetString(LastSettingsSectionKey, tag);
 
         switch (tag)
@@ -55,10 +92,16 @@ public sealed partial class SettingsPage : Page
                 SettingsContentFrame.Navigate(typeof(SettingsLoggingPage));
                 break;
             case "logging-app":
-                SettingsContentFrame.Navigate(typeof(SettingsAppOptionsPage));
+                SettingsContentFrame.Navigate(typeof(SettingsLoggingPage));
                 break;
             case "firmware":
                 SettingsContentFrame.Navigate(typeof(SettingsFirmwarePage));
+                break;
+            case "firmware-remote-admin":
+                SettingsContentFrame.Navigate(typeof(SettingsRemoteAdminPage));
+                break;
+            case "firmware-import-export":
+                SettingsContentFrame.Navigate(typeof(SettingsImportExportPage));
                 break;
             case "device-user":
                 SettingsContentFrame.Navigate(typeof(SettingsDeviceUserPage));

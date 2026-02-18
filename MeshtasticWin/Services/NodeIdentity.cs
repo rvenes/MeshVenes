@@ -7,7 +7,7 @@ namespace MeshtasticWin.Services;
 public static class NodeIdentity
 {
     public static bool TryGetConnectedNodeNum(out uint nodeNum)
-        => TryParseNodeNumFromHex(AppState.ConnectedNodeIdHex, out nodeNum);
+        => TryParseNodeNumFromHex(AppState.GetEffectiveAdminTargetNodeIdHex(), out nodeNum);
 
     public static bool TryParseNodeNumFromHex(string? idHex, out uint nodeNum)
     {
@@ -24,7 +24,7 @@ public static class NodeIdentity
 
     public static string ConnectedNodeLabel()
     {
-        var idHex = AppState.ConnectedNodeIdHex;
+        var idHex = AppState.GetEffectiveAdminTargetNodeIdHex();
         if (string.IsNullOrWhiteSpace(idHex))
             return "No connected node";
 

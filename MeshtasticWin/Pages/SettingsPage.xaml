@@ -8,39 +8,70 @@
 
         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
             <StackPanel Spacing="14" Width="180" HorizontalAlignment="Left">
-                <TextBlock Text="Radio Configuration" FontSize="16" FontWeight="SemiBold" Opacity="0.92"/>
-                <Button Content="LoRa" Tag="lora" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Channels" Tag="channels" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Security" Tag="security" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Share QR Code" Tag="shareqr" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button x:Name="RadioHeaderButton"
+                        Content="▼ Radio Configuration"
+                        Tag="radio-header"
+                        Click="SectionHeaderButton_Click"
+                        HorizontalAlignment="Stretch"/>
+                <StackPanel x:Name="RadioSectionPanel" Spacing="6">
+                    <Button Content="LoRa" Tag="lora" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Channels" Tag="channels" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Security" Tag="security" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Share QR Code" Tag="shareqr" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                </StackPanel>
 
-                <TextBlock Text="Device Configuration" FontSize="16" FontWeight="SemiBold" Opacity="0.92" Margin="0,6,0,0"/>
-                <Button Content="User" Tag="device-user" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Bluetooth" Tag="device-bluetooth" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Device" Tag="device-device" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Display" Tag="device-display" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Network" Tag="device-network" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Position" Tag="device-position" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Power" Tag="device-power" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button x:Name="DeviceHeaderButton"
+                        Content="▼ Device Configuration"
+                        Tag="device-header"
+                        Click="SectionHeaderButton_Click"
+                        HorizontalAlignment="Stretch"/>
+                <StackPanel x:Name="DeviceSectionPanel" Spacing="6">
+                    <Button Content="User" Tag="device-user" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Bluetooth" Tag="device-bluetooth" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Device" Tag="device-device" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Display" Tag="device-display" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Network" Tag="device-network" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Position" Tag="device-position" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Power" Tag="device-power" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                </StackPanel>
 
-                <TextBlock Text="Module Configuration" FontSize="16" FontWeight="SemiBold" Opacity="0.92" Margin="0,6,0,0"/>
-                <Button Content="Canned Messages" Tag="module-canned" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Detection Sensor" Tag="module-detection" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="External Notification" Tag="module-external-notification" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="MQTT" Tag="module-mqtt" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Range Test" Tag="module-range-test" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="PAX Counter" Tag="module-pax" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Ringtone" Tag="module-ringtone" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Serial" Tag="module-serial" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Store &amp; Forward" Tag="module-store-forward" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="Telemetry" Tag="module-telemetry" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button x:Name="ModuleHeaderButton"
+                        Content="▼ Module Configuration"
+                        Tag="module-header"
+                        Click="SectionHeaderButton_Click"
+                        HorizontalAlignment="Stretch"/>
+                <StackPanel x:Name="ModuleSectionPanel" Spacing="6">
+                    <Button Content="Canned Messages" Tag="module-canned" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Detection Sensor" Tag="module-detection" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="External Notification" Tag="module-external-notification" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="MQTT" Tag="module-mqtt" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Range Test" Tag="module-range-test" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="PAX Counter" Tag="module-pax" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Ringtone" Tag="module-ringtone" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Serial" Tag="module-serial" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Store &amp; Forward" Tag="module-store-forward" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Telemetry" Tag="module-telemetry" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                </StackPanel>
 
-                <TextBlock Text="Logging" FontSize="16" FontWeight="SemiBold" Opacity="0.92" Margin="0,6,0,0"/>
-                <Button Content="Logs" Tag="logging" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
-                <Button Content="App Settings" Tag="logging-app" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button x:Name="LoggingHeaderButton"
+                        Content="▼ Logging"
+                        Tag="logging-header"
+                        Click="SectionHeaderButton_Click"
+                        HorizontalAlignment="Stretch"/>
+                <StackPanel x:Name="LoggingSectionPanel" Spacing="6">
+                    <Button Content="Logs" Tag="logging" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                </StackPanel>
 
-                <TextBlock Text="Firmware" FontSize="16" FontWeight="SemiBold" Opacity="0.92" Margin="0,6,0,0"/>
-                <Button Content="Firmware Updates" Tag="firmware" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                <Button x:Name="FirmwareHeaderButton"
+                        Content="▼ Firmware"
+                        Tag="firmware-header"
+                        Click="SectionHeaderButton_Click"
+                        HorizontalAlignment="Stretch"/>
+                <StackPanel x:Name="FirmwareSectionPanel" Spacing="6">
+                    <Button Content="Remote Admin" Tag="firmware-remote-admin" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Firmware Updates" Tag="firmware" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                    <Button Content="Import / Export" Tag="firmware-import-export" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
 

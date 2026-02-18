@@ -12,8 +12,10 @@ public static class AppState
 {
     private const string ShowPowerMetricsKey = "ShowPowerMetricsTab";
     private const string ShowDetectionSensorKey = "ShowDetectionSensorLogTab";
+    private const string HideInactiveAdminTargetsKey = "HideInactiveAdminTargets";
     private const string UnreadLastReadKey = "UnreadLastReadUtcByPeerJson";
     private const string ActiveChatPeerKey = "ActiveChatPeerIdHex";
+    private const string AdminTargetNodeKey = "AdminTargetNodeIdHex";
 
     public static ObservableCollection<NodeLive> Nodes { get; } = new();
     public static ObservableCollection<MessageLive> Messages { get; } = new();
@@ -48,6 +50,9 @@ public static class AppState
     public static string? ConnectedNodeIdHex { get; private set; }
     public static event Action? ConnectedNodeChanged;
 
+    public static string? AdminTargetNodeIdHex { get; private set; }
+    public static event Action? AdminTargetChanged;
+
     public static void SetConnectedNodeIdHex(string? idHex)
     {
         if (string.IsNullOrWhiteSpace(idHex))
@@ -75,6 +80,51 @@ public static class AppState
         }
 
         ConnectedNodeChanged?.Invoke();
+    }
+
+    public static void SetAdminTargetNodeIdHex(string? idHex)
+    {
+        if (string.IsNullOrWhiteSpace(idHex))
+            idHex = null;
+
+        if (string.Equals(AdminTargetNodeIdHex, idHex, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        AdminTargetNodeIdHex = idHex;
+        SettingsStore.SetString(AdminTargetNodeKey, idHex);
+        AdminTargetChanged?.Invoke();
+    }
+
+    private static bool _hideInactiveAdminTargets;
+    public static bool HideInactiveAdminTargets
+    {
+        get => _hideInactiveAdminTargets;
+        set
+        {
+            if (_hideInactiveAdminTargets == value) return;
+            _hideInactiveAdminTargets = value;
+            SettingsStore.SetBool(HideInactiveAdminTargetsKey, value);
+            SettingsChanged?.Invoke();
+        }
+    }
+
+    public static string? GetEffectiveAdminTargetNodeIdHex()
+        => string.IsNullOrWhiteSpace(AdminTargetNodeIdHex)
+            ? ConnectedNodeIdHex
+            : AdminTargetNodeIdHex;
+
+    public static bool TryGetEffectiveAdminTargetNodeNum(out uint nodeNum)
+    {
+        nodeNum = 0;
+        var idHex = GetEffectiveAdminTargetNodeIdHex();
+        if (string.IsNullOrWhiteSpace(idHex))
+            return false;
+
+        var s = idHex.Trim();
+        if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            s = s[2..];
+
+        return uint.TryParse(s, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out nodeNum);
     }
 
 
@@ -133,6 +183,7 @@ private static string NormalizePeerKey(string? peerIdHex)
         // Settings
         _showPowerMetricsTab = SettingsStore.GetBool(ShowPowerMetricsKey) ?? false;
         _showDetectionSensorLogTab = SettingsStore.GetBool(ShowDetectionSensorKey) ?? false;
+        _hideInactiveAdminTargets = SettingsStore.GetBool(HideInactiveAdminTargetsKey) ?? true;
 
         // Unread state (optional persistence for chat read markers)
         try
@@ -169,6 +220,16 @@ private static string NormalizePeerKey(string? peerIdHex)
         catch
         {
             ActiveChatPeerIdHex = null;
+        }
+
+        try
+        {
+            var adminTarget = SettingsStore.GetString(AdminTargetNodeKey);
+            AdminTargetNodeIdHex = string.IsNullOrWhiteSpace(adminTarget) ? null : adminTarget.Trim();
+        }
+        catch
+        {
+            AdminTargetNodeIdHex = null;
         }
     }
 

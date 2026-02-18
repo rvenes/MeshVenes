@@ -9,6 +9,12 @@
             <TextBlock x:Name="StatusText" Text="Loading..." Opacity="0.85"/>
             <TextBlock x:Name="NodeText" Opacity="0.8"/>
 
+            <TextBlock Text="App UI" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0"/>
+            <Grid ColumnDefinitions="280,360" RowSpacing="8" ColumnSpacing="12">
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Show Power Metrics tab"/>
+                <ToggleSwitch Grid.Row="0" Grid.Column="1" x:Name="ShowPowerMetricsTabToggle" Toggled="ShowPowerMetricsTabToggle_Toggled"/>
+            </Grid>
+
             <TextBlock Text="Power" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0"/>
             <Grid ColumnDefinitions="280,360" RowSpacing="8" ColumnSpacing="12">
                 <Grid.RowDefinitions>

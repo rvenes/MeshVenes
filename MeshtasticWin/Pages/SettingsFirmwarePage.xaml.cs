@@ -1,8 +1,10 @@
 using MeshtasticWin.Models;
+using MeshtasticWin.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
@@ -16,6 +18,7 @@ public sealed partial class SettingsFirmwarePage : Page
 {
     private static readonly HttpClient Http = BuildHttpClient();
     private static readonly Regex VersionRegex = new(@"(\d+)\.(\d+)\.(\d+)", RegexOptions.Compiled);
+    private static readonly TimeSpan FirmwareCacheTtl = TimeSpan.FromHours(24);
 
     private string _latestReleaseUrl = "https://github.com/meshtastic/firmware/releases";
 
@@ -25,16 +28,16 @@ public sealed partial class SettingsFirmwarePage : Page
         Loaded += SettingsFirmwarePage_Loaded;
     }
 
-    private async void SettingsFirmwarePage_Loaded(object sender, RoutedEventArgs e) => await LoadAsync();
+    private async void SettingsFirmwarePage_Loaded(object sender, RoutedEventArgs e) => await LoadAsync(forceOnline: false);
 
-    private async void Reload_Click(object sender, RoutedEventArgs e) => await LoadAsync();
+    private async void Reload_Click(object sender, RoutedEventArgs e) => await LoadAsync(forceOnline: true);
 
-    private async Task LoadAsync()
+    private async Task LoadAsync(bool forceOnline)
     {
         NodeText.Text = "Configuration for: " + Services.NodeIdentity.ConnectedNodeLabel();
         LastCheckedText.Text = "Checking...";
         LatestStableText.Text = "Loading...";
-        UpdateStatusText.Text = "Checking online firmware release...";
+        UpdateStatusText.Text = forceOnline ? "Checking online firmware release..." : "Checking cached firmware release...";
 
         var connected = GetConnectedNode();
         HardwareText.Text = connected is null || string.IsNullOrWhiteSpace(connected.HardwareModel) ? "—" : connected.HardwareModel;
@@ -42,46 +45,80 @@ public sealed partial class SettingsFirmwarePage : Page
 
         try
         {
+            if (!forceOnline && TryReadFirmwareCache(out var cached) && IsCacheFresh(cached))
+            {
+                ApplyReleaseResult(cached.Tag, cached.Url, cached.CheckedUtc, fromCache: true);
+                return;
+            }
+
             var release = await GetLatestStableReleaseAsync();
             if (release is null)
             {
+                if (TryReadFirmwareCache(out var fallback))
+                {
+                    ApplyReleaseResult(fallback.Tag, fallback.Url, fallback.CheckedUtc, fromCache: true);
+                    UpdateStatusText.Text = "Using cached firmware result (online check unavailable).";
+                    return;
+                }
+
                 LatestStableText.Text = "Unavailable";
                 UpdateStatusText.Text = "Could not read latest firmware from internet.";
                 LastCheckedText.Text = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
                 return;
             }
 
-            LatestStableText.Text = release.Value.Tag;
-            _latestReleaseUrl = string.IsNullOrWhiteSpace(release.Value.Url)
-                ? "https://github.com/meshtastic/firmware/releases"
-                : release.Value.Url;
-
-            var current = CurrentVersionText.Text;
-            if (TryParseVersion(current, out var currentVersion) && TryParseVersion(release.Value.Tag, out var latestVersion))
+            var checkedUtc = DateTime.UtcNow;
+            WriteFirmwareCache(new FirmwareCacheEntry
             {
-                var cmp = CompareVersion(currentVersion, latestVersion);
-                UpdateStatusText.Text = cmp < 0
-                    ? "Update available."
-                    : "Your firmware is up to date.";
-            }
-            else
-            {
-                UpdateStatusText.Text = "Unable to compare versions automatically.";
-            }
+                Tag = release.Value.Tag,
+                Url = release.Value.Url,
+                CheckedUtc = checkedUtc
+            });
 
-            LastCheckedText.Text = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            ApplyReleaseResult(release.Value.Tag, release.Value.Url, checkedUtc, fromCache: false);
         }
         catch (Exception ex)
         {
+            if (TryReadFirmwareCache(out var fallback))
+            {
+                ApplyReleaseResult(fallback.Tag, fallback.Url, fallback.CheckedUtc, fromCache: true);
+                UpdateStatusText.Text = "Using cached firmware result (online check failed: " + ex.Message + ").";
+                return;
+            }
+
             LatestStableText.Text = "Unavailable";
             UpdateStatusText.Text = "Firmware check failed: " + ex.Message;
             LastCheckedText.Text = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
         }
     }
 
+    private void ApplyReleaseResult(string tag, string? url, DateTime checkedUtc, bool fromCache)
+    {
+        LatestStableText.Text = string.IsNullOrWhiteSpace(tag) ? "Unavailable" : tag;
+        _latestReleaseUrl = string.IsNullOrWhiteSpace(url)
+            ? "https://github.com/meshtastic/firmware/releases"
+            : url!;
+
+        var current = CurrentVersionText.Text;
+        if (TryParseVersion(current, out var currentVersion) && TryParseVersion(tag, out var latestVersion))
+        {
+            var cmp = CompareVersion(currentVersion, latestVersion);
+            var baseText = cmp < 0 ? "Update available." : "Your firmware is up to date.";
+            UpdateStatusText.Text = fromCache ? baseText + " (cached)" : baseText;
+        }
+        else
+        {
+            UpdateStatusText.Text = fromCache
+                ? "Unable to compare versions automatically. (cached)"
+                : "Unable to compare versions automatically.";
+        }
+
+        LastCheckedText.Text = checkedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+    }
+
     private NodeLive? GetConnectedNode()
     {
-        var idHex = AppState.ConnectedNodeIdHex;
+        var idHex = AppState.GetEffectiveAdminTargetNodeIdHex();
         if (string.IsNullOrWhiteSpace(idHex))
             return null;
 
@@ -159,6 +196,48 @@ public sealed partial class SettingsFirmwarePage : Page
         return a.Patch.CompareTo(b.Patch);
     }
 
+    private static bool IsCacheFresh(FirmwareCacheEntry cache)
+        => DateTime.UtcNow - cache.CheckedUtc <= FirmwareCacheTtl;
+
+    private static string FirmwareCachePath
+        => Path.Combine(AppDataPaths.BasePath, "firmware-release-cache.json");
+
+    private static bool TryReadFirmwareCache(out FirmwareCacheEntry cache)
+    {
+        cache = new FirmwareCacheEntry();
+
+        try
+        {
+            if (!File.Exists(FirmwareCachePath))
+                return false;
+
+            var json = File.ReadAllText(FirmwareCachePath);
+            var parsed = JsonSerializer.Deserialize<FirmwareCacheEntry>(json);
+            if (parsed is null || string.IsNullOrWhiteSpace(parsed.Tag) || parsed.CheckedUtc == default)
+                return false;
+
+            cache = parsed;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void WriteFirmwareCache(FirmwareCacheEntry cache)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppDataPaths.BasePath);
+            var json = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(FirmwareCachePath, json);
+        }
+        catch
+        {
+        }
+    }
+
     private async void OpenReleaseNotes_Click(object sender, RoutedEventArgs e)
     {
         if (Uri.TryCreate(_latestReleaseUrl, UriKind.Absolute, out var uri))
@@ -169,5 +248,12 @@ public sealed partial class SettingsFirmwarePage : Page
     {
         if (Uri.TryCreate("https://flasher.meshtastic.org/", UriKind.Absolute, out var uri))
             _ = await Launcher.LaunchUriAsync(uri);
+    }
+
+    private sealed class FirmwareCacheEntry
+    {
+        public string Tag { get; set; } = "";
+        public string? Url { get; set; }
+        public DateTime CheckedUtc { get; set; }
     }
 }
