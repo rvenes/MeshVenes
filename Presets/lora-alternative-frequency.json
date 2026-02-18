@@ -1,0 +1,16 @@
+{
+  "format": "MeshtasticWin.SettingsBackup.v1",
+  "createdUtc": "2026-02-18T00:00:00Z",
+  "sourceNodeIdHex": "0x00000000",
+  "sourceNodeName": "Template",
+  "notes": "Alternative frequency template. Import this file and select only LoRa config in the import dialog.",
+  "loraConfig": {
+    "lora": {
+      "usePreset": false,
+      "bandwidth": 62,
+      "spreadFactor": 8,
+      "codingRate": 5,
+      "overrideFrequency": 869.618
+    }
+  }
+}

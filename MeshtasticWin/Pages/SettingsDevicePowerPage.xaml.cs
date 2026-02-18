@@ -18,6 +18,7 @@ public sealed partial class SettingsDevicePowerPage : Page
 
     private async void SettingsDevicePowerPage_Loaded(object sender, RoutedEventArgs e)
     {
+        ShowPowerMetricsTabToggle.IsOn = AppState.ShowPowerMetricsTab;
         await LoadAsync();
     }
 
@@ -113,5 +114,10 @@ public sealed partial class SettingsDevicePowerPage : Page
 
             StatusText.Text = "Failed to save power configuration: " + ex.Message;
         }
+    }
+
+    private void ShowPowerMetricsTabToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        AppState.ShowPowerMetricsTab = ShowPowerMetricsTabToggle.IsOn;
     }
 }

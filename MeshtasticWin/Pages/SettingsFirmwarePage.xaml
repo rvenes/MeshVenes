@@ -42,7 +42,7 @@
             <TextBlock x:Name="InfoText"
                        TextWrapping="Wrap"
                        Opacity="0.8"
-                       Text="Online check uses the official Meshtastic firmware releases on GitHub."/>
+                       Text="Online check uses the official Meshtastic firmware releases on GitHub. Result is cached for up to 24 hours to reduce network usage. Use Reload to force a fresh check. Full remote checks can take time and use mesh bandwidth."/>
         </StackPanel>
     </ScrollViewer>
 </Page>

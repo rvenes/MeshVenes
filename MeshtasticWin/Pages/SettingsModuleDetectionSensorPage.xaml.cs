@@ -18,6 +18,7 @@ public sealed partial class SettingsModuleDetectionSensorPage : Page
 
     private async void SettingsModuleDetectionSensorPage_Loaded(object sender, RoutedEventArgs e)
     {
+        ShowDetectionSensorLogTabToggle.IsOn = AppState.ShowDetectionSensorLogTab;
         await LoadAsync();
     }
 
@@ -110,5 +111,10 @@ public sealed partial class SettingsModuleDetectionSensorPage : Page
 
             StatusText.Text = "Failed to save detection sensor configuration: " + ex.Message;
         }
+    }
+
+    private void ShowDetectionSensorLogTabToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        AppState.ShowDetectionSensorLogTab = ShowDetectionSensorLogTabToggle.IsOn;
     }
 }

@@ -144,6 +144,11 @@ public sealed partial class SettingsRadioLoRaPage : Page
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        await SaveCurrentAsync();
+    }
+
+    private async Task SaveCurrentAsync()
+    {
         if (!NodeIdentity.TryGetConnectedNodeNum(out var nodeNum))
         {
             StatusText.Text = "Connect to a node before saving.";
