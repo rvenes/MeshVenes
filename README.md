@@ -1,36 +1,48 @@
-MeshtasticWin
+MeshtasticWin – Native Windows (WinUI 3) desktop client for Meshtastic
 
-A Windows (WinUI 3) desktop client for Meshtastic nodes. Built with AI and Love ❤️
+MeshtasticWin is a self-contained WinUI 3 (.NET 8) application for interacting with Meshtastic nodes over:
 
-MeshtasticWin is an open-source, self-contained Windows application for interacting with Meshtastic radios over Serial (COM), TCP/IP and Bluetooth LE (BLE). No installer required — just download, extract and run.
+Serial (COM)
+TCP/IP
+Bluetooth LE (BLE)
 
-Features
+It provides a desktop alternative to the web client, with support for:
 
-Send and receive Direct Messages (DM)
+Direct Messages and Public Channels
+Traceroute
+Map view
+Device / position / environment metrics
+Full local and remote node configuration (including LoRa settings)
+Import / export of settings
 
-Send messages to Public Channels
+Download & install
 
-View and sort nodes
+Go to Releases on GitHub
+Download the .zip file under Assets
+Extract the zip
+Run the .exe directly
+No installer is required.
 
-Traceroute between nodes
+There is also an .msix package generated automatically by GitHub Actions, but it is not code-signed, so Windows will most likely block installation due to certificate trust. The recommended method is to use the zip release.
+All release artifacts are built automatically by GitHub Actions. The full source code is available in the repository if you want to review or build it yourself.
+The project is fully open-source and licensed under GPL-3.0.
 
-Map view (Leaflet)
+If you encounter bugs or have feature requests, post them on GitHub. Changes and improvements will be considered based on feedback.
 
-Log and visualize device, position and environment metrics
-
-Save debug logs
+Open-source hobby project focused on providing a full-featured Windows desktop experience for Meshtastic users.
 
 Screenshots
 Send DMs and Public Channel Messages
-<img width="1434" height="719" alt="Messages view" src="https://github.com/user-attachments/assets/aab728aa-3332-44a4-a5ab-382a631d022d" />
-Log and Visualize Device Metrics
-<img width="1451" height="981" alt="Device metrics view" src="https://github.com/user-attachments/assets/67256803-6c4f-43fa-865b-a420c4ea9229" />
-Connect via COM, TCP/IP or Bluetooth
-<img width="1470" height="999" alt="Connect view" src="https://github.com/user-attachments/assets/dcce5480-e148-4410-ace3-40ec1c630f64" />
-Installation
+<img width="1424" height="892" alt="image" src="https://github.com/user-attachments/assets/a219415b-676c-4822-9aef-6cc0ff6a89a5" />
 
-Download the latest release from the Releases section, extract the ZIP file, and run MeshtasticWin.exe.
-No installer required.
+Nodelist with map view
+<img width="1424" height="966" alt="image" src="https://github.com/user-attachments/assets/b54d79d4-5c2c-483b-976b-d9bbc4e3e7f0" />
+
+Settingspage with Remote Admin
+<img width="1424" height="966" alt="image" src="https://github.com/user-attachments/assets/d7b2b2ce-1221-408b-983d-bff706762fe8" />
+
+
+
 
 Reporting Bugs
 
@@ -40,13 +52,9 @@ If you encounter an issue, go to the Issues tab on GitHub and create a new issue
 Please include:
 
 What you expected to happen
-
 What actually happened
-
 Steps to reproduce
-
 Connection type used (COM / TCP / BLE)
-
 Screenshots and debug logs if possible
 
 License
