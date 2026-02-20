@@ -1,0 +1,34 @@
+<Window
+    x:Class="MeshVenes.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:MeshVenes"
+    Title="MeshVenes">
+
+    <Grid>
+        <NavigationView x:Name="Nav"
+                        PaneDisplayMode="Top"
+                        IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="False"
+                        SelectionChanged="Nav_SelectionChanged">
+            <NavigationView.PaneFooter>
+                <TextBlock x:Name="ConnectionStatusText"
+                           Text="Connected to:"
+                           TextTrimming="CharacterEllipsis"
+                           TextWrapping="NoWrap"
+                           VerticalAlignment="Center"
+                           Margin="12,0,0,0"/>
+            </NavigationView.PaneFooter>
+
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Messages" Tag="messages" />
+                <NavigationViewItem Content="Connect" Tag="connect" />
+                <NavigationViewItem Content="Nodes" Tag="nodes" />
+                <NavigationViewItem Content="Settings" Tag="settings" />
+                <NavigationViewItem Content="About" Tag="about" />
+            </NavigationView.MenuItems>
+
+            <Frame x:Name="ContentFrame" />
+        </NavigationView>
+    </Grid>
+</Window>

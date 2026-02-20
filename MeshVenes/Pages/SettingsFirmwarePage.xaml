@@ -1,0 +1,48 @@
+<Page
+    x:Class="MeshVenes.Pages.SettingsFirmwarePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" MaxWidth="980" HorizontalAlignment="Left">
+            <TextBlock Text="Firmware Updates" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock x:Name="NodeText" Opacity="0.85"/>
+
+            <Grid ColumnDefinitions="240,640" RowSpacing="8" ColumnSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Hardware model"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="HardwareText"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Current firmware version"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="CurrentVersionText"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Latest stable version (online)"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" x:Name="LatestStableText"/>
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Status"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" x:Name="UpdateStatusText"/>
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="Last checked"/>
+                <TextBlock Grid.Row="4" Grid.Column="1" x:Name="LastCheckedText"/>
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Reload" Click="Reload_Click"/>
+                <Button Content="Open release notes" Click="OpenReleaseNotes_Click"/>
+                <Button Content="Open Web Flasher" Click="OpenWebFlasher_Click"/>
+            </StackPanel>
+
+            <TextBlock x:Name="InfoText"
+                       TextWrapping="Wrap"
+                       Opacity="0.8"
+                       Text="Online check uses the official Meshtastic firmware releases on GitHub. Result is cached for up to 24 hours to reduce network usage. Use Reload to force a fresh check. Full remote checks can take time and use mesh bandwidth."/>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

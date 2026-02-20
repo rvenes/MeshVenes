@@ -1,0 +1,23 @@
+﻿using Microsoft.UI.Xaml;
+
+namespace MeshVenes
+{
+    public partial class App : Application
+    {
+        public static MainWindow? MainWindowInstance { get; private set; }
+
+        public App()
+        {
+            InitializeComponent();
+        }
+
+        protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
+        {
+            Services.AppDataPaths.EnsureCreated();
+            Services.NodeLogArchive.EnsureBaseFolders();
+            Services.MqttProxyService.Instance.Initialize();
+            MainWindowInstance = new MainWindow();
+            MainWindowInstance.Activate();
+        }
+    }
+}

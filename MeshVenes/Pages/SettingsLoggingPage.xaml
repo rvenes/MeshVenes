@@ -1,0 +1,66 @@
+<Page
+    x:Class="MeshVenes.Pages.SettingsLoggingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="10">
+        <TextBlock Text="Debug Logs" FontSize="22" FontWeight="SemiBold"/>
+
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*" ColumnSpacing="8">
+            <Button Grid.Column="0" Content="Show folder" Click="ShowFolder_Click"/>
+            <Button Grid.Column="1" Content="Save debug log" Click="SaveDebugLog_Click"/>
+            <Button Grid.Column="2" Content="Copy visible" Click="CopyVisible_Click"/>
+            <Button Grid.Column="3" Content="Clear live list" Click="ClearLiveList_Click"/>
+            <TextBlock Grid.Column="4" x:Name="CountText" VerticalAlignment="Center" Opacity="0.8"/>
+        </Grid>
+
+        <TextBox Grid.Row="2"
+                 x:Name="SearchBox"
+                 PlaceholderText="Search"
+                 TextChanged="SearchBox_TextChanged"/>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="12">
+            <TextBlock Text="Level:" VerticalAlignment="Center" Opacity="0.85"/>
+            <CheckBox x:Name="InfoCheckBox" Content="Info" Checked="LevelFilter_Changed" Unchecked="LevelFilter_Changed"/>
+            <CheckBox x:Name="WarningCheckBox" Content="Warning" Checked="LevelFilter_Changed" Unchecked="LevelFilter_Changed"/>
+            <CheckBox x:Name="ErrorCheckBox" Content="Error" Checked="LevelFilter_Changed" Unchecked="LevelFilter_Changed"/>
+            <CheckBox x:Name="DebugCheckBox" Content="Debug" Checked="LevelFilter_Changed" Unchecked="LevelFilter_Changed"/>
+        </StackPanel>
+
+        <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="8">
+            <TextBlock Grid.Column="0" Text="Category:" VerticalAlignment="Center" Opacity="0.85"/>
+            <Button Grid.Column="1" Content="All" Click="SelectAllCategories_Click"/>
+            <Button Grid.Column="2" Content="None" Click="ClearAllCategories_Click"/>
+            <ScrollViewer Grid.Column="3" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="CategoryFiltersPanel" Orientation="Horizontal" Spacing="10"/>
+            </ScrollViewer>
+        </Grid>
+
+        <ListView Grid.Row="5"
+                  x:Name="LogList"
+                  IsItemClickEnabled="False"
+                  RightTapped="LogList_RightTapped">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="MinHeight" Value="18"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="Margin" Value="0"/>
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}"
+                               Margin="0"
+                               Padding="0"
+                               TextWrapping="NoWrap"/>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+            <ListView.ContextFlyout>
+                <MenuFlyout Opening="LogListFlyout_Opening">
+                    <MenuFlyoutItem x:Name="CopyLogMenuItem" Text="Copy" Click="CopyLogMenuItem_Click"/>
+                    <MenuFlyoutItem Text="Copy all visible" Click="CopyVisible_Click"/>
+                </MenuFlyout>
+            </ListView.ContextFlyout>
+        </ListView>
+    </Grid>
+</Page>
