@@ -87,6 +87,11 @@ public static class FromRadioRouter
                     runOnUi(() => ApplyQueueStatusObject(fromRadio.QueueStatus, logToUi));
                     return true;
 
+                case FromRadio.PayloadVariantOneofCase.MqttClientProxyMessage:
+                    summary = BuildReadableVariantSummary("MqttClientProxy", fromRadio.MqttClientProxyMessage);
+                    _ = MqttProxyService.Instance.HandleFromNodeMessageAsync(fromRadio.MqttClientProxyMessage);
+                    return true;
+
                 case FromRadio.PayloadVariantOneofCase.LogRecord:
                     summary = BuildReadableVariantSummary("LogRecord", fromRadio.LogRecord);
                     return true;
@@ -216,22 +221,28 @@ public static class FromRadioRouter
         if (!TryDecodeIncomingText(portNum, payloadBytes, out var text))
             return;
 
+        var messageChannelIndex = channelIndex.GetValueOrDefault(0);
+        var messageChannelName = messageChannelIndex == 0 ? "Primary" : $"Channel {messageChannelIndex}";
+
         if (packetId != 0)
         {
-            var existingByPacket = MeshtasticWin.AppState.Messages.FirstOrDefault(m => !m.IsMine && m.PacketId == packetId);
+            var existingByPacket = MeshtasticWin.AppState.Messages.FirstOrDefault(m =>
+                !m.IsMine &&
+                m.PacketId == packetId &&
+                m.ChannelIndex == messageChannelIndex);
             if (existingByPacket is not null)
             {
                 var existingTo = existingByPacket.ToIdHex ?? "";
                 if (string.Equals(existingTo, toIdHex, StringComparison.OrdinalIgnoreCase))
                 {
                     if (ShouldReplaceDegradedText(existingByPacket.Text, text))
-                        ReplaceIncomingMessageText(existingByPacket, text, fromNode.Name, toNodeNum, toIdHex);
+                        ReplaceIncomingMessageText(existingByPacket, text, fromNode.Name, toNodeNum, toIdHex, messageChannelIndex, messageChannelName);
                     return;
                 }
 
                 if (ShouldReplaceDegradedText(existingByPacket.Text, text))
                 {
-                    ReplaceIncomingMessageText(existingByPacket, text, fromNode.Name, toNodeNum, toIdHex);
+                    ReplaceIncomingMessageText(existingByPacket, text, fromNode.Name, toNodeNum, toIdHex, messageChannelIndex, messageChannelName);
                     return;
                 }
 
@@ -246,7 +257,7 @@ public static class FromRadioRouter
                 }
             }
         }
-        else if (TryReplaceRecentDegradedFallback(fromIdHex, toIdHex, text, fromNode.Name, toNodeNum))
+        else if (TryReplaceRecentDegradedFallback(fromIdHex, toIdHex, text, fromNode.Name, toNodeNum, messageChannelIndex, messageChannelName))
         {
             return;
         }
@@ -255,6 +266,7 @@ public static class FromRadioRouter
                 !m.IsMine &&
                 string.Equals(m.FromIdHex, fromIdHex, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(m.ToIdHex, toIdHex, StringComparison.OrdinalIgnoreCase) &&
+                m.ChannelIndex == messageChannelIndex &&
                 string.Equals(m.Text, text, StringComparison.Ordinal) &&
                 (DateTime.UtcNow - m.WhenUtc).TotalMinutes <= 10))
         {
@@ -262,7 +274,7 @@ public static class FromRadioRouter
         }
 
         var toNode = MeshtasticWin.AppState.Nodes.FirstOrDefault(n => string.Equals(n.IdHex, toIdHex, StringComparison.OrdinalIgnoreCase));
-        var toName = (toNodeNum == 0xFFFFFFFF) ? "Primary" : (toNode?.Name ?? toIdHex);
+        var toName = (toNodeNum == 0xFFFFFFFF) ? messageChannelName : (toNode?.Name ?? toIdHex);
         var msg = new MessageLive
         {
             FromIdHex = fromIdHex,
@@ -276,11 +288,13 @@ public static class FromRadioRouter
             PacketId = packetId,
             IsHeard = false,
             IsDelivered = false,
-            DmTargetNodeNum = 0
+            DmTargetNodeNum = 0,
+            ChannelIndex = messageChannelIndex,
+            ChannelName = messageChannelName
         };
 
         // Update unread indicators
-        MeshtasticWin.AppState.NotifyIncomingMessage(msg.IsDirect ? fromIdHex : null, msg.WhenUtc);
+        MeshtasticWin.AppState.NotifyIncomingMessage(msg.IsDirect ? fromIdHex : msg.ChannelPeerKey, msg.WhenUtc);
 
         MeshtasticWin.AppState.Messages.Insert(0, msg);
         while (MeshtasticWin.AppState.Messages.Count > MaxMessages)
@@ -289,7 +303,7 @@ public static class FromRadioRouter
         if (msg.IsDirect)
             MessageArchive.Append(msg, dmPeerIdHex: fromIdHex);
         else
-            MessageArchive.Append(msg, channelName: "Primary");
+            MessageArchive.Append(msg, channelName: msg.ChannelName);
     }
 
     private static bool TryDecodeIncomingText(int portNum, byte[] payloadBytes, out string text)
@@ -430,14 +444,21 @@ public static class FromRadioRouter
         return longestHashRun >= 3 || ratio >= 0.2;
     }
 
-    private static void ReplaceIncomingMessageText(MessageLive existing, string text, string fromName, uint toNodeNum, string toIdHex)
+    private static void ReplaceIncomingMessageText(
+        MessageLive existing,
+        string text,
+        string fromName,
+        uint toNodeNum,
+        string toIdHex,
+        uint channelIndex,
+        string channelName)
     {
         var index = MeshtasticWin.AppState.Messages.IndexOf(existing);
         if (index < 0)
             return;
 
         var toNode = MeshtasticWin.AppState.Nodes.FirstOrDefault(n => string.Equals(n.IdHex, toIdHex, StringComparison.OrdinalIgnoreCase));
-        var toName = toNodeNum == 0xFFFFFFFF ? "Primary" : (toNode?.Name ?? toIdHex);
+        var toName = toNodeNum == 0xFFFFFFFF ? channelName : (toNode?.Name ?? toIdHex);
 
         var updated = new MessageLive
         {
@@ -452,13 +473,22 @@ public static class FromRadioRouter
             PacketId = existing.PacketId,
             IsHeard = existing.IsHeard,
             IsDelivered = existing.IsDelivered,
-            DmTargetNodeNum = existing.DmTargetNodeNum
+            DmTargetNodeNum = existing.DmTargetNodeNum,
+            ChannelIndex = channelIndex,
+            ChannelName = channelName
         };
 
         MeshtasticWin.AppState.Messages[index] = updated;
     }
 
-    private static bool TryReplaceRecentDegradedFallback(string fromIdHex, string toIdHex, string incomingText, string fromName, uint toNodeNum)
+    private static bool TryReplaceRecentDegradedFallback(
+        string fromIdHex,
+        string toIdHex,
+        string incomingText,
+        string fromName,
+        uint toNodeNum,
+        uint channelIndex,
+        string channelName)
     {
         if (string.IsNullOrWhiteSpace(incomingText))
             return false;
@@ -469,6 +499,7 @@ public static class FromRadioRouter
                 !m.IsMine &&
                 m.PacketId == 0 &&
                 string.Equals(m.FromIdHex, fromIdHex, StringComparison.OrdinalIgnoreCase) &&
+                m.ChannelIndex == channelIndex &&
                 (nowUtc - m.WhenUtc).TotalSeconds <= 20 &&
                 IsPotentialSameDestination(m.ToIdHex ?? "", toIdHex))
             .OrderBy(m => Math.Abs((nowUtc - m.WhenUtc).TotalSeconds))
@@ -483,7 +514,7 @@ public static class FromRadioRouter
         if (!ShouldReplaceDegradedText(candidate.Text, incomingText))
             return false;
 
-        ReplaceIncomingMessageText(candidate, incomingText, fromName, toNodeNum, toIdHex);
+        ReplaceIncomingMessageText(candidate, incomingText, fromName, toNodeNum, toIdHex, channelIndex, channelName);
         return true;
     }
 

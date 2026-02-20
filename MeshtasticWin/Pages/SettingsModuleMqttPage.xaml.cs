@@ -13,9 +13,32 @@ public sealed partial class SettingsModuleMqttPage : Page
     {
         InitializeComponent();
         Loaded += SettingsModuleMqttPage_Loaded;
+        Unloaded += SettingsModuleMqttPage_Unloaded;
     }
 
-    private async void SettingsModuleMqttPage_Loaded(object sender, RoutedEventArgs e) => await LoadAsync();
+    private async void SettingsModuleMqttPage_Loaded(object sender, RoutedEventArgs e)
+    {
+        MqttProxyService.Instance.StateChanged += MqttProxyService_StateChanged;
+        UpdateRuntimeStatusUi();
+        await LoadAsync();
+    }
+
+    private void SettingsModuleMqttPage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        MqttProxyService.Instance.StateChanged -= MqttProxyService_StateChanged;
+    }
+
+    private void MqttProxyService_StateChanged()
+    {
+        try
+        {
+            _ = DispatcherQueue.TryEnqueue(UpdateRuntimeStatusUi);
+        }
+        catch
+        {
+            // Ignore late callbacks during page unload.
+        }
+    }
 
     private async Task LoadAsync()
     {
@@ -46,11 +69,14 @@ public sealed partial class SettingsModuleMqttPage : Page
             TlsToggle.IsOn = config.TlsEnabled;
 
             StatusText.Text = $"Loaded from node 0x{nodeNum:x8}.";
+            await MqttProxyService.Instance.RefreshFromConnectedNodeConfigAsync(forceReconnect: false);
         }
         catch (Exception ex)
         {
             StatusText.Text = "Failed to load MQTT configuration: " + ex.Message;
         }
+
+        UpdateRuntimeStatusUi();
     }
 
     private async void Reload_Click(object sender, RoutedEventArgs e) => await LoadAsync();
@@ -88,6 +114,7 @@ public sealed partial class SettingsModuleMqttPage : Page
             StatusText.Text = "Saving MQTT configuration...";
             await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, new ModuleConfig { Mqtt = config });
             StatusText.Text = "MQTT configuration saved.";
+            await MqttProxyService.Instance.RefreshFromConnectedNodeConfigAsync(forceReconnect: true);
             SettingsReconnectHelper.StartPostSaveReconnectWatchdog(text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
         }
         catch (Exception ex)
@@ -99,10 +126,31 @@ public sealed partial class SettingsModuleMqttPage : Page
                 StatusText.Text = reconnected
                     ? "MQTT configuration saved. Reconnected."
                     : "MQTT configuration may be saved, but reconnect failed.";
+                if (reconnected)
+                    await MqttProxyService.Instance.RefreshFromConnectedNodeConfigAsync(forceReconnect: true);
                 return;
             }
 
             StatusText.Text = "Failed to save MQTT configuration: " + ex.Message;
         }
+    }
+
+    private async void ReconnectProxy_Click(object sender, RoutedEventArgs e)
+    {
+        RuntimeStatusText.Text = "Proxy reconnect requested...";
+        await MqttProxyService.Instance.ForceReconnectAsync();
+        UpdateRuntimeStatusUi();
+    }
+
+    private void UpdateRuntimeStatusUi()
+    {
+        var snapshot = MqttProxyService.Instance.GetSnapshot();
+        RuntimeStatusText.Text = "Status: " + snapshot.RuntimeStatus + (snapshot.IsBrokerConnected ? " (connected)" : "");
+        RuntimeBrokerText.Text = "Broker: " + snapshot.Broker + " | Topic filter: " + snapshot.TopicFilter;
+        RuntimeCountersText.Text =
+            $"Node -> broker: {snapshot.NodeToBrokerCount} | Broker -> node: {snapshot.BrokerToNodeCount} | Dropped: {snapshot.DroppedCount}";
+        RuntimeErrorText.Text = string.IsNullOrWhiteSpace(snapshot.LastError)
+            ? string.Empty
+            : "Last error: " + snapshot.LastError;
     }
 }

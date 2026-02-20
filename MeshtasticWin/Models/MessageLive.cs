@@ -4,6 +4,8 @@ namespace MeshtasticWin.Models;
 
 public sealed class MessageLive
 {
+    private const string ChannelPeerPrefix = "channel:";
+
     public string FromIdHex { get; init; } = "";
     public string FromName { get; init; } = "";
 
@@ -27,6 +29,14 @@ public sealed class MessageLive
     // Tracks the DM recipient (nodeNum)
     public uint DmTargetNodeNum { get; init; } // 0 when not DM
 
+    public uint ChannelIndex { get; init; } // 0 = primary
+    public string ChannelName { get; init; } = "Primary";
+
+    public string ChannelPeerKey
+        => ChannelIndex == 0
+            ? ""
+            : $"{ChannelPeerPrefix}{ChannelIndex}";
+
     public string Header
     {
         get
@@ -45,7 +55,14 @@ public sealed class MessageLive
         }
     }
 
-    public static MessageLive CreateIncoming(string fromIdHex, string fromName, string toIdHex, string toName, string text)
+    public static MessageLive CreateIncoming(
+        string fromIdHex,
+        string fromName,
+        string toIdHex,
+        string toName,
+        string text,
+        uint channelIndex = 0,
+        string? channelName = null)
         => new()
         {
             FromIdHex = fromIdHex ?? "",
@@ -59,10 +76,21 @@ public sealed class MessageLive
             PacketId = 0,
             IsHeard = false,
             IsDelivered = false,
-            DmTargetNodeNum = 0
+            DmTargetNodeNum = 0,
+            ChannelIndex = channelIndex,
+            ChannelName = string.IsNullOrWhiteSpace(channelName)
+                ? (channelIndex == 0 ? "Primary" : $"Channel {channelIndex}")
+                : channelName
         };
 
-    public static MessageLive CreateOutgoing(string toIdHex, string toName, string text, uint packetId, uint dmTargetNodeNum)
+    public static MessageLive CreateOutgoing(
+        string toIdHex,
+        string toName,
+        string text,
+        uint packetId,
+        uint dmTargetNodeNum,
+        uint channelIndex = 0,
+        string? channelName = null)
         => new()
         {
             FromIdHex = "",
@@ -76,7 +104,11 @@ public sealed class MessageLive
             PacketId = packetId,
             IsHeard = false,
             IsDelivered = false,
-            DmTargetNodeNum = dmTargetNodeNum
+            DmTargetNodeNum = dmTargetNodeNum,
+            ChannelIndex = channelIndex,
+            ChannelName = string.IsNullOrWhiteSpace(channelName)
+                ? (channelIndex == 0 ? "Primary" : $"Channel {channelIndex}")
+                : channelName
         };
 
     public MessageLive WithAckFrom(uint ackFromNodeNum)
@@ -114,6 +146,8 @@ public sealed class MessageLive
             PacketId = PacketId,
             IsHeard = heard,
             IsDelivered = delivered,
-            DmTargetNodeNum = DmTargetNodeNum
+            DmTargetNodeNum = DmTargetNodeNum,
+            ChannelIndex = ChannelIndex,
+            ChannelName = ChannelName
         };
 }

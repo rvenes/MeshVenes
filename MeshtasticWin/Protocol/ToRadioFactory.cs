@@ -27,6 +27,17 @@ public static class ToRadioFactory
             }
         };
 
+    public static IMessage CreateMqttProxyMessage(MqttClientProxyMessage proxyMessage)
+    {
+        if (proxyMessage is null)
+            throw new ArgumentNullException(nameof(proxyMessage));
+
+        return new ToRadio
+        {
+            MqttClientProxyMessage = proxyMessage.Clone()
+        };
+    }
+
     public static IMessage CreateTextMessage(
         string text,
         uint to,

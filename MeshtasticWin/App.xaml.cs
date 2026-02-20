@@ -15,6 +15,7 @@ namespace MeshtasticWin
         {
             Services.AppDataPaths.EnsureCreated();
             Services.NodeLogArchive.EnsureBaseFolders();
+            Services.MqttProxyService.Instance.Initialize();
             MainWindowInstance = new MainWindow();
             MainWindowInstance.Activate();
         }

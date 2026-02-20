@@ -25,6 +25,7 @@ namespace MeshtasticWin.Pages;
 
 public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 {
+    private const string ChannelPeerPrefix = "channel:";
     private const int MaxMessageBytes = 200;
     private const int MaxArchiveMessagesPerChat = 800;
     private const string MessageLogRetentionDaysKey = "MessageLogRetentionDays";
@@ -53,6 +54,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             if (string.IsNullOrWhiteSpace(peer))
                 return "Primary channel";
 
+            if (TryParseChannelPeerKey(peer, out var channelIndex))
+                return ResolveChannelDisplayName(channelIndex, fallbackName: channelIndex == 0 ? "Primary channel" : $"Channel {channelIndex}");
+
             var node = MeshtasticWin.AppState.Nodes.FirstOrDefault(n =>
                 string.Equals(n.IdHex, peer, StringComparison.OrdinalIgnoreCase));
 
@@ -74,6 +78,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private readonly ChatListItemVm _primaryChatItem = ChatListItemVm.Primary();
     private readonly Dictionary<string, ChatListItemVm> _chatItemsByPeer = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<uint, string> _channelDisplayNames = new();
+    private readonly HashSet<uint> _encryptedChannels = new();
+    private string? _channelDisplayNamesNodeIdHex;
     private readonly DispatcherTimer _chatFilterRefreshTimer = new();
     private readonly DispatcherTimer _chatSortRefreshTimer = new();
     private bool _handlersHooked;
@@ -151,6 +158,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         foreach (var message in MeshtasticWin.AppState.Messages.OrderBy(m => m.WhenUtc))
             AddMessageToChat(message);
+
+        _ = RefreshChannelDisplayNamesAsync(force: false);
 
         RebuildVisibleChats();
         ApplyMessageVisibilityToAll();
@@ -269,8 +278,14 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                     foreach (var chat in snapshot)
                         chat.ClearArchiveSection();
 
+                    _channelDisplayNames.Clear();
+                    _encryptedChannels.Clear();
+                    _channelDisplayNamesNodeIdHex = null;
+                    _ = RefreshChannelDisplayNamesAsync(force: true);
+
                     EnsureChatHistoryLoaded(_selectedChatItem);
                     OnChanged(nameof(SelectedChatMessages));
+                    OnChanged(nameof(ActiveChatTitle));
                 }
                 catch
                 {
@@ -285,6 +300,152 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     }
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+    private async System.Threading.Tasks.Task RefreshChannelDisplayNamesAsync(bool force)
+    {
+        var connectedNodeIdHex = MeshtasticWin.AppState.ConnectedNodeIdHex;
+        if (string.IsNullOrWhiteSpace(connectedNodeIdHex))
+            return;
+
+        if (!force &&
+            !string.IsNullOrWhiteSpace(_channelDisplayNamesNodeIdHex) &&
+            string.Equals(_channelDisplayNamesNodeIdHex, connectedNodeIdHex, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!TryParseNodeNumFromHex(connectedNodeIdHex, out var connectedNodeNum))
+            return;
+
+        IReadOnlyList<Meshtastic.Protobufs.Channel> channels;
+        try
+        {
+            channels = await AdminConfigClient.Instance.GetChannelsAsync(connectedNodeNum, maxChannels: 8).ConfigureAwait(false);
+        }
+        catch
+        {
+            return;
+        }
+
+        var nextNames = new Dictionary<uint, string>();
+        var nextEncrypted = new HashSet<uint>();
+        foreach (var channel in channels)
+        {
+            if (channel is null)
+                continue;
+
+            var index = channel.Index;
+            if (index <= 0)
+                continue;
+
+            if (IsChannelEncrypted(channel.Settings))
+                nextEncrypted.Add((uint)index);
+
+            var channelName = channel.Settings?.Name?.Trim();
+            if (string.IsNullOrWhiteSpace(channelName))
+                continue;
+
+            nextNames[(uint)index] = channelName;
+        }
+
+        var dq = DispatcherQueue;
+        if (dq is null)
+            return;
+
+        _ = dq.TryEnqueue(() =>
+        {
+            if (!string.Equals(MeshtasticWin.AppState.ConnectedNodeIdHex, connectedNodeIdHex, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _channelDisplayNames.Clear();
+            foreach (var kvp in nextNames)
+                _channelDisplayNames[kvp.Key] = kvp.Value;
+            _encryptedChannels.Clear();
+            foreach (var channelIndex in nextEncrypted)
+                _encryptedChannels.Add(channelIndex);
+
+            _channelDisplayNamesNodeIdHex = connectedNodeIdHex;
+            ApplyChannelDisplayNamesToChatItems();
+            RebuildVisibleChats();
+            OnChanged(nameof(ActiveChatTitle));
+        });
+    }
+
+    private void ApplyChannelDisplayNamesToChatItems()
+    {
+        foreach (var chat in ChatListItems.Where(c => c.IsChannel && c.ChannelIndex > 0))
+        {
+            var title = ResolveChannelDisplayName(chat.ChannelIndex);
+            chat.Title = title;
+            chat.ChannelArchiveName = ResolveChannelArchiveName(chat.ChannelIndex);
+            chat.SortNameKey = title.ToUpperInvariant();
+        }
+
+        RefreshChatSorting();
+    }
+
+    private static bool IsChannelEncrypted(Meshtastic.Protobufs.ChannelSettings? settings)
+    {
+        var psk = settings?.Psk;
+        if (psk is null || psk.Length == 0)
+            return false;
+
+        if (psk.Length == 1 && psk[0] == 0)
+            return false;
+
+        return true;
+    }
+
+    private static string BuildChannelLabel(uint channelIndex, string? baseName)
+    {
+        var trimmed = (baseName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return $"Ch{channelIndex}";
+
+        var defaultLabel = $"Channel {channelIndex}";
+        if (string.Equals(trimmed, defaultLabel, StringComparison.OrdinalIgnoreCase))
+            return $"Ch{channelIndex}";
+
+        if (trimmed.StartsWith($"Ch{channelIndex}:", StringComparison.OrdinalIgnoreCase))
+            return trimmed;
+
+        return $"Ch{channelIndex}: {trimmed}";
+    }
+
+    private string ResolveChannelDisplayName(uint channelIndex, string? fallbackName = null)
+    {
+        if (channelIndex == 0)
+            return "Primary channel";
+
+        string? baseName = null;
+        if (_channelDisplayNames.TryGetValue(channelIndex, out var configuredName) &&
+            !string.IsNullOrWhiteSpace(configuredName))
+            baseName = configuredName.Trim();
+        else if (!string.IsNullOrWhiteSpace(fallbackName))
+            baseName = fallbackName.Trim();
+
+        var channelLabel = BuildChannelLabel(channelIndex, baseName);
+        return _encryptedChannels.Contains(channelIndex)
+            ? $"🔒 {channelLabel}"
+            : channelLabel;
+    }
+
+    private string ResolveChannelArchiveName(uint channelIndex, string? fallbackName = null)
+    {
+        if (channelIndex == 0)
+            return "Primary";
+
+        if (_channelDisplayNames.TryGetValue(channelIndex, out var configuredName) &&
+            !string.IsNullOrWhiteSpace(configuredName))
+        {
+            return configuredName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(fallbackName))
+            return fallbackName.Trim();
+
+        return $"Channel {channelIndex}";
+    }
 
     private void Node_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -391,6 +552,17 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 string.Equals(item.PeerIdHex, activePeer, StringComparison.OrdinalIgnoreCase))
             {
                 desired.Add(item);
+                continue;
+            }
+
+            if (item.IsChannel)
+            {
+                var q = (_chatFilter ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(q) ||
+                    item.Title.Contains(q, StringComparison.OrdinalIgnoreCase))
+                {
+                    desired.Add(item);
+                }
                 continue;
             }
 
@@ -557,7 +729,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         var archive = chat.PeerIdHex is null
             ? MessageArchive.ReadRecent(MaxArchiveMessagesPerChat, daysBack: 0, channelName: "Primary")
-            : MessageArchive.ReadRecent(MaxArchiveMessagesPerChat, daysBack: 0, dmPeerIdHex: chat.PeerIdHex);
+            : chat.IsChannel
+                ? MessageArchive.ReadRecent(MaxArchiveMessagesPerChat, daysBack: 0, channelName: chat.ChannelArchiveName)
+                : MessageArchive.ReadRecent(MaxArchiveMessagesPerChat, daysBack: 0, dmPeerIdHex: chat.PeerIdHex);
 
         var orderedArchive = archive.OrderBy(m => m.When).ToList();
         chat.ArchivedCount = orderedArchive.Count;
@@ -777,9 +951,29 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private static string NormalizePeerKey(string? peerIdHex)
         => string.IsNullOrWhiteSpace(peerIdHex) ? "" : peerIdHex.Trim();
 
+    private static bool TryParseChannelPeerKey(string? peerKey, out uint channelIndex)
+    {
+        channelIndex = 0;
+        if (string.IsNullOrWhiteSpace(peerKey))
+            return false;
+
+        var key = peerKey.Trim();
+        if (!key.StartsWith(ChannelPeerPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var raw = key.Substring(ChannelPeerPrefix.Length);
+        return uint.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out channelIndex);
+    }
+
+    private static string BuildChannelPeerKey(uint channelIndex)
+        => channelIndex == 0 ? "" : $"{ChannelPeerPrefix}{channelIndex}";
+
     private static string GetChatKey(string? peerIdHex)
     {
         var normalized = NormalizePeerKey(peerIdHex);
+        if (TryParseChannelPeerKey(normalized, out var channelIndex))
+            return channelIndex == 0 ? "channel:primary" : $"channel:{channelIndex}";
+
         return string.IsNullOrWhiteSpace(normalized)
             ? "channel:primary"
             : $"dm:{normalized}";
@@ -788,7 +982,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private static string GetChatKey(MessageLive message)
     {
         if (!message.IsDirect)
-            return "channel:primary";
+            return message.ChannelIndex == 0
+                ? "channel:primary"
+                : $"channel:{message.ChannelIndex}";
 
         var peerIdHex = message.IsMine ? message.ToIdHex : message.FromIdHex;
         return $"dm:{NormalizePeerKey(peerIdHex)}";
@@ -801,6 +997,11 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         InsertLiveMessageSorted(chat, vm);
 
         chat.LiveMessageCount++;
+        if (message.WhenUtc > chat.LastHeardUtc)
+        {
+            chat.LastHeardUtc = message.WhenUtc;
+            chat.LastHeard = message.WhenUtc.ToLocalTime().ToString("HH:mm:ss");
+        }
 
         if (ReferenceEquals(chat, _selectedChatItem))
             MaybeScrollToBottom(chat);
@@ -954,6 +1155,27 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         if (chatKey == "channel:primary")
             return _primaryChatItem;
 
+        if (chatKey.StartsWith("channel:", StringComparison.Ordinal))
+        {
+            var channelKey = BuildChannelPeerKey(message.ChannelIndex);
+            var channelTitle = ResolveChannelDisplayName(message.ChannelIndex, message.ChannelName);
+            var channelArchiveName = ResolveChannelArchiveName(message.ChannelIndex, message.ChannelName);
+            if (_chatItemsByPeer.TryGetValue(channelKey, out var existingChannel))
+            {
+                existingChannel.Title = channelTitle;
+                existingChannel.ChannelArchiveName = channelArchiveName;
+                existingChannel.SortNameKey = channelTitle.ToUpperInvariant();
+                return existingChannel;
+            }
+
+            var channelItem = ChatListItemVm.ForChannel(message.ChannelIndex, channelTitle);
+            channelItem.ChannelArchiveName = channelArchiveName;
+            _chatItemsByPeer[channelKey] = channelItem;
+            ChatListItems.Add(channelItem);
+            ScheduleChatFilterRefresh();
+            return channelItem;
+        }
+
         var peerIdHex = message.IsMine ? message.ToIdHex : message.FromIdHex;
         peerIdHex = NormalizePeerKey(peerIdHex);
 
@@ -1084,12 +1306,21 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         // Primary defaults
         uint? toNodeNum = null;
         uint dmTargetNodeNum = 0;
+        uint channelIndex = 0;
+        string channelName = "Primary";
 
         string toIdHex = "0xffffffff";
         string toName = "Primary";
 
+        if (TryParseChannelPeerKey(peer, out var selectedChannel))
+        {
+            channelIndex = selectedChannel;
+            var channelDisplayName = ResolveChannelDisplayName(selectedChannel, fallbackName: $"Channel {selectedChannel}");
+            channelName = ResolveChannelArchiveName(selectedChannel, fallbackName: $"Channel {selectedChannel}");
+            toName = channelDisplayName;
+        }
         // DM
-        if (!string.IsNullOrWhiteSpace(peer))
+        else if (!string.IsNullOrWhiteSpace(peer))
         {
             toIdHex = peer;
 
@@ -1109,7 +1340,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         try
         {
             // Send and capture packetId for ACK matching.
-            packetId = await RadioClient.Instance.SendTextAsync(text, toNodeNum);
+            packetId = await RadioClient.Instance.SendTextAsync(text, toNodeNum, channelIndex);
             if (packetId == 0)
                 throw new InvalidOperationException("Not connected");
         }
@@ -1136,13 +1367,17 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             toName: toName,
             text: text,
             packetId: packetId,
-            dmTargetNodeNum: dmTargetNodeNum);
+            dmTargetNodeNum: dmTargetNodeNum,
+            channelIndex: channelIndex,
+            channelName: channelName);
 
         MeshtasticWin.AppState.Messages.Insert(0, local);
 
         // Arkiv
         if (string.IsNullOrWhiteSpace(peer))
-            MessageArchive.Append(local, channelName: "Primary");
+            MessageArchive.Append(local, channelName: channelName);
+        else if (TryParseChannelPeerKey(peer, out _))
+            MessageArchive.Append(local, channelName: channelName);
         else
             MessageArchive.Append(local, dmPeerIdHex: peer);
     }
@@ -1305,6 +1540,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         var days = Math.Max(1, _messageLogRetentionDays);
         if (_selectedChatItem.PeerIdHex is null)
             _ = MessageArchive.DeleteOlderThanDays(days, channelName: "Primary");
+        else if (_selectedChatItem.IsChannel)
+            _ = MessageArchive.DeleteOlderThanDays(days, channelName: _selectedChatItem.ChannelArchiveName);
         else
             _ = MessageArchive.DeleteOlderThanDays(days, dmPeerIdHex: _selectedChatItem.PeerIdHex);
 
@@ -1320,6 +1557,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         if (_selectedChatItem.PeerIdHex is null)
             _ = MessageArchive.DeleteAll(channelName: "Primary");
+        else if (_selectedChatItem.IsChannel)
+            _ = MessageArchive.DeleteAll(channelName: _selectedChatItem.ChannelArchiveName);
         else
             _ = MessageArchive.DeleteAll(dmPeerIdHex: _selectedChatItem.PeerIdHex);
 
@@ -1416,6 +1655,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
     }
 
     public string? PeerIdHex { get; set; } // null = Primary
+    public bool IsChannel { get; set; } // true = channel chat, false = DM or primary
+    public uint ChannelIndex { get; set; } // 0 = primary
+    public string ChannelArchiveName { get; set; } = "Primary";
 
     private bool _isVisible = true;
     public bool IsVisible
@@ -1458,9 +1700,39 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             UnreadVisible = MeshtasticWin.AppState.HasUnread(null) ? Visibility.Visible : Visibility.Collapsed,
             PeerIdHex = null,
             ChatKey = "channel:primary",
+            IsChannel = true,
+            ChannelIndex = 0,
+            ChannelArchiveName = "Primary",
             SortNameKey = "PRIMARY CHANNEL",
             SortIdKey = ""
         };
+
+    public static ChatListItemVm ForChannel(uint channelIndex, string? channelName)
+    {
+        var title = string.IsNullOrWhiteSpace(channelName)
+            ? $"Channel {channelIndex}"
+            : channelName.Trim();
+        var peer = channelIndex == 0 ? "" : $"channel:{channelIndex}";
+        var archiveName = channelIndex == 0 ? "Primary" : title;
+
+        return new()
+        {
+            Title = title,
+            ShortId = channelIndex.ToString(CultureInfo.InvariantCulture),
+            LastHeard = "Broadcast",
+            LastHeardUtc = DateTime.MinValue,
+            SNR = "—",
+            RSSI = "—",
+            UnreadVisible = MeshtasticWin.AppState.HasUnread(peer) ? Visibility.Visible : Visibility.Collapsed,
+            PeerIdHex = peer,
+            ChatKey = channelIndex == 0 ? "channel:primary" : $"channel:{channelIndex}",
+            IsChannel = true,
+            ChannelIndex = channelIndex,
+            ChannelArchiveName = archiveName,
+            SortNameKey = title.ToUpperInvariant(),
+            SortIdKey = channelIndex.ToString(CultureInfo.InvariantCulture).PadLeft(4, '0')
+        };
+    }
 
     public static ChatListItemVm ForNode(NodeLive n)
         => new()
@@ -1476,6 +1748,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             UnreadVisible = MeshtasticWin.AppState.HasUnread(n.IdHex) ? Visibility.Visible : Visibility.Collapsed,
             PeerIdHex = n.IdHex,
             ChatKey = $"dm:{n.IdHex}",
+            IsChannel = false,
+            ChannelIndex = 0,
+            ChannelArchiveName = "Primary",
             SortNameKey = BuildSortNameKey(n.LongName, n.ShortName, n.IdHex),
             SortIdKey = (n.IdHex ?? "").ToUpperInvariant()
         };
@@ -1492,6 +1767,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             UnreadVisible = Visibility.Collapsed,
             PeerIdHex = peerIdHex,
             ChatKey = $"dm:{peerIdHex}",
+            IsChannel = false,
+            ChannelIndex = 0,
+            ChannelArchiveName = "Primary",
             SortNameKey = (peerIdHex ?? "").ToUpperInvariant(),
             SortIdKey = (peerIdHex ?? "").ToUpperInvariant()
         };
@@ -1534,6 +1812,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
         UnreadVisible = MeshtasticWin.AppState.HasUnread(n.IdHex) ? Visibility.Visible : Visibility.Collapsed;
         PeerIdHex = n.IdHex;
         ChatKey = $"dm:{n.IdHex}";
+        IsChannel = false;
+        ChannelIndex = 0;
+        ChannelArchiveName = "Primary";
         SortNameKey = BuildSortNameKey(n.LongName, n.ShortName, n.IdHex);
         SortIdKey = (n.IdHex ?? "").ToUpperInvariant();
     }
