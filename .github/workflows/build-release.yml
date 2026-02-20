@@ -1,4 +1,4 @@
-name: Build MeshtasticWin
+name: Build MeshVenes
 
 on:
   push:
@@ -18,9 +18,9 @@ jobs:
       CONFIGURATION: Release
       TARGET_FRAMEWORK: net8.0-windows10.0.19041.0
       RUNTIME: win-x64
-      PROJECT_PATH: MeshtasticWin/MeshtasticWin.csproj
+      PROJECT_PATH: MeshVenes/MeshVenes.csproj
       PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish\win-x64
-      ZIP_PATH: ${{ github.workspace }}\artifacts\MeshtasticWin-win-x64-release.zip
+      ZIP_PATH: ${{ github.workspace }}\artifacts\MeshVenes-win-x64-release.zip
       MSIX_DIR: ${{ github.workspace }}\artifacts\msix
 
     steps:
@@ -109,7 +109,7 @@ jobs:
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: MeshtasticWin-win-x64
+          name: MeshVenes-win-x64
           path: ${{ env.PUBLISH_DIR }}
           if-no-files-found: error
 

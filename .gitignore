@@ -2,6 +2,7 @@
 bin/
 obj/
 artifacts/
+MeshVenes/AppPackages/
 
 # Visual Studio
 .vs/

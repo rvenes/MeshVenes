@@ -1,0 +1,32 @@
+<Page
+    x:Class="MeshVenes.Pages.SettingsModuleStoreForwardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" MaxWidth="980" HorizontalAlignment="Left">
+            <TextBlock Text="Store &amp; Forward Config" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock x:Name="StatusText" Text="Loading..." Opacity="0.85"/>
+            <TextBlock x:Name="NodeText" Opacity="0.8"/>
+
+            <Grid ColumnDefinitions="280,360" RowSpacing="8" ColumnSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Enabled"/><ToggleSwitch Grid.Row="0" Grid.Column="1" x:Name="EnabledToggle"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Server mode"/><ToggleSwitch Grid.Row="1" Grid.Column="1" x:Name="IsServerToggle"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Heartbeat"/><ToggleSwitch Grid.Row="2" Grid.Column="1" x:Name="HeartbeatToggle"/>
+                <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="Records"/><TextBox Grid.Row="3" Grid.Column="1" x:Name="RecordsBox"/>
+                <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="History return max"/><TextBox Grid.Row="4" Grid.Column="1" x:Name="HistoryMaxBox"/>
+                <TextBlock Grid.Row="5" Grid.Column="0" VerticalAlignment="Center" Text="History return window"/><TextBox Grid.Row="5" Grid.Column="1" x:Name="HistoryWindowBox"/>
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Reload" Click="Reload_Click"/>
+                <Button Content="Save" Click="Save_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -1,0 +1,270 @@
+﻿using System;
+using System.Collections.ObjectModel;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using MeshVenes.Models;
+using MeshVenes.Services;
+
+namespace MeshVenes;
+
+public static class AppState
+{
+    private const string ShowPowerMetricsKey = "ShowPowerMetricsTab";
+    private const string ShowDetectionSensorKey = "ShowDetectionSensorLogTab";
+    private const string HideInactiveAdminTargetsKey = "HideInactiveAdminTargets";
+    private const string UnreadLastReadKey = "UnreadLastReadUtcByPeerJson";
+    private const string ActiveChatPeerKey = "ActiveChatPeerIdHex";
+    private const string AdminTargetNodeKey = "AdminTargetNodeIdHex";
+
+    public static ObservableCollection<NodeLive> Nodes { get; } = new();
+    public static ObservableCollection<MessageLive> Messages { get; } = new();
+    public static event Action? SettingsChanged;
+
+    private static bool _showPowerMetricsTab;
+    public static bool ShowPowerMetricsTab
+    {
+        get => _showPowerMetricsTab;
+        set
+        {
+            if (_showPowerMetricsTab == value) return;
+            _showPowerMetricsTab = value;
+            SettingsStore.SetBool(ShowPowerMetricsKey, value);
+            SettingsChanged?.Invoke();
+        }
+    }
+
+    private static bool _showDetectionSensorLogTab;
+    public static bool ShowDetectionSensorLogTab
+    {
+        get => _showDetectionSensorLogTab;
+        set
+        {
+            if (_showDetectionSensorLogTab == value) return;
+            _showDetectionSensorLogTab = value;
+            SettingsStore.SetBool(ShowDetectionSensorKey, value);
+            SettingsChanged?.Invoke();
+        }
+    }
+
+    public static string? ConnectedNodeIdHex { get; private set; }
+    public static event Action? ConnectedNodeChanged;
+
+    public static string? AdminTargetNodeIdHex { get; private set; }
+    public static event Action? AdminTargetChanged;
+
+    public static void SetConnectedNodeIdHex(string? idHex)
+    {
+        if (string.IsNullOrWhiteSpace(idHex))
+            idHex = null;
+
+        if (string.Equals(ConnectedNodeIdHex, idHex, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrWhiteSpace(idHex))
+            {
+                var currentName = Nodes.FirstOrDefault(n => string.Equals(n.IdHex, idHex, StringComparison.OrdinalIgnoreCase))?.Name;
+                AppDataPaths.SetActiveNodeScope(idHex, currentName);
+                RadioClient.Instance.RotateLiveLogForCurrentScope();
+            }
+            return;
+        }
+
+        ConnectedNodeIdHex = idHex;
+
+        // Keep logs separated per connected node.
+        if (!string.IsNullOrWhiteSpace(idHex))
+        {
+            var nodeName = Nodes.FirstOrDefault(n => string.Equals(n.IdHex, idHex, StringComparison.OrdinalIgnoreCase))?.Name;
+            AppDataPaths.SetActiveNodeScope(idHex, nodeName);
+            RadioClient.Instance.RotateLiveLogForCurrentScope();
+        }
+
+        ConnectedNodeChanged?.Invoke();
+    }
+
+    public static void SetAdminTargetNodeIdHex(string? idHex)
+    {
+        if (string.IsNullOrWhiteSpace(idHex))
+            idHex = null;
+
+        if (string.Equals(AdminTargetNodeIdHex, idHex, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        AdminTargetNodeIdHex = idHex;
+        SettingsStore.SetString(AdminTargetNodeKey, idHex);
+        AdminTargetChanged?.Invoke();
+    }
+
+    private static bool _hideInactiveAdminTargets;
+    public static bool HideInactiveAdminTargets
+    {
+        get => _hideInactiveAdminTargets;
+        set
+        {
+            if (_hideInactiveAdminTargets == value) return;
+            _hideInactiveAdminTargets = value;
+            SettingsStore.SetBool(HideInactiveAdminTargetsKey, value);
+            SettingsChanged?.Invoke();
+        }
+    }
+
+    public static string? GetEffectiveAdminTargetNodeIdHex()
+        => string.IsNullOrWhiteSpace(AdminTargetNodeIdHex)
+            ? ConnectedNodeIdHex
+            : AdminTargetNodeIdHex;
+
+    public static bool TryGetEffectiveAdminTargetNodeNum(out uint nodeNum)
+    {
+        nodeNum = 0;
+        var idHex = GetEffectiveAdminTargetNodeIdHex();
+        if (string.IsNullOrWhiteSpace(idHex))
+            return false;
+
+        var s = idHex.Trim();
+        if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            s = s[2..];
+
+        return uint.TryParse(s, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out nodeNum);
+    }
+
+
+// Unread tracking (for chat list indicators)
+// Key: null => Primary channel, otherwise peer node IdHex (e.g. "0xd6c218df")
+private static readonly object _unreadLock = new();
+private static readonly Dictionary<string, DateTime> _lastReadUtcByPeer = new(StringComparer.OrdinalIgnoreCase);
+private static readonly Dictionary<string, DateTime> _lastIncomingUtcByPeer = new(StringComparer.OrdinalIgnoreCase);
+
+public static event Action<string?>? UnreadChanged;
+
+public static bool HasUnread(string? peerIdHex)
+{
+    var key = NormalizePeerKey(peerIdHex);
+
+    lock (_unreadLock)
+    {
+        _lastReadUtcByPeer.TryGetValue(key, out var read);
+        _lastIncomingUtcByPeer.TryGetValue(key, out var inc);
+        return inc > read;
+    }
+}
+
+public static void MarkChatRead(string? peerIdHex)
+{
+    var key = NormalizePeerKey(peerIdHex);
+
+    lock (_unreadLock)
+    {
+        _lastReadUtcByPeer[key] = DateTime.UtcNow;
+    }
+
+    PersistUnreadState();
+    UnreadChanged?.Invoke(peerIdHex);
+}
+
+public static void NotifyIncomingMessage(string? peerIdHex, DateTime whenUtc)
+{
+    var key = NormalizePeerKey(peerIdHex);
+
+    lock (_unreadLock)
+    {
+        _lastIncomingUtcByPeer.TryGetValue(key, out var prev);
+        if (whenUtc > prev)
+            _lastIncomingUtcByPeer[key] = whenUtc;
+    }
+
+    UnreadChanged?.Invoke(peerIdHex);
+}
+
+private static string NormalizePeerKey(string? peerIdHex)
+    => string.IsNullOrWhiteSpace(peerIdHex) ? "" : peerIdHex.Trim();
+
+    static AppState()
+    {
+        // Settings
+        _showPowerMetricsTab = SettingsStore.GetBool(ShowPowerMetricsKey) ?? false;
+        _showDetectionSensorLogTab = SettingsStore.GetBool(ShowDetectionSensorKey) ?? false;
+        _hideInactiveAdminTargets = SettingsStore.GetBool(HideInactiveAdminTargetsKey) ?? true;
+
+        // Unread state (optional persistence for chat read markers)
+        try
+        {
+            var json = SettingsStore.GetString(UnreadLastReadKey);
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                var parsed = JsonSerializer.Deserialize<Dictionary<string, long>>(json);
+                if (parsed is not null)
+                {
+                    lock (_unreadLock)
+                    {
+                        foreach (var (peer, ticks) in parsed)
+                        {
+                            if (string.IsNullOrWhiteSpace(peer) || ticks <= 0)
+                                continue;
+                            _lastReadUtcByPeer[peer] = new DateTime(ticks, DateTimeKind.Utc);
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore settings corruption; defaults apply.
+        }
+
+        // Last selected chat (null/empty = Primary channel).
+        try
+        {
+            var peer = SettingsStore.GetString(ActiveChatPeerKey);
+            ActiveChatPeerIdHex = string.IsNullOrWhiteSpace(peer) ? null : peer.Trim();
+        }
+        catch
+        {
+            ActiveChatPeerIdHex = null;
+        }
+
+        try
+        {
+            var adminTarget = SettingsStore.GetString(AdminTargetNodeKey);
+            AdminTargetNodeIdHex = string.IsNullOrWhiteSpace(adminTarget) ? null : adminTarget.Trim();
+        }
+        catch
+        {
+            AdminTargetNodeIdHex = null;
+        }
+    }
+
+    private static void PersistUnreadState()
+    {
+        try
+        {
+            Dictionary<string, long> snapshot;
+            lock (_unreadLock)
+                snapshot = _lastReadUtcByPeer.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Ticks, StringComparer.OrdinalIgnoreCase);
+
+            SettingsStore.SetString(UnreadLastReadKey, JsonSerializer.Serialize(snapshot));
+        }
+        catch
+        {
+            // Ignore persistence errors.
+        }
+    }
+
+    // null = Primary channel (broadcast), otherwise DM with this node id (IdHex, e.g. "0xd6c218df")
+    public static string? ActiveChatPeerIdHex { get; private set; }
+
+    public static event Action? ActiveChatChanged;
+
+    public static void SetActiveChatPeer(string? peerIdHex)
+    {
+        // Normalize input.
+        if (string.IsNullOrWhiteSpace(peerIdHex))
+            peerIdHex = null;
+
+        if (string.Equals(ActiveChatPeerIdHex, peerIdHex, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        ActiveChatPeerIdHex = peerIdHex;
+        SettingsStore.SetString(ActiveChatPeerKey, peerIdHex);
+        ActiveChatChanged?.Invoke();
+    }
+}

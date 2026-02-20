@@ -1,0 +1,36 @@
+<Page
+    x:Class="MeshVenes.Pages.SettingsRemoteAdminPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="10">
+            <TextBlock Text="Remote Admin" FontSize="32" FontWeight="SemiBold"/>
+
+            <TextBlock Text="Admin target node"
+                       FontWeight="SemiBold"/>
+            <TextBox x:Name="AdminTargetSearchBox"
+                     PlaceholderText="Search node name / short id / hex id"
+                     TextChanged="AdminTargetSearchBox_TextChanged"
+                     Width="460"
+                     HorizontalAlignment="Left"/>
+            <CheckBox x:Name="HideInactiveToggle"
+                      Content="Hide inactive nodes"
+                      IsChecked="True"
+                      Click="HideInactiveToggle_Click"/>
+            <ComboBox x:Name="AdminTargetCombo"
+                      SelectionChanged="AdminTargetCombo_SelectionChanged"
+                      PlaceholderText="Connected node (default)"
+                      Width="460"
+                      HorizontalAlignment="Left"/>
+
+            <TextBlock x:Name="StatusText"
+                       Opacity="0.85"
+                       Text="Connected node (default)"/>
+
+            <TextBlock Opacity="0.8"
+                       TextWrapping="Wrap"
+                       Text="Remote admin uses secure key exchange with the node public key. Legacy admin-channel flow is mainly for pre-2.5 firmware."/>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

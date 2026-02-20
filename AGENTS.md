@@ -1,4 +1,4 @@
-# CODEX Rules (MeshtasticWin)
+# CODEX Rules (MeshVenes)
 
 ## Core principles
 
@@ -52,8 +52,8 @@ If a build/test cannot be run in the current environment, state exactly what cou
 
 When the user asks for a version bump, update all relevant version sources so About and packaged builds show the same new version:
 
-- `MeshtasticWin.csproj`: `Version`, `AssemblyVersion`, `FileVersion`, `AssemblyInformationalVersion`
-- `MeshtasticWin/Package.appxmanifest`: `<Identity Version="...">`
+- `MeshVenes.csproj`: `Version`, `AssemblyVersion`, `FileVersion`, `AssemblyInformationalVersion`
+- `MeshVenes/Package.appxmanifest`: `<Identity Version="...">`
 
 Never bump only one location.
 
@@ -148,7 +148,7 @@ Never push automatically without explicit approval.
 ## Environment assumptions
 
 - Windows 11
-- Repository path: `H:\Koding\MeshtasticWin`
+- Repository path: `H:\Koding\MeshVenes`
 - Git is executed from Windows PowerShell in the repo root.
 - Do not use WSL paths like `/mnt/h/...`.
 - Do not use `git -C <path>`.

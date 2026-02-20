@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "MeshVenes (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "MeshVenes (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

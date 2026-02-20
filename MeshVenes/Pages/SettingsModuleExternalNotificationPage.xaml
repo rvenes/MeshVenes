@@ -1,0 +1,47 @@
+<Page
+    x:Class="MeshVenes.Pages.SettingsModuleExternalNotificationPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" MaxWidth="980" HorizontalAlignment="Left">
+            <TextBlock Text="External Notification Config" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock x:Name="StatusText" Text="Loading..." Opacity="0.85"/>
+            <TextBlock x:Name="NodeText" Opacity="0.8"/>
+
+            <Grid ColumnDefinitions="280,360" RowSpacing="8" ColumnSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Enabled"/><ToggleSwitch Grid.Row="0" Grid.Column="1" x:Name="EnabledToggle"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Alert when receiving a bell"/><ToggleSwitch Grid.Row="1" Grid.Column="1" x:Name="AlertBellToggle"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Alert when receiving a message"/><ToggleSwitch Grid.Row="2" Grid.Column="1" x:Name="AlertMessageToggle"/>
+                <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="Use PWM buzzer"/><ToggleSwitch Grid.Row="3" Grid.Column="1" x:Name="UsePwmToggle"/>
+                <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="Use I2S as buzzer"/><ToggleSwitch Grid.Row="4" Grid.Column="1" x:Name="UseI2sToggle"/>
+                <TextBlock Grid.Row="5" Grid.Column="0" VerticalAlignment="Center" Text="Active"/><ToggleSwitch Grid.Row="5" Grid.Column="1" x:Name="ActiveToggle"/>
+                <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="Output pin GPIO"/><TextBox Grid.Row="6" Grid.Column="1" x:Name="OutputPinBox"/>
+                <TextBlock Grid.Row="7" Grid.Column="0" VerticalAlignment="Center" Text="GPIO output duration (ms)"/><TextBox Grid.Row="7" Grid.Column="1" x:Name="OutputMsBox"/>
+                <TextBlock Grid.Row="8" Grid.Column="0" VerticalAlignment="Center" Text="Nag timeout (s)"/><TextBox Grid.Row="8" Grid.Column="1" x:Name="NagTimeoutBox"/>
+                <TextBlock Grid.Row="9" Grid.Column="0" VerticalAlignment="Center" Text="Alert buzzer when receiving a bell"/><ToggleSwitch Grid.Row="9" Grid.Column="1" x:Name="AlertBellBuzzerToggle"/>
+                <TextBlock Grid.Row="10" Grid.Column="0" VerticalAlignment="Center" Text="Alert vibra when receiving a bell"/><ToggleSwitch Grid.Row="10" Grid.Column="1" x:Name="AlertBellVibraToggle"/>
+                <TextBlock Grid.Row="11" Grid.Column="0" VerticalAlignment="Center" Text="Alert buzzer when receiving a message"/><ToggleSwitch Grid.Row="11" Grid.Column="1" x:Name="AlertMessageBuzzerToggle"/>
+                <TextBlock Grid.Row="12" Grid.Column="0" VerticalAlignment="Center" Text="Alert vibra when receiving a message"/><ToggleSwitch Grid.Row="12" Grid.Column="1" x:Name="AlertMessageVibraToggle"/>
+                <TextBlock Grid.Row="13" Grid.Column="0" VerticalAlignment="Center" Text="Output pin buzzer GPIO"/><TextBox Grid.Row="13" Grid.Column="1" x:Name="OutputBuzzerBox"/>
+            </Grid>
+
+            <Grid ColumnDefinitions="280,360" RowSpacing="8" ColumnSpacing="12">
+                <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Output pin vibra GPIO"/>
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="OutputVibraBox"/>
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Reload" Click="Reload_Click"/>
+                <Button Content="Save" Click="Save_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
