@@ -80,7 +80,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private readonly Dictionary<string, ChatListItemVm> _chatItemsByPeer = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<uint, string> _channelDisplayNames = new();
     private readonly HashSet<uint> _encryptedChannels = new();
+    private readonly HashSet<uint> _configuredChannelIndices = new();
     private string? _channelDisplayNamesNodeIdHex;
+    private bool _channelRefreshRetryPending;
     private readonly DispatcherTimer _chatFilterRefreshTimer = new();
     private readonly DispatcherTimer _chatSortRefreshTimer = new();
     private bool _handlersHooked;
@@ -280,7 +282,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
                     _channelDisplayNames.Clear();
                     _encryptedChannels.Clear();
+                    _configuredChannelIndices.Clear();
                     _channelDisplayNamesNodeIdHex = null;
+                    _channelRefreshRetryPending = false;
                     _ = RefreshChannelDisplayNamesAsync(force: true);
 
                     EnsureChatHistoryLoaded(_selectedChatItem);
@@ -324,11 +328,13 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         }
         catch
         {
+            ScheduleChannelDisplayNamesRetry(connectedNodeIdHex);
             return;
         }
 
         var nextNames = new Dictionary<uint, string>();
         var nextEncrypted = new HashSet<uint>();
+        var nextConfiguredChannelIndices = new HashSet<uint>();
         foreach (var channel in channels)
         {
             if (channel is null)
@@ -337,6 +343,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             var index = channel.Index;
             if (index <= 0)
                 continue;
+
+            if (channel.Role != Meshtastic.Protobufs.Channel.Types.Role.Disabled)
+                nextConfiguredChannelIndices.Add((uint)index);
 
             if (IsChannelEncrypted(channel.Settings))
                 nextEncrypted.Add((uint)index);
@@ -363,12 +372,66 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             _encryptedChannels.Clear();
             foreach (var channelIndex in nextEncrypted)
                 _encryptedChannels.Add(channelIndex);
+            _configuredChannelIndices.Clear();
+            foreach (var channelIndex in nextConfiguredChannelIndices)
+                _configuredChannelIndices.Add(channelIndex);
 
             _channelDisplayNamesNodeIdHex = connectedNodeIdHex;
+            EnsureConfiguredChannelChatItems();
             ApplyChannelDisplayNamesToChatItems();
             RebuildVisibleChats();
             OnChanged(nameof(ActiveChatTitle));
         });
+    }
+
+    private void ScheduleChannelDisplayNamesRetry(string connectedNodeIdHex)
+    {
+        if (_channelRefreshRetryPending)
+            return;
+
+        _channelRefreshRetryPending = true;
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(4)).ConfigureAwait(false);
+            var dq = DispatcherQueue;
+            if (dq is null)
+                return;
+
+            _ = dq.TryEnqueue(() =>
+            {
+                _channelRefreshRetryPending = false;
+                if (!string.Equals(MeshtasticWin.AppState.ConnectedNodeIdHex, connectedNodeIdHex, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                _ = RefreshChannelDisplayNamesAsync(force: true);
+            });
+        });
+    }
+
+    private void EnsureConfiguredChannelChatItems()
+    {
+        foreach (var channelIndex in _configuredChannelIndices.OrderBy(i => i))
+        {
+            if (channelIndex == 0)
+                continue;
+
+            var channelKey = BuildChannelPeerKey(channelIndex);
+            var channelTitle = ResolveChannelDisplayName(channelIndex, fallbackName: $"Channel {channelIndex}");
+            var channelArchiveName = ResolveChannelArchiveName(channelIndex, fallbackName: $"Channel {channelIndex}");
+
+            if (_chatItemsByPeer.TryGetValue(channelKey, out var existingChannel))
+            {
+                existingChannel.Title = channelTitle;
+                existingChannel.ChannelArchiveName = channelArchiveName;
+                existingChannel.SortNameKey = channelTitle.ToUpperInvariant();
+                continue;
+            }
+
+            var channelItem = ChatListItemVm.ForChannel(channelIndex, channelTitle);
+            channelItem.ChannelArchiveName = channelArchiveName;
+            _chatItemsByPeer[channelKey] = channelItem;
+            ChatListItems.Add(channelItem);
+        }
     }
 
     private void ApplyChannelDisplayNamesToChatItems()
@@ -734,14 +797,17 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 : MessageArchive.ReadRecent(MaxArchiveMessagesPerChat, daysBack: 0, dmPeerIdHex: chat.PeerIdHex);
 
         var orderedArchive = archive.OrderBy(m => m.When).ToList();
-        chat.ArchivedCount = orderedArchive.Count;
         chat.LiveMessageCount = existingLiveCount;
+        var dedupeKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var existing in chat.Messages.Where(m => !m.IsDivider))
+            dedupeKeys.Add(BuildMessageDedupKey(existing.Header, existing.Text, existing.WhenUtc));
 
         var insertIndex = 0;
+        var insertedArchiveCount = 0;
         foreach (var msg in orderedArchive)
         {
             var local = msg.When.ToLocalTime();
-            chat.Messages.Insert(insertIndex++, new MessageVm
+            var candidate = new MessageVm
             {
                 Header = msg.Header ?? "",
                 Text = msg.Text ?? "",
@@ -751,9 +817,17 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 PacketId = 0,
                 HeardVisible = Visibility.Collapsed,
                 DeliveredVisible = Visibility.Collapsed
-            });
+            };
+
+            var dedupeKey = BuildMessageDedupKey(candidate.Header, candidate.Text, candidate.WhenUtc);
+            if (!dedupeKeys.Add(dedupeKey))
+                continue;
+
+            chat.Messages.Insert(insertIndex++, candidate);
+            insertedArchiveCount++;
         }
 
+        chat.ArchivedCount = insertedArchiveCount;
         chat.HistoryDivider ??= MessageVm.Divider();
         chat.HistoryDivider.DividerEnabled = chat.ArchivedCount > 0;
         chat.Messages.Insert(insertIndex, chat.HistoryDivider);
@@ -819,6 +893,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         {
             SortMode.LastActive => items
                 .OrderByDescending(item => item.PeerIdHex is null)
+                .ThenBy(item => item.IsChannel ? 0 : 1)
+                .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
                 .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
                 .ThenByDescending(item => item.LastHeardUtc)
                 .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
@@ -826,6 +902,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 .ToList(),
             SortMode.OldestActive => items
                 .OrderByDescending(item => item.PeerIdHex is null)
+                .ThenBy(item => item.IsChannel ? 0 : 1)
+                .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
                 .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
                 .ThenBy(item => item.LastHeardUtc)
                 .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
@@ -833,11 +911,15 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 .ToList(),
             SortMode.AlphabeticalDesc => items
                 .OrderByDescending(item => item.PeerIdHex is null)
+                .ThenBy(item => item.IsChannel ? 0 : 1)
+                .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
                 .ThenByDescending(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenByDescending(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             _ => items
                 .OrderByDescending(item => item.PeerIdHex is null)
+                .ThenBy(item => item.IsChannel ? 0 : 1)
+                .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
                 .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList()
@@ -854,6 +936,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         {
             SortMode.LastActive => indexed
                 .OrderByDescending(entry => entry.item.PeerIdHex is null)
+                .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
+                .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
                 .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
                 .ThenByDescending(entry => entry.item.LastHeardUtc)
                 .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
@@ -863,6 +947,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 .ToList(),
             SortMode.OldestActive => indexed
                 .OrderByDescending(entry => entry.item.PeerIdHex is null)
+                .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
+                .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
                 .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
                 .ThenBy(entry => entry.item.LastHeardUtc)
                 .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
@@ -872,6 +958,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 .ToList(),
             SortMode.AlphabeticalDesc => indexed
                 .OrderByDescending(entry => entry.item.PeerIdHex is null)
+                .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
+                .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
                 .ThenByDescending(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenByDescending(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.index)
@@ -879,6 +967,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 .ToList(),
             _ => indexed
                 .OrderByDescending(entry => entry.item.PeerIdHex is null)
+                .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
+                .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
                 .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.index)
@@ -994,6 +1084,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     {
         var chat = GetOrCreateChatForMessage(message);
         var vm = CreateMessageVm(message);
+        if (HasMessageDuplicate(chat, vm))
+            return;
         InsertLiveMessageSorted(chat, vm);
 
         chat.LiveMessageCount++;
@@ -1005,6 +1097,29 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         if (ReferenceEquals(chat, _selectedChatItem))
             MaybeScrollToBottom(chat);
+    }
+
+    private static bool HasMessageDuplicate(ChatListItemVm chat, MessageVm candidate)
+    {
+        if (candidate.PacketId != 0 &&
+            chat.Messages.Any(m => !m.IsDivider && m.PacketId == candidate.PacketId))
+        {
+            return true;
+        }
+
+        var candidateKey = BuildMessageDedupKey(candidate.Header, candidate.Text, candidate.WhenUtc);
+        return chat.Messages.Any(m =>
+            !m.IsDivider &&
+            string.Equals(BuildMessageDedupKey(m.Header, m.Text, m.WhenUtc), candidateKey, StringComparison.Ordinal));
+    }
+
+    private static string BuildMessageDedupKey(string? header, string? text, DateTime whenUtc)
+    {
+        var normalizedHeader = (header ?? "").Trim();
+        var normalizedText = (text ?? "").Trim();
+        var utc = whenUtc.Kind == DateTimeKind.Utc ? whenUtc : whenUtc.ToUniversalTime();
+        var secondPrecision = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, utc.Second, DateTimeKind.Utc);
+        return $"{normalizedHeader}\u001f{normalizedText}\u001f{secondPrecision:O}";
     }
 
     private static void InsertLiveMessageSorted(ChatListItemVm chat, MessageVm vm)
