@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using QRCoder;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
@@ -126,10 +127,11 @@ public sealed partial class SettingsRadioShareQrPage : Page
             ShareUrlBox.Text = $"https://meshtastic.org/e/{addPart}#{base64url}";
             await UpdateQrPreviewAsync(ShareUrlBox.Text);
         }
-        catch
+        catch (Exception ex)
         {
             ShareUrlBox.Text = "";
             QrImage.Source = null;
+            StatusText.Text = "Failed to generate QR preview: " + ex.Message;
         }
     }
 
@@ -362,11 +364,21 @@ public sealed partial class SettingsRadioShareQrPage : Page
             return;
         }
 
-        using var generator = new QRCodeGenerator();
-        using var data = generator.CreateQrCode(text, QRCodeGenerator.ECCLevel.Q);
-        var qrCode = new PngByteQRCode(data);
-        var pngBytes = qrCode.GetGraphic(12);
-        QrImage.Source = await CreateBitmapImageFromPngBytesAsync(pngBytes);
+        try
+        {
+            using var generator = new QRCodeGenerator();
+            using var data = generator.CreateQrCode(text, QRCodeGenerator.ECCLevel.Q);
+            var qrCode = new PngByteQRCode(data);
+            var pngBytes = qrCode.GetGraphic(12);
+            QrImage.Source = await CreateBitmapImageFromPngBytesAsync(pngBytes);
+            return;
+        }
+        catch
+        {
+            // Fallback to pixel renderer on systems where PNG decode path is unavailable.
+        }
+
+        QrImage.Source = await CreateWriteableBitmapFromQrTextAsync(text);
     }
 
     private static async Task<BitmapImage> CreateBitmapImageFromPngBytesAsync(byte[] pngBytes)
@@ -376,6 +388,27 @@ public sealed partial class SettingsRadioShareQrPage : Page
         await stream.WriteAsync(pngBytes.AsBuffer());
         stream.Seek(0);
         await bitmap.SetSourceAsync(stream);
+        return bitmap;
+    }
+
+    private static async Task<WriteableBitmap> CreateWriteableBitmapFromQrTextAsync(string text)
+    {
+        var writer = new BarcodeWriterPixelData
+        {
+            Format = BarcodeFormat.QR_CODE,
+            Options = new EncodingOptions
+            {
+                Width = 300,
+                Height = 300,
+                Margin = 1
+            }
+        };
+
+        var pixelData = writer.Write(text);
+        var bitmap = new WriteableBitmap(pixelData.Width, pixelData.Height);
+        using var pixelStream = bitmap.PixelBuffer.AsStream();
+        await pixelStream.WriteAsync(pixelData.Pixels, 0, pixelData.Pixels.Length);
+        bitmap.Invalidate();
         return bitmap;
     }
 

@@ -7,9 +7,13 @@
         <StackPanel Spacing="12" MaxWidth="900">
             <TextBlock Text="About" FontSize="20" FontWeight="SemiBold"/>
             <TextBlock Text="{x:Bind VersionText, Mode=OneWay}" Opacity="0.9"/>
+            <TextBlock x:Name="UpdateStatusText" Text="Update status: checking GitHub releases..." Opacity="0.9" TextWrapping="Wrap"/>
+            <HyperlinkButton x:Name="UpdateLinkButton"
+                             Content="Open latest release"
+                             Visibility="Collapsed"/>
 
             <TextBlock TextWrapping="Wrap">
-                MeshtasticWin is a desktop app for connecting to Meshtastic radios and working with messages and nodes.
+                MeshtasticWin is an unofficial desktop app for connecting to Meshtastic radios and working with messages and nodes.
             </TextBlock>
 
             <TextBlock Text="How to use" FontSize="16" FontWeight="SemiBold"/>
@@ -30,10 +34,12 @@
             <HyperlinkButton Content="Open PayPal donation page"
                              NavigateUri="https://www.paypal.com/donate/?business=VSSTWS8ETDPXW&amp;no_recurring=0&amp;item_name=MeshtasticWin+is+free+and+open+source+%28GPLv3%29.+Optional+donations+help+improve+features%2C+stability%2C+and+support.&amp;currency_code=USD"/>
             <TextBlock Text="Scan QR code:" FontWeight="SemiBold"/>
-            <Image Source="ms-appx:///Assets/paypalqr.png"
+            <Image x:Name="PayPalQrImage"
+                   Source="ms-appx:///Assets/paypalqr.png"
                    Width="220"
                    Height="220"
-                   Stretch="Uniform"/>
+                   Stretch="Uniform"
+                   ImageFailed="PayPalQrImage_ImageFailed"/>
         </StackPanel>
     </ScrollViewer>
 </Page>

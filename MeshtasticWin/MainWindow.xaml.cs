@@ -144,6 +144,8 @@ public sealed partial class MainWindow : Window
         AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
         foreach (var node in AppState.Nodes)
             node.PropertyChanged -= Node_PropertyChanged;
+        try { await MqttProxyService.Instance.ShutdownAsync(); }
+        catch { }
         try { await RadioClient.Instance.DisconnectAsync(); }
         catch { }
     }

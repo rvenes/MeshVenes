@@ -745,10 +745,14 @@ public sealed class RadioClient
 
     // Broadcast
     public async System.Threading.Tasks.Task<uint> SendTextAsync(string text)
-        => await SendTextAsync(text, (uint?)null);
+        => await SendTextAsync(text, (uint?)null, channel: 0);
 
     // DM when toNodeNum has a value.
     public async System.Threading.Tasks.Task<uint> SendTextAsync(string text, uint? toNodeNum)
+        => await SendTextAsync(text, toNodeNum, channel: 0);
+
+    // DM when toNodeNum has a value. Broadcast when toNodeNum is null.
+    public async System.Threading.Tasks.Task<uint> SendTextAsync(string text, uint? toNodeNum, uint channel)
     {
         if (!IsConnected || _transport is null)
             return 0;
@@ -767,7 +771,7 @@ public sealed class RadioClient
             text: text,
             to: to,
             wantAck: wantAck,
-            channel: 0,
+            channel: channel,
             out uint packetId);
 
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
@@ -824,6 +828,19 @@ public sealed class RadioClient
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
         var sent = await SendPacketWithQueueControlAsync(framed, packetId);
         return sent ? packetId : 0;
+    }
+
+    public async Task<bool> SendMqttProxyMessageAsync(MqttClientProxyMessage proxyMessage)
+    {
+        if (!IsConnected || _transport is null)
+            return false;
+
+        if (proxyMessage is null)
+            throw new ArgumentNullException(nameof(proxyMessage));
+
+        var msg = ToRadioFactory.CreateMqttProxyMessage(proxyMessage);
+        var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
+        return await SendPacketWithQueueControlAsync(framed, packetId: 0).ConfigureAwait(false);
     }
 
     private static bool LooksLikeDebugText(string line)
