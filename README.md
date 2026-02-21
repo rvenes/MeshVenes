@@ -33,15 +33,20 @@ If you encounter bugs or have feature requests, post them on GitHub. Changes and
 
 Open-source hobby project focused on providing a full-featured Windows desktop experience for Meshtastic users.
 
+
 Screenshots  
+
 Send DMs and Public Channel Messages  
-<img width="1424" height="892" alt="image" src="https://github.com/user-attachments/assets/a219415b-676c-4822-9aef-6cc0ff6a89a5" />
+<img width="1424" height="960" alt="image" src="https://github.com/user-attachments/assets/6860ac30-35ab-4ed2-8292-e3f04d483d77" />
+
 
 Nodelist with map view  
-<img width="1424" height="966" alt="image" src="https://github.com/user-attachments/assets/b54d79d4-5c2c-483b-976b-d9bbc4e3e7f0" />
+<img width="1471" height="1004" alt="image" src="https://github.com/user-attachments/assets/bc591c88-d664-4e3e-a80d-5c4630a72294" />
+
 
 Settingspage with Remote Admin  
-<img width="1424" height="966" alt="image" src="https://github.com/user-attachments/assets/d7b2b2ce-1221-408b-983d-bff706762fe8" />
+<img width="1471" height="1294" alt="image" src="https://github.com/user-attachments/assets/5e933de1-b6b7-464f-b042-c9c5f57bb831" />
+
 
 Reporting Bugs
 
