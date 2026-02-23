@@ -32,6 +32,7 @@ namespace MeshVenes.Pages;
 public sealed partial class NodesPage : Page, INotifyPropertyChanged
 {
     private const string LastSelectedNodeKey = "NodesLastSelectedNodeIdHex";
+    private static readonly Brush DefaultSignalBrush = new SolidColorBrush(Colors.Gray);
     private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
         TypeInfoResolver = new DefaultJsonTypeInfoResolver()
@@ -124,6 +125,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(SelectedUptimeText));
             OnChanged(nameof(SelectedFirstHeardText));
             OnChanged(nameof(SelectedHardwareModelText));
+            OnChanged(nameof(SelectedSignalDetailsText));
+            OnChanged(nameof(SelectedSignalBrush));
             OnChanged(nameof(HasSelectedPosition));
             OnChanged(nameof(IsTraceRouteEnabled));
             OnChanged(nameof(TraceRouteButtonText));
@@ -265,6 +268,12 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         Selected is null || string.IsNullOrWhiteSpace(Selected.HardwareModel)
             ? "—"
             : Selected.HardwareModel;
+
+    public string SelectedSignalDetailsText =>
+        Selected?.SignalDetailsText ?? "—";
+
+    public Brush SelectedSignalBrush =>
+        Selected?.TransportBrush ?? DefaultSignalBrush;
 
     public double PositionLogRetentionDaysValue
     {
@@ -772,13 +781,15 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(SelectedUptimeText));
             OnChanged(nameof(SelectedFirstHeardText));
             OnChanged(nameof(SelectedHardwareModelText));
+            OnChanged(nameof(SelectedSignalDetailsText));
+            OnChanged(nameof(SelectedSignalBrush));
             OnChanged(nameof(HasSelectedPosition));
             OnChanged(nameof(SelectedTitle));
         }
 
         if (e.PropertyName is nameof(NodeLive.LastHeardUtc) or nameof(NodeLive.LastHeard)
             or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude)
-            or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR)
+            or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR) or nameof(NodeLive.ViaMqtt)
             or nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey))
         {
             OnChanged(nameof(NodeCountsText));

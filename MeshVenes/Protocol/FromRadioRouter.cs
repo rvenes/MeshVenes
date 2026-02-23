@@ -128,6 +128,8 @@ public static class FromRadioRouter
 
         // Ensure node object exists so SNR/RSSI can be updated before NodeInfo arrives.
         var fromNode = EnsureNode(fromIdHex, fromNodeNum);
+        if (TryGetBool(packetObj, "ViaMqtt", out var packetViaMqtt))
+            fromNode.ViaMqtt = packetViaMqtt;
         fromNode.Touch();
 
         // SNR/RSSI field names can vary, so try multiple names.
@@ -249,7 +251,10 @@ public static class FromRadioRouter
                 if (string.Equals(existingTo, "0xffffffff", StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(toIdHex, "0xffffffff", StringComparison.OrdinalIgnoreCase))
                 {
-                    MeshVenes.AppState.Messages.Remove(existingByPacket);
+                    // Keep same packet and update destination in place.
+                    // MessagesPage will move the UI entry to correct chat bucket on Replace.
+                    ReplaceIncomingMessageText(existingByPacket, text, fromNode.Name, toNodeNum, toIdHex, messageChannelIndex, messageChannelName);
+                    return;
                 }
                 else
                 {
@@ -262,13 +267,16 @@ public static class FromRadioRouter
             return;
         }
 
-        if (MeshVenes.AppState.Messages.Any(m =>
+        // Fallback dedupe only for packets without id.
+        // Packets with id are handled by packetId rules and should allow same text sent twice.
+        if (packetId == 0 && MeshVenes.AppState.Messages.Any(m =>
                 !m.IsMine &&
+                m.PacketId == 0 &&
                 string.Equals(m.FromIdHex, fromIdHex, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(m.ToIdHex, toIdHex, StringComparison.OrdinalIgnoreCase) &&
                 m.ChannelIndex == messageChannelIndex &&
                 string.Equals(m.Text, text, StringComparison.Ordinal) &&
-                (DateTime.UtcNow - m.WhenUtc).TotalMinutes <= 10))
+                (DateTime.UtcNow - m.WhenUtc).TotalSeconds <= 20))
         {
             return;
         }
@@ -574,6 +582,9 @@ public static class FromRadioRouter
             var lastHeardUtc = DateTimeOffset.FromUnixTimeSeconds(lastHeardSeconds).UtcDateTime;
             node.SetFirstHeard(lastHeardUtc);
         }
+
+        if (TryGetBool(nodeInfoObj, "ViaMqtt", out var nodeInfoViaMqtt))
+            node.ViaMqtt = nodeInfoViaMqtt;
 
         if (TryGetObj(nodeInfoObj, "DeviceMetrics", out var deviceMetricsObj) &&
             deviceMetricsObj is not null &&
@@ -1163,6 +1174,34 @@ public static class FromRadioRouter
         var v = p.GetValue(obj);
         if (v is uint u) { value = u; return true; }
         if (v is int i && i >= 0) { value = (uint)i; return true; }
+        return false;
+    }
+
+    private static bool TryGetBool(object obj, string propName, out bool value)
+    {
+        value = false;
+        var p = obj.GetType().GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
+        if (p is null) return false;
+
+        var v = p.GetValue(obj);
+        if (v is bool b)
+        {
+            value = b;
+            return true;
+        }
+
+        if (v is int i)
+        {
+            value = i != 0;
+            return true;
+        }
+
+        if (v is uint u)
+        {
+            value = u != 0;
+            return true;
+        }
+
         return false;
     }
 
