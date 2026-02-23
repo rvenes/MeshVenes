@@ -1,11 +1,19 @@
 ﻿using System;
 using System.ComponentModel;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 
 namespace MeshVenes.Models;
 
 public sealed class NodeLive : INotifyPropertyChanged
 {
+    private static readonly Brush LoRaGoodBrush = new SolidColorBrush(Colors.LimeGreen);
+    private static readonly Brush LoRaOkBrush = new SolidColorBrush(Colors.Goldenrod);
+    private static readonly Brush LoRaWeakBrush = new SolidColorBrush(Colors.OrangeRed);
+    private static readonly Brush UnknownLinkBrush = new SolidColorBrush(Colors.Gray);
+    private static readonly Brush MqttBrush = new SolidColorBrush(Colors.DeepSkyBlue);
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public string IdHex { get; }
@@ -164,15 +172,94 @@ public sealed class NodeLive : INotifyPropertyChanged
     public string SNR
     {
         get => _snr;
-        set { if (_snr != value) { _snr = value; OnChanged(nameof(SNR)); } }
+        set
+        {
+            if (_snr == value) return;
+            _snr = value;
+            OnChanged(nameof(SNR));
+            OnSignalPresentationChanged();
+        }
     }
 
     private string _rssi = "—";
     public string RSSI
     {
         get => _rssi;
-        set { if (_rssi != value) { _rssi = value; OnChanged(nameof(RSSI)); } }
+        set
+        {
+            if (_rssi == value) return;
+            _rssi = value;
+            OnChanged(nameof(RSSI));
+            OnSignalPresentationChanged();
+        }
     }
+
+    private bool? _viaMqtt;
+    public bool? ViaMqtt
+    {
+        get => _viaMqtt;
+        set
+        {
+            if (_viaMqtt == value) return;
+            _viaMqtt = value;
+            OnChanged(nameof(ViaMqtt));
+            OnSignalPresentationChanged();
+        }
+    }
+
+    public string TransportText => ViaMqtt switch
+    {
+        true => "MQTT",
+        false => "LoRa",
+        _ => "—"
+    };
+
+    public string SignalQualityText
+    {
+        get
+        {
+            if (ViaMqtt == true)
+                return "MQTT";
+
+            if (!TryParseRssi(out var rssi))
+                return "No link";
+
+            if (rssi >= -85)
+                return "Good";
+
+            if (rssi >= -100)
+                return "OK";
+
+            return "Weak";
+        }
+    }
+
+    public string TransportBadgeText => ViaMqtt switch
+    {
+        true => "MQTT",
+        false => $"📶 {SignalQualityText}",
+        _ => "—"
+    };
+
+    public Brush TransportBrush => ViaMqtt switch
+    {
+        true => MqttBrush,
+        false => SignalQualityText switch
+        {
+            "Good" => LoRaGoodBrush,
+            "OK" => LoRaOkBrush,
+            "Weak" => LoRaWeakBrush,
+            _ => UnknownLinkBrush
+        },
+        _ => UnknownLinkBrush
+    };
+
+    public string SignalDetailsText => ViaMqtt switch
+    {
+        true => "MQTT relay",
+        false => $"{SignalQualityText} • RSSI {FormatMetric(RSSI)} • SNR {FormatMetric(SNR)}",
+        _ => "—"
+    };
 
     private string _lastHeard = "—";
     public string LastHeard
@@ -325,6 +412,35 @@ public sealed class NodeLive : INotifyPropertyChanged
         LastHeardUtc = nowUtc;
         LastHeard = nowUtc.ToLocalTime().ToString("HH:mm:ss");
         OnChanged(nameof(LastHeardUtc));
+    }
+
+    private static string FormatMetric(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "—";
+        return value.Trim();
+    }
+
+    private bool TryParseRssi(out int rssi)
+    {
+        rssi = 0;
+        if (string.IsNullOrWhiteSpace(RSSI) || RSSI == "—")
+            return false;
+        if (!int.TryParse(RSSI, out var parsed))
+            return false;
+        if (parsed == 0)
+            return false;
+        rssi = parsed;
+        return true;
+    }
+
+    private void OnSignalPresentationChanged()
+    {
+        OnChanged(nameof(TransportText));
+        OnChanged(nameof(SignalQualityText));
+        OnChanged(nameof(TransportBadgeText));
+        OnChanged(nameof(TransportBrush));
+        OnChanged(nameof(SignalDetailsText));
     }
 
     private void OnChanged(string name) =>

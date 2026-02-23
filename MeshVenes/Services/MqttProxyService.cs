@@ -315,6 +315,15 @@ public sealed class MqttProxyService
             return;
         }
 
+        // Forward only native Meshtastic service-envelope MQTT topics to the node.
+        // Topics like ".../2/json/..." are not service envelopes and trigger parse errors on device.
+        if (!IsForwardableServiceEnvelopeTopic(topic))
+        {
+            Interlocked.Increment(ref _droppedCount);
+            RaiseStateChanged();
+            return;
+        }
+
         var proxyMsg = new MqttClientProxyMessage
         {
             Topic = topic,
@@ -352,6 +361,16 @@ public sealed class MqttProxyService
         var payload = new byte[segment.Count];
         Buffer.BlockCopy(segment.Array, segment.Offset, payload, 0, segment.Count);
         return payload;
+    }
+
+    private static bool IsForwardableServiceEnvelopeTopic(string topic)
+    {
+        var normalized = (topic ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        return normalized.IndexOf("/2/e/", StringComparison.OrdinalIgnoreCase) >= 0
+            || normalized.IndexOf("/2/c/", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static string BuildSignature(ModuleConfig.Types.MQTTConfig config, uint nodeNum)
