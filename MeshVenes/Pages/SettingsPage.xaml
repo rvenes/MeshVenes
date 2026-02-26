@@ -72,6 +72,15 @@
                     <Button Content="Firmware Updates" Tag="firmware" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
                     <Button Content="Import / Export" Tag="firmware-import-export" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
                 </StackPanel>
+
+                <Button x:Name="AppearanceHeaderButton"
+                        Content="► Appearance"
+                        Tag="appearance-header"
+                        Click="SectionHeaderButton_Click"
+                        HorizontalAlignment="Stretch"/>
+                <StackPanel x:Name="AppearanceSectionPanel" Spacing="6" Visibility="Collapsed">
+                    <Button Content="Theme" Tag="appearance-theme" Click="SectionButton_Click" HorizontalAlignment="Stretch"/>
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
 

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.ComponentModel;
+using System.Globalization;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
@@ -13,6 +14,8 @@ public sealed class NodeLive : INotifyPropertyChanged
     private static readonly Brush LoRaWeakBrush = new SolidColorBrush(Colors.OrangeRed);
     private static readonly Brush UnknownLinkBrush = new SolidColorBrush(Colors.Gray);
     private static readonly Brush MqttBrush = new SolidColorBrush(Colors.DeepSkyBlue);
+    private static readonly Brush FavoriteOnBrush = new SolidColorBrush(Colors.Gold);
+    private static readonly Brush FavoriteOffBrush = new SolidColorBrush(Colors.DimGray);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -80,6 +83,10 @@ public sealed class NodeLive : INotifyPropertyChanged
             if (_role == value) return;
             _role = value;
             OnChanged(nameof(Role));
+            OnChanged(nameof(IsUnmonitored));
+            OnChanged(nameof(UnmonitoredVisibility));
+            OnChanged(nameof(UnmonitoredBadgeText));
+            OnChanged(nameof(UnmonitoredBrush));
         }
     }
 
@@ -261,6 +268,61 @@ public sealed class NodeLive : INotifyPropertyChanged
         _ => "—"
     };
 
+    private int? _hopsAway;
+    public int? HopsAway
+    {
+        get => _hopsAway;
+        set
+        {
+            var normalized = value.HasValue && value.Value >= 0 ? value : null;
+            if (_hopsAway == normalized) return;
+            _hopsAway = normalized;
+            OnChanged(nameof(HopsAway));
+            OnChanged(nameof(HopsAwayText));
+            OnChanged(nameof(HopsBadgeText));
+        }
+    }
+
+    public string HopsAwayText => HopsAway?.ToString(CultureInfo.InvariantCulture) ?? "—";
+    public string HopsBadgeText => $"Hops: {HopsAwayText}";
+
+    private bool _isIgnored;
+    public bool IsIgnored
+    {
+        get => _isIgnored;
+        set
+        {
+            if (_isIgnored == value) return;
+            _isIgnored = value;
+            OnChanged(nameof(IsIgnored));
+        }
+    }
+
+    public bool IsUnmonitored =>
+        !string.IsNullOrWhiteSpace(Role) &&
+        Role.Contains("unmonitored", StringComparison.OrdinalIgnoreCase);
+
+    public Visibility UnmonitoredVisibility => IsUnmonitored ? Visibility.Visible : Visibility.Collapsed;
+    public string UnmonitoredBadgeText => IsUnmonitored ? "Unmonitored" : "";
+    public Brush UnmonitoredBrush => IsUnmonitored ? LoRaWeakBrush : UnknownLinkBrush;
+
+    private bool _isFavorite;
+    public bool IsFavorite
+    {
+        get => _isFavorite;
+        set
+        {
+            if (_isFavorite == value) return;
+            _isFavorite = value;
+            OnChanged(nameof(IsFavorite));
+            OnChanged(nameof(FavoriteGlyph));
+            OnChanged(nameof(FavoriteBrush));
+        }
+    }
+
+    public string FavoriteGlyph => IsFavorite ? "★" : "☆";
+    public Brush FavoriteBrush => IsFavorite ? FavoriteOnBrush : FavoriteOffBrush;
+
     private string _lastHeard = "—";
     public string LastHeard
     {
@@ -276,9 +338,22 @@ public sealed class NodeLive : INotifyPropertyChanged
     public double Longitude { get => _lon; set { if (_lon != value) { _lon = value; OnChanged(nameof(Longitude)); OnChanged(nameof(HasPosition)); } } }
 
     private DateTime _lastPosUtc = DateTime.MinValue;
-    public DateTime LastPositionUtc { get => _lastPosUtc; set { if (_lastPosUtc != value) { _lastPosUtc = value; OnChanged(nameof(LastPositionUtc)); OnChanged(nameof(LastPositionText)); } } }
+    public DateTime LastPositionUtc
+    {
+        get => _lastPosUtc;
+        set
+        {
+            if (_lastPosUtc == value) return;
+            _lastPosUtc = value;
+            OnChanged(nameof(LastPositionUtc));
+            OnChanged(nameof(LastPositionText));
+            OnChanged(nameof(HasPosition));
+            OnChanged(nameof(PositionIconVisibility));
+        }
+    }
 
     public bool HasPosition => LastPositionUtc != DateTime.MinValue;
+    public Visibility PositionIconVisibility => HasPosition ? Visibility.Visible : Visibility.Collapsed;
 
     public string LastPositionText
     {
@@ -306,6 +381,49 @@ public sealed class NodeLive : INotifyPropertyChanged
         Longitude = lon;
         LastPositionUtc = tsUtc;
         return true;
+    }
+
+    private double? _distanceFromConnectedKm;
+    public double? DistanceFromConnectedKm => _distanceFromConnectedKm;
+
+    private int? _bearingFromConnectedDegrees;
+    public int? BearingFromConnectedDegrees => _bearingFromConnectedDegrees;
+
+    public Visibility DistanceDirectionVisibility => _distanceFromConnectedKm.HasValue ? Visibility.Visible : Visibility.Collapsed;
+
+    public string DistanceDirectionText
+    {
+        get
+        {
+            if (!_distanceFromConnectedKm.HasValue)
+                return "—";
+
+            var distanceText = FormatDistanceKm(_distanceFromConnectedKm.Value);
+            if (!_bearingFromConnectedDegrees.HasValue)
+                return distanceText;
+
+            var bearing = NormalizeBearing(_bearingFromConnectedDegrees.Value);
+            var arrow = BearingToArrow(bearing);
+            return $"{distanceText} {arrow} {bearing.ToString(CultureInfo.InvariantCulture)}°";
+        }
+    }
+
+    public void SetDistanceAndBearing(double? distanceKm, int? bearingDegrees)
+    {
+        var normalizedDistance = distanceKm.HasValue && distanceKm.Value >= 0 ? distanceKm : null;
+        int? normalizedBearing = null;
+        if (bearingDegrees.HasValue)
+            normalizedBearing = NormalizeBearing(bearingDegrees.Value);
+
+        if (_distanceFromConnectedKm == normalizedDistance && _bearingFromConnectedDegrees == normalizedBearing)
+            return;
+
+        _distanceFromConnectedKm = normalizedDistance;
+        _bearingFromConnectedDegrees = normalizedBearing;
+        OnChanged(nameof(DistanceFromConnectedKm));
+        OnChanged(nameof(BearingFromConnectedDegrees));
+        OnChanged(nameof(DistanceDirectionVisibility));
+        OnChanged(nameof(DistanceDirectionText));
     }
 
     public bool HasUnread => MeshVenes.AppState.HasUnread(IdHex);
@@ -419,6 +537,41 @@ public sealed class NodeLive : INotifyPropertyChanged
         if (string.IsNullOrWhiteSpace(value))
             return "—";
         return value.Trim();
+    }
+
+    private static int NormalizeBearing(int bearingDegrees)
+    {
+        var normalized = bearingDegrees % 360;
+        if (normalized < 0)
+            normalized += 360;
+        return normalized;
+    }
+
+    private static string FormatDistanceKm(double distanceKm)
+    {
+        if (distanceKm < 1)
+        {
+            var meters = Math.Round(distanceKm * 1000.0);
+            return $"{meters.ToString("0", CultureInfo.InvariantCulture)} m";
+        }
+
+        if (distanceKm < 10)
+            return $"{distanceKm.ToString("0.0", CultureInfo.InvariantCulture)} km";
+
+        return $"{Math.Round(distanceKm).ToString("0", CultureInfo.InvariantCulture)} km";
+    }
+
+    private static string BearingToArrow(int bearingDegrees)
+    {
+        var b = NormalizeBearing(bearingDegrees);
+        if (b >= 338 || b < 23) return "↑";
+        if (b < 68) return "↗";
+        if (b < 113) return "→";
+        if (b < 158) return "↘";
+        if (b < 203) return "↓";
+        if (b < 248) return "↙";
+        if (b < 293) return "←";
+        return "↖";
     }
 
     private bool TryParseRssi(out int rssi)

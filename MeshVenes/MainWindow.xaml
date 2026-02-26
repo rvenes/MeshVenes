@@ -5,15 +5,43 @@
     xmlns:local="using:MeshVenes"
     Title="MeshVenes">
 
-    <Grid>
+    <Grid x:Name="RootGrid">
         <NavigationView x:Name="Nav"
                         PaneDisplayMode="Top"
                         IsBackButtonVisible="Collapsed"
                         IsSettingsVisible="False"
                         SelectionChanged="Nav_SelectionChanged">
+            <NavigationView.Resources>
+                <ResourceDictionary>
+                    <ResourceDictionary.ThemeDictionaries>
+                        <ResourceDictionary x:Key="Light">
+                            <SolidColorBrush x:Key="ApplicationPageBackgroundThemeBrush" Color="#FFFFFFFF"/>
+                            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FFFFFFFF"/>
+                            <SolidColorBrush x:Key="NavigationViewTopPaneBackground" Color="#FFF3F3F3"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForeground" Color="#FF1A1A1A"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForegroundPointerOver" Color="#FF1A1A1A"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForegroundPressed" Color="#FF1A1A1A"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForegroundSelected" Color="#FF1A1A1A"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForegroundDisabled" Color="#FF8A8A8A"/>
+                        </ResourceDictionary>
+                        <ResourceDictionary x:Key="Dark">
+                            <SolidColorBrush x:Key="ApplicationPageBackgroundThemeBrush" Color="#FF000000"/>
+                            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF000000"/>
+                            <SolidColorBrush x:Key="NavigationViewTopPaneBackground" Color="#FF000000"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForeground" Color="#FFF5F5F5"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForegroundPointerOver" Color="#FFF5F5F5"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForegroundPressed" Color="#FFF5F5F5"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForegroundSelected" Color="#FFF5F5F5"/>
+                            <SolidColorBrush x:Key="TopNavigationViewItemForegroundDisabled" Color="#FF8A8A8A"/>
+                        </ResourceDictionary>
+                    </ResourceDictionary.ThemeDictionaries>
+                </ResourceDictionary>
+            </NavigationView.Resources>
+
             <NavigationView.PaneFooter>
                 <TextBlock x:Name="ConnectionStatusText"
                            Text="Connected to:"
+                           Foreground="{ThemeResource TopNavigationViewItemForeground}"
                            TextTrimming="CharacterEllipsis"
                            TextWrapping="NoWrap"
                            VerticalAlignment="Center"

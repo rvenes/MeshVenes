@@ -3,6 +3,7 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -31,10 +32,12 @@ public sealed partial class MainWindow : Window
         SetInitialWindowSize(InitialWindowWidth, InitialWindowHeight);
         RadioClient.Instance.ConnectionChanged += OnConnectionChanged;
         AppState.ConnectedNodeChanged += OnConnectionChanged;
+        AppState.SettingsChanged += OnAppSettingsChanged;
         AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
         foreach (var node in AppState.Nodes)
             node.PropertyChanged += Node_PropertyChanged;
         EnqueueConnectionStatusUpdate();
+        ApplyAppThemeFromSettings();
         NavigateTo("connect");
     }
 
@@ -141,6 +144,7 @@ public sealed partial class MainWindow : Window
 
         RadioClient.Instance.ConnectionChanged -= OnConnectionChanged;
         AppState.ConnectedNodeChanged -= OnConnectionChanged;
+        AppState.SettingsChanged -= OnAppSettingsChanged;
         AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
         foreach (var node in AppState.Nodes)
             node.PropertyChanged -= Node_PropertyChanged;
@@ -250,5 +254,106 @@ public sealed partial class MainWindow : Window
         ConnectionStatusText.Text = string.IsNullOrWhiteSpace(label)
             ? "Connected to:"
             : $"Connected to: {label}";
+    }
+
+    private void OnAppSettingsChanged()
+    {
+        try
+        {
+            var dq = DispatcherQueue;
+            if (dq is null)
+                return;
+
+            if (dq.HasThreadAccess)
+            {
+                ApplyAppThemeFromSettings();
+                return;
+            }
+
+            _ = dq.TryEnqueue(ApplyAppThemeFromSettings);
+        }
+        catch
+        {
+            // Ignore theme refresh errors.
+        }
+    }
+
+    private void ApplyAppThemeFromSettings()
+    {
+        var mode = AppState.AppThemeMode;
+        var theme = mode switch
+        {
+            AppState.ThemeMode.Light => ElementTheme.Light,
+            AppState.ThemeMode.Dark => ElementTheme.Dark,
+            AppState.ThemeMode.DarkGray => ElementTheme.Dark,
+            _ => ElementTheme.Default
+        };
+
+        RootGrid.RequestedTheme = theme;
+        Nav.RequestedTheme = theme;
+        ContentFrame.RequestedTheme = theme;
+        ClearNavigationThemeOverrides();
+
+        if (mode == AppState.ThemeMode.Light)
+        {
+            var white = new SolidColorBrush(Colors.White);
+            RootGrid.Background = white;
+            ContentFrame.Background = white;
+            ConnectionStatusText.ClearValue(TextBlock.ForegroundProperty);
+        }
+        else if (mode == AppState.ThemeMode.Dark)
+        {
+            var black = new SolidColorBrush(Colors.Black);
+            RootGrid.Background = black;
+            ContentFrame.Background = black;
+            ConnectionStatusText.ClearValue(TextBlock.ForegroundProperty);
+        }
+        else if (mode == AppState.ThemeMode.DarkGray)
+        {
+            var contentGray = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 27, 29, 34)); // #1B1D22
+            var topPaneGray = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 14, 15, 18)); // #0E0F12
+            var topText = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 236, 236, 236));  // #ECECEC
+            var disabledText = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 140, 140, 140));
+
+            RootGrid.Background = contentGray;
+            ContentFrame.Background = contentGray;
+
+            Nav.Resources["ApplicationPageBackgroundThemeBrush"] = contentGray;
+            Nav.Resources["NavigationViewContentBackground"] = contentGray;
+            Nav.Resources["NavigationViewTopPaneBackground"] = topPaneGray;
+            Nav.Resources["TopNavigationViewItemForeground"] = topText;
+            Nav.Resources["TopNavigationViewItemForegroundPointerOver"] = topText;
+            Nav.Resources["TopNavigationViewItemForegroundPressed"] = topText;
+            Nav.Resources["TopNavigationViewItemForegroundSelected"] = topText;
+            Nav.Resources["TopNavigationViewItemForegroundDisabled"] = disabledText;
+            ConnectionStatusText.Foreground = topText;
+        }
+        else
+        {
+            RootGrid.ClearValue(Grid.BackgroundProperty);
+            ContentFrame.ClearValue(Control.BackgroundProperty);
+            ConnectionStatusText.ClearValue(TextBlock.ForegroundProperty);
+        }
+    }
+
+    private void ClearNavigationThemeOverrides()
+    {
+        var keys = new[]
+        {
+            "ApplicationPageBackgroundThemeBrush",
+            "NavigationViewContentBackground",
+            "NavigationViewTopPaneBackground",
+            "TopNavigationViewItemForeground",
+            "TopNavigationViewItemForegroundPointerOver",
+            "TopNavigationViewItemForegroundPressed",
+            "TopNavigationViewItemForegroundSelected",
+            "TopNavigationViewItemForegroundDisabled"
+        };
+
+        foreach (var key in keys)
+        {
+            if (Nav.Resources.ContainsKey(key))
+                Nav.Resources.Remove(key);
+        }
     }
 }

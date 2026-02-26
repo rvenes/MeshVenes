@@ -131,6 +131,12 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(IsTraceRouteEnabled));
             OnChanged(nameof(TraceRouteButtonText));
             OnChanged(nameof(GpsTrackButtonText));
+            OnChanged(nameof(IsConnectedNodeSelected));
+            OnChanged(nameof(IgnoreDeleteActionsVisibility));
+            OnChanged(nameof(ConnectedNodeActionsVisibility));
+            OnChanged(nameof(CanEditSelectedNodeState));
+            OnChanged(nameof(CanRunConnectedNodeActions));
+            OnChanged(nameof(IgnoreNodeButtonText));
 
             SelectedTraceRouteEntry = null;
             if (TraceRouteDetailsTip is not null)
@@ -152,6 +158,26 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     public bool HasSelection => Selected is not null;
     public bool HasSelectedPosition => Selected?.HasPosition ?? false;
+    public bool IsConnectedNodeSelected =>
+        Selected is not null &&
+        !string.IsNullOrWhiteSpace(AppState.ConnectedNodeIdHex) &&
+        string.Equals(Selected.IdHex, AppState.ConnectedNodeIdHex, StringComparison.OrdinalIgnoreCase);
+
+    public Visibility IgnoreDeleteActionsVisibility =>
+        HasSelection && !IsConnectedNodeSelected ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ConnectedNodeActionsVisibility =>
+        IsConnectedNodeSelected ? Visibility.Visible : Visibility.Collapsed;
+
+    public bool CanEditSelectedNodeState =>
+        HasSelection &&
+        Selected is { NodeNum: > 0 } &&
+        NodeIdentity.TryParseNodeNumFromHex(AppState.ConnectedNodeIdHex, out _);
+
+    public bool CanRunConnectedNodeActions =>
+        IsConnectedNodeSelected && Selected is { NodeNum: > 0 };
+
+    public string IgnoreNodeButtonText => Selected?.IsIgnored == true ? "Unignore Node" : "Ignore Node";
 
     public string SelectedTitle => Selected?.Name ?? "Select a node";
     public string SelectedIdHex => Selected?.IdHex ?? "—";
@@ -435,6 +461,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         AppState.SettingsChanged += AppState_SettingsChanged;
 
         RebuildVisibleNodes();
+        RefreshNodeDistanceAndDirection();
         EnsureSelectedTabVisible();
         UpdateTabHeaderColors();
 
@@ -757,6 +784,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         ScheduleFilterApply();
         OnChanged(nameof(NodeCountsText));
+        RefreshNodeDistanceAndDirection();
         TriggerMapUpdate();
     }
 
@@ -785,12 +813,16 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(SelectedSignalBrush));
             OnChanged(nameof(HasSelectedPosition));
             OnChanged(nameof(SelectedTitle));
+            OnChanged(nameof(IgnoreNodeButtonText));
+            OnChanged(nameof(CanEditSelectedNodeState));
+            OnChanged(nameof(CanRunConnectedNodeActions));
         }
 
         if (e.PropertyName is nameof(NodeLive.LastHeardUtc) or nameof(NodeLive.LastHeard)
-            or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude)
+            or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude) or nameof(NodeLive.LastPositionUtc)
             or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR) or nameof(NodeLive.ViaMqtt)
-            or nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey))
+            or nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey)
+            or nameof(NodeLive.IsFavorite) or nameof(NodeLive.NodeNum) or nameof(NodeLive.IsIgnored))
         {
             OnChanged(nameof(NodeCountsText));
             ScheduleFilterApply();
@@ -799,8 +831,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
 
         if (sender is NodeLive updatedNode
-            && (e.PropertyName is nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude)))
+            && (e.PropertyName is nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude) or nameof(NodeLive.LastPositionUtc)))
         {
+            RefreshNodeDistanceAndDirection();
             TryAppendTrackPoint(updatedNode);
         }
     }
@@ -821,6 +854,48 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             return;
 
         CopyTextToClipboard(Selected.PublicKey);
+    }
+
+    private async void NodeFavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not NodeLive node)
+            return;
+
+        if (node.NodeNum == 0 || node.NodeNum > uint.MaxValue)
+        {
+            await ShowStatusAsync("Favorite update failed: node number is missing.");
+            return;
+        }
+
+        if (!NodeIdentity.TryParseNodeNumFromHex(AppState.ConnectedNodeIdHex, out var adminNodeNum))
+        {
+            await ShowStatusAsync("Favorite update failed: no connected node available.");
+            return;
+        }
+
+        var desiredFavorite = !node.IsFavorite;
+        if (element is Control control)
+            control.IsEnabled = false;
+
+        try
+        {
+            await AdminConfigClient.Instance.SetFavoriteNodeAsync(adminNodeNum, (uint)node.NodeNum, desiredFavorite);
+            node.IsFavorite = desiredFavorite;
+            RebuildVisibleNodes();
+            RadioClient.Instance.AddLogFromUiThread(
+                desiredFavorite
+                    ? $"Favorite set for node {node.Name} (0x{((uint)node.NodeNum):x8})."
+                    : $"Favorite removed for node {node.Name} (0x{((uint)node.NodeNum):x8}).");
+        }
+        catch (Exception ex)
+        {
+            await ShowStatusAsync($"Favorite update failed: {ex.Message}");
+        }
+        finally
+        {
+            if (element is Control c)
+                c.IsEnabled = true;
+        }
     }
 
     private void TextCopyFlyout_Opening(object sender, object e)
@@ -860,8 +935,92 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         return false;
     }
 
+    private void RefreshNodeDistanceAndDirection()
+    {
+        var connectedIdHex = AppState.ConnectedNodeIdHex;
+        NodeLive? connectedNode = null;
+
+        if (!string.IsNullOrWhiteSpace(connectedIdHex))
+        {
+            connectedNode = MeshVenes.AppState.Nodes.FirstOrDefault(n =>
+                string.Equals(n.IdHex, connectedIdHex, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var hasConnectedPosition = connectedNode is not null
+            && connectedNode.HasPosition
+            && IsValidMapPosition(connectedNode.Latitude, connectedNode.Longitude);
+
+        foreach (var node in MeshVenes.AppState.Nodes)
+        {
+            if (!hasConnectedPosition ||
+                !node.HasPosition ||
+                !IsValidMapPosition(node.Latitude, node.Longitude))
+            {
+                node.SetDistanceAndBearing(null, null);
+                continue;
+            }
+
+            if (connectedNode is not null &&
+                string.Equals(node.IdHex, connectedNode.IdHex, StringComparison.OrdinalIgnoreCase))
+            {
+                node.SetDistanceAndBearing(0, null);
+                continue;
+            }
+
+            var distanceKm = CalculateDistanceKm(
+                connectedNode!.Latitude,
+                connectedNode.Longitude,
+                node.Latitude,
+                node.Longitude);
+
+            var bearingDegrees = CalculateBearingDegrees(
+                connectedNode.Latitude,
+                connectedNode.Longitude,
+                node.Latitude,
+                node.Longitude);
+
+            node.SetDistanceAndBearing(distanceKm, bearingDegrees);
+        }
+    }
+
+    private static double CalculateDistanceKm(double fromLat, double fromLon, double toLat, double toLon)
+    {
+        const double earthRadiusKm = 6371.0;
+        var latDelta = DegreesToRadians(toLat - fromLat);
+        var lonDelta = DegreesToRadians(toLon - fromLon);
+
+        var a = Math.Sin(latDelta / 2) * Math.Sin(latDelta / 2) +
+                Math.Cos(DegreesToRadians(fromLat)) * Math.Cos(DegreesToRadians(toLat)) *
+                Math.Sin(lonDelta / 2) * Math.Sin(lonDelta / 2);
+
+        var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        return earthRadiusKm * c;
+    }
+
+    private static int CalculateBearingDegrees(double fromLat, double fromLon, double toLat, double toLon)
+    {
+        var fromLatRad = DegreesToRadians(fromLat);
+        var toLatRad = DegreesToRadians(toLat);
+        var lonDeltaRad = DegreesToRadians(toLon - fromLon);
+
+        var y = Math.Sin(lonDeltaRad) * Math.Cos(toLatRad);
+        var x = Math.Cos(fromLatRad) * Math.Sin(toLatRad) -
+                Math.Sin(fromLatRad) * Math.Cos(toLatRad) * Math.Cos(lonDeltaRad);
+
+        var bearingRad = Math.Atan2(y, x);
+        var bearing = (RadiansToDegrees(bearingRad) + 360.0) % 360.0;
+        return (int)Math.Round(bearing);
+    }
+
+    private static double DegreesToRadians(double value)
+        => value * Math.PI / 180.0;
+
+    private static double RadiansToDegrees(double value)
+        => value * 180.0 / Math.PI;
+
     private bool IsHiddenByInactive(NodeLive n)
     {
+        if (n.IsFavorite) return false;
         if (!_hideInactive) return false;
         if (n.LastHeardUtc == DateTime.MinValue) return true;
         return !IsOnlineByRssi(n);
@@ -1144,7 +1303,13 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
 
         RebuildVisibleNodes();
+        RefreshNodeDistanceAndDirection();
         ApplyNodeSorting();
+        OnChanged(nameof(IsConnectedNodeSelected));
+        OnChanged(nameof(IgnoreDeleteActionsVisibility));
+        OnChanged(nameof(ConnectedNodeActionsVisibility));
+        OnChanged(nameof(CanEditSelectedNodeState));
+        OnChanged(nameof(CanRunConnectedNodeActions));
     }
 
     private void EnsureConnectedNodeInNodes()
@@ -1283,6 +1448,185 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private async void TraceRoute_Click(object sender, RoutedEventArgs _)
         => await SendTraceRouteAsync();
+
+    private async void IgnoreNode_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is null)
+            return;
+
+        if (IsConnectedNodeSelected)
+        {
+            await ShowStatusAsync("Ignore is not available for the currently connected node.");
+            return;
+        }
+
+        if (!TryGetConnectedAdminNodeNum(out var adminNodeNum, out var adminError))
+        {
+            await ShowStatusAsync(adminError);
+            return;
+        }
+
+        if (!TryGetSelectedNodeNum(out var targetNodeNum, out var targetError))
+        {
+            await ShowStatusAsync(targetError);
+            return;
+        }
+
+        var isIgnoring = !(Selected?.IsIgnored ?? false);
+        var actionText = isIgnoring ? "ignore" : "remove from ignored";
+        var ok = await ConfirmActionAsync(
+            "Confirm ignore",
+            $"Are you sure you want to {actionText} node {Selected!.Name} ({Selected.ShortId})?",
+            "Yes");
+
+        if (!ok)
+            return;
+
+        try
+        {
+            await AdminConfigClient.Instance.SetIgnoredNodeAsync(adminNodeNum, targetNodeNum, isIgnoring);
+            Selected.IsIgnored = isIgnoring;
+            OnChanged(nameof(IgnoreNodeButtonText));
+            RadioClient.Instance.AddLogFromUiThread(
+                isIgnoring
+                    ? $"Ignored node {Selected.Name} (0x{targetNodeNum:x8})."
+                    : $"Unignored node {Selected.Name} (0x{targetNodeNum:x8}).");
+        }
+        catch (Exception ex)
+        {
+            await ShowStatusAsync($"Ignore update failed: {ex.Message}");
+        }
+    }
+
+    private async void DeleteNode_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is null)
+            return;
+
+        if (IsConnectedNodeSelected)
+        {
+            await ShowStatusAsync("Delete is not available for the currently connected node.");
+            return;
+        }
+
+        if (!TryGetConnectedAdminNodeNum(out var adminNodeNum, out var adminError))
+        {
+            await ShowStatusAsync(adminError);
+            return;
+        }
+
+        if (!TryGetSelectedNodeNum(out var targetNodeNum, out var targetError))
+        {
+            await ShowStatusAsync(targetError);
+            return;
+        }
+
+        var ok = await ConfirmActionAsync(
+            "Confirm delete",
+            $"Are you sure you want to delete node {Selected!.Name} ({Selected.ShortId}) from NodeDB?",
+            "Delete");
+
+        if (!ok)
+            return;
+
+        var selectedNode = Selected;
+
+        try
+        {
+            await AdminConfigClient.Instance.RemoveNodeAsync(adminNodeNum, targetNodeNum);
+            if (selectedNode is not null)
+                AppState.Nodes.Remove(selectedNode);
+
+            RadioClient.Instance.AddLogFromUiThread($"Deleted node {selectedNode?.Name ?? "unknown"} (0x{targetNodeNum:x8}) from NodeDB.");
+        }
+        catch (Exception ex)
+        {
+            await ShowStatusAsync($"Delete node failed: {ex.Message}");
+        }
+    }
+
+    private async void RefreshDeviceMetadata_Click(object sender, RoutedEventArgs e)
+    {
+        if (!IsConnectedNodeSelected)
+            return;
+
+        if (!TryGetSelectedNodeNum(out var nodeNum, out var error))
+        {
+            await ShowStatusAsync(error);
+            return;
+        }
+
+        try
+        {
+            var metadata = await AdminConfigClient.Instance.GetDeviceMetadataAsync(nodeNum);
+            ApplyDeviceMetadata(metadata);
+            RadioClient.Instance.AddLogFromUiThread($"Refreshed device metadata for {Selected?.Name ?? "connected node"}.");
+        }
+        catch (Exception ex)
+        {
+            await ShowStatusAsync($"Refresh metadata failed: {ex.Message}");
+        }
+    }
+
+    private async void PowerOffNode_Click(object sender, RoutedEventArgs e)
+    {
+        if (!IsConnectedNodeSelected)
+            return;
+
+        if (!TryGetSelectedNodeNum(out var nodeNum, out var error))
+        {
+            await ShowStatusAsync(error);
+            return;
+        }
+
+        var ok = await ConfirmActionAsync(
+            "Confirm power off",
+            "Are you sure you want to power off the connected node?",
+            "Power Off");
+
+        if (!ok)
+            return;
+
+        try
+        {
+            await AdminConfigClient.Instance.ShutdownNodeAsync(nodeNum, 0);
+            RadioClient.Instance.AddLogFromUiThread("Power off command sent to connected node.");
+        }
+        catch (Exception ex)
+        {
+            await ShowStatusAsync($"Power off failed: {ex.Message}");
+        }
+    }
+
+    private async void RebootNode_Click(object sender, RoutedEventArgs e)
+    {
+        if (!IsConnectedNodeSelected)
+            return;
+
+        if (!TryGetSelectedNodeNum(out var nodeNum, out var error))
+        {
+            await ShowStatusAsync(error);
+            return;
+        }
+
+        var ok = await ConfirmActionAsync(
+            "Confirm reboot",
+            "Are you sure you want to reboot the connected node?",
+            "Reboot");
+
+        if (!ok)
+            return;
+
+        try
+        {
+            await AdminConfigClient.Instance.RebootNodeAsync(nodeNum, 0);
+            RadioClient.Instance.AddLogFromUiThread("Reboot command sent to connected node.");
+        }
+        catch (Exception ex)
+        {
+            await ShowStatusAsync($"Reboot failed: {ex.Message}");
+        }
+    }
 
     private async void DetailsTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -2323,6 +2667,106 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         {
             await ShowStatusAsync($"{actionName} failed: {ex.Message}");
         }
+    }
+
+    private bool TryGetConnectedAdminNodeNum(out uint nodeNum, out string error)
+    {
+        nodeNum = 0;
+        if (!NodeIdentity.TryParseNodeNumFromHex(AppState.ConnectedNodeIdHex, out nodeNum) || nodeNum == 0)
+        {
+            error = "Admin action failed: connected node is missing.";
+            return false;
+        }
+
+        error = "";
+        return true;
+    }
+
+    private bool TryGetSelectedNodeNum(out uint nodeNum, out string error)
+    {
+        nodeNum = 0;
+        if (Selected is null || Selected.NodeNum == 0 || Selected.NodeNum > uint.MaxValue)
+        {
+            error = "Action failed: selected node number is missing.";
+            return false;
+        }
+
+        nodeNum = (uint)Selected.NodeNum;
+        error = "";
+        return true;
+    }
+
+    private void ApplyDeviceMetadata(Meshtastic.Protobufs.DeviceMetadata metadata)
+    {
+        if (Selected is null || metadata is null)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(metadata.FirmwareVersion))
+            Selected.FirmwareVersion = metadata.FirmwareVersion.Trim();
+
+        var roleText = HumanizeToken(metadata.Role.ToString());
+        if (IsMeaningfulMetadataValue(roleText))
+            Selected.Role = roleText;
+
+        var hwText = HumanizeToken(metadata.HwModel.ToString());
+        if (IsMeaningfulMetadataValue(hwText))
+            Selected.HardwareModel = hwText;
+    }
+
+    private static bool IsMeaningfulMetadataValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        return !value.Equals("Unset", StringComparison.OrdinalIgnoreCase) &&
+               !value.Equals("Unknown", StringComparison.OrdinalIgnoreCase) &&
+               !value.Equals("None", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string HumanizeToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return "";
+
+        var normalized = token.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return "";
+
+        normalized = normalized.Replace('_', ' ').Replace('-', ' ');
+        var words = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0)
+            return "";
+
+        for (var i = 0; i < words.Length; i++)
+        {
+            var lower = words[i].ToLowerInvariant();
+            words[i] = lower switch
+            {
+                "wifi" => "WiFi",
+                "ble" => "BLE",
+                "lora" => "LoRa",
+                "mqtt" => "MQTT",
+                _ => char.ToUpperInvariant(lower[0]) + lower[1..]
+            };
+        }
+
+        return string.Join(' ', words);
+    }
+
+    private async System.Threading.Tasks.Task<bool> ConfirmActionAsync(string title, string message, string confirmButtonText)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = message,
+            PrimaryButtonText = confirmButtonText,
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+
+        var result = await dialog.ShowAsync();
+        return result == ContentDialogResult.Primary;
     }
 
     private async System.Threading.Tasks.Task ShowStatusAsync(string message)

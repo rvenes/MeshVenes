@@ -126,4 +126,100 @@ public sealed partial class SettingsDeviceDevicePage : Page
             StatusText.Text = "Failed to save device configuration: " + ex.Message;
         }
     }
+
+    private async void ResetNodeDb_Click(object sender, RoutedEventArgs e)
+    {
+        if (!NodeIdentity.TryGetConnectedNodeNum(out var nodeNum))
+        {
+            StatusText.Text = "Connect to a node before resetting NodeDB.";
+            return;
+        }
+
+        var confirmed = await ConfirmActionAsync(
+            "Reset NodeDB",
+            "Are you sure you want to reset NodeDB on this node? Favorites are preserved.",
+            "Reset NodeDB");
+        if (!confirmed)
+            return;
+
+        try
+        {
+            StatusText.Text = "Resetting NodeDB...";
+            await AdminConfigClient.Instance.ResetNodeDbAsync(nodeNum);
+            StatusText.Text = "NodeDB reset command sent. Node may reboot.";
+            SettingsReconnectHelper.StartPostSaveReconnectWatchdog(
+                text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+        }
+        catch (Exception ex)
+        {
+            if (SettingsReconnectHelper.IsNotConnectedException(ex))
+            {
+                StatusText.Text = "Node reboot detected. Connecting...";
+                var reconnected = await SettingsReconnectHelper.TryReconnectAfterSaveAsync(
+                    text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+                StatusText.Text = reconnected
+                    ? "NodeDB reset command sent. Reconnected."
+                    : "NodeDB reset may be applied, but reconnect failed.";
+                return;
+            }
+
+            StatusText.Text = "Failed to reset NodeDB: " + ex.Message;
+        }
+    }
+
+    private async void FactoryReset_Click(object sender, RoutedEventArgs e)
+    {
+        if (!NodeIdentity.TryGetConnectedNodeNum(out var nodeNum))
+        {
+            StatusText.Text = "Connect to a node before factory reset.";
+            return;
+        }
+
+        var confirmed = await ConfirmActionAsync(
+            "Factory Reset",
+            "Are you sure you want to factory reset this node configuration?",
+            "Factory Reset");
+        if (!confirmed)
+            return;
+
+        try
+        {
+            StatusText.Text = "Sending factory reset command...";
+            await AdminConfigClient.Instance.FactoryResetConfigAsync(nodeNum);
+            StatusText.Text = "Factory reset command sent. Node may reboot.";
+            SettingsReconnectHelper.StartPostSaveReconnectWatchdog(
+                text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+        }
+        catch (Exception ex)
+        {
+            if (SettingsReconnectHelper.IsNotConnectedException(ex))
+            {
+                StatusText.Text = "Node reboot detected. Connecting...";
+                var reconnected = await SettingsReconnectHelper.TryReconnectAfterSaveAsync(
+                    text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+                StatusText.Text = reconnected
+                    ? "Factory reset command sent. Reconnected."
+                    : "Factory reset may be applied, but reconnect failed.";
+                return;
+            }
+
+            StatusText.Text = "Failed to send factory reset: " + ex.Message;
+        }
+    }
+
+    private async Task<bool> ConfirmActionAsync(string title, string message, string confirmButtonText)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = message,
+            PrimaryButtonText = confirmButtonText,
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+
+        var result = await dialog.ShowAsync();
+        return result == ContentDialogResult.Primary;
+    }
 }

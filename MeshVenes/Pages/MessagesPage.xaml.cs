@@ -547,12 +547,16 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         if (e.PropertyName is nameof(NodeLive.LastHeard) or nameof(NodeLive.LastHeardUtc)
             or nameof(NodeLive.SNR) or nameof(NodeLive.RSSI)
             or nameof(NodeLive.Name) or nameof(NodeLive.ShortName)
-            or nameof(NodeLive.ViaMqtt))
+            or nameof(NodeLive.ViaMqtt)
+            or nameof(NodeLive.IsFavorite)
+            or nameof(NodeLive.HopsAway)
+            or nameof(NodeLive.HasLogIndicator)
+            or nameof(NodeLive.LastPositionUtc))
         {
             UpdateChatItemFromNode(node);
 
             var shouldRefreshFilter = false;
-            if (e.PropertyName == nameof(NodeLive.RSSI) && _hideInactive)
+            if (e.PropertyName is nameof(NodeLive.RSSI) or nameof(NodeLive.IsFavorite) && _hideInactive)
             {
                 shouldRefreshFilter = true;
             }
@@ -773,6 +777,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 ChatList.SelectedItem = match;
 
             _selectedChatItem = match;
+            match.HasLogIndicator = false;
             EnsureChatHistoryLoaded(match);
 
             if (selectedChanged)
@@ -808,6 +813,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         ChatList.SelectedItem = chat;
         _selectedChatItem = chat;
+        if (chat is not null)
+            chat.HasLogIndicator = false;
         MeshVenes.AppState.SetActiveChatPeer(chat?.PeerIdHex);
         _autoScrollEnabled = true;
         ResetPendingMessagesIndicator();
@@ -834,6 +841,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         _selectedChatItem = target;
         MeshVenes.AppState.SetActiveChatPeer(target.PeerIdHex);
         MeshVenes.AppState.MarkChatRead(target.PeerIdHex);
+        target.HasLogIndicator = false;
         _autoScrollEnabled = true;
         ResetPendingMessagesIndicator();
         EnsureChatHistoryLoaded(target);
@@ -841,6 +849,44 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         OnChanged(nameof(HasAnyChatSelection));
         SyncListToActiveChat();
         RequestInitialScrollPosition(force: true);
+    }
+
+    private async void ChatFavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not ChatListItemVm chat)
+            return;
+
+        if (chat.IsChannel || string.IsNullOrWhiteSpace(chat.PeerIdHex))
+            return;
+
+        var node = MeshVenes.AppState.Nodes.FirstOrDefault(n =>
+            string.Equals(n.IdHex, chat.PeerIdHex, StringComparison.OrdinalIgnoreCase));
+        if (node is null || node.NodeNum <= 0 || node.NodeNum > uint.MaxValue)
+            return;
+
+        if (!NodeIdentity.TryParseNodeNumFromHex(AppState.ConnectedNodeIdHex, out var adminNodeNum))
+            return;
+
+        var desiredFavorite = !chat.IsFavorite;
+        if (element is Control control)
+            control.IsEnabled = false;
+
+        try
+        {
+            await AdminConfigClient.Instance.SetFavoriteNodeAsync(adminNodeNum, (uint)node.NodeNum, desiredFavorite);
+            node.IsFavorite = desiredFavorite;
+            chat.IsFavorite = desiredFavorite;
+            RebuildVisibleChats();
+        }
+        catch
+        {
+            // Ignore failures to keep chat list responsive.
+        }
+        finally
+        {
+            if (element is Control c)
+                c.IsEnabled = true;
+        }
     }
 
     private static int LoadMessageRetentionDays()
@@ -946,7 +992,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private bool IsHiddenByInactive(NodeLive n)
     {
-        if (!_hideInactive) return false;
+        if (!_hideInactive || n.IsFavorite) return false;
         return !IsOnlineByRssi(n);
     }
 
@@ -1189,8 +1235,11 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             chat.LastHeard = message.WhenUtc.ToLocalTime().ToString("HH:mm:ss");
         }
 
+        chat.HasLogIndicator = !ReferenceEquals(chat, _selectedChatItem);
+
         if (ReferenceEquals(chat, _selectedChatItem))
         {
+            chat.HasLogIndicator = false;
             if (_autoScrollEnabled)
                 MaybeScrollToBottom(chat);
             else
@@ -1896,6 +1945,8 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
     private static readonly Brush LoRaWeakBrush = new SolidColorBrush(Colors.OrangeRed);
     private static readonly Brush MqttBrush = new SolidColorBrush(Colors.DeepSkyBlue);
     private static readonly Brush DefaultBrush = new SolidColorBrush(Colors.Gray);
+    private static readonly Brush FavoriteOnBrush = new SolidColorBrush(Colors.Gold);
+    private static readonly Brush FavoriteOffBrush = new SolidColorBrush(Colors.DimGray);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -1962,6 +2013,59 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
         set { if (_unreadVisible != value) { _unreadVisible = value; OnChanged(nameof(UnreadVisible)); } }
     }
 
+    private bool _hasLogIndicator;
+    public bool HasLogIndicator
+    {
+        get => _hasLogIndicator;
+        set
+        {
+            if (_hasLogIndicator == value) return;
+            _hasLogIndicator = value;
+            OnChanged(nameof(HasLogIndicator));
+            OnChanged(nameof(LogIndicatorVisible));
+        }
+    }
+
+    public Visibility LogIndicatorVisible => HasLogIndicator ? Visibility.Visible : Visibility.Collapsed;
+
+    private bool _isFavorite;
+    public bool IsFavorite
+    {
+        get => _isFavorite;
+        set
+        {
+            if (_isFavorite == value) return;
+            _isFavorite = value;
+            OnChanged(nameof(IsFavorite));
+            OnChanged(nameof(FavoriteGlyph));
+            OnChanged(nameof(FavoriteBrush));
+        }
+    }
+
+    public string FavoriteGlyph => IsFavorite ? "★" : "☆";
+    public Brush FavoriteBrush => IsFavorite ? FavoriteOnBrush : FavoriteOffBrush;
+
+    private Visibility _favoriteVisibility = Visibility.Collapsed;
+    public Visibility FavoriteVisibility
+    {
+        get => _favoriteVisibility;
+        set { if (_favoriteVisibility != value) { _favoriteVisibility = value; OnChanged(nameof(FavoriteVisibility)); } }
+    }
+
+    private string _hopsBadgeText = "";
+    public string HopsBadgeText
+    {
+        get => _hopsBadgeText;
+        set { if (_hopsBadgeText != value) { _hopsBadgeText = value; OnChanged(nameof(HopsBadgeText)); } }
+    }
+
+    private Visibility _positionIconVisibility = Visibility.Collapsed;
+    public Visibility PositionIconVisibility
+    {
+        get => _positionIconVisibility;
+        set { if (_positionIconVisibility != value) { _positionIconVisibility = value; OnChanged(nameof(PositionIconVisibility)); } }
+    }
+
     public string? PeerIdHex { get; set; } // null = Primary
     public bool IsChannel { get; set; } // true = channel chat, false = DM or primary
     public uint ChannelIndex { get; set; } // 0 = primary
@@ -2012,7 +2116,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             ChannelIndex = 0,
             ChannelArchiveName = "Primary",
             SortNameKey = "PRIMARY CHANNEL",
-            SortIdKey = ""
+            SortIdKey = "",
+            FavoriteVisibility = Visibility.Collapsed,
+            HopsBadgeText = ""
         };
 
     public static ChatListItemVm ForChannel(uint channelIndex, string? channelName)
@@ -2038,7 +2144,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             ChannelIndex = channelIndex,
             ChannelArchiveName = archiveName,
             SortNameKey = title.ToUpperInvariant(),
-            SortIdKey = channelIndex.ToString(CultureInfo.InvariantCulture).PadLeft(4, '0')
+            SortIdKey = channelIndex.ToString(CultureInfo.InvariantCulture).PadLeft(4, '0'),
+            FavoriteVisibility = Visibility.Collapsed,
+            HopsBadgeText = ""
         };
     }
 
@@ -2060,7 +2168,12 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             ChannelIndex = 0,
             ChannelArchiveName = "Primary",
             SortNameKey = BuildSortNameKey(n.LongName, n.ShortName, n.IdHex),
-            SortIdKey = (n.IdHex ?? "").ToUpperInvariant()
+            SortIdKey = (n.IdHex ?? "").ToUpperInvariant(),
+            IsFavorite = n.IsFavorite,
+            FavoriteVisibility = Visibility.Visible,
+            HopsBadgeText = n.HopsBadgeText,
+            PositionIconVisibility = n.PositionIconVisibility,
+            HasLogIndicator = n.HasLogIndicator
         };
 
     public static ChatListItemVm ForPeer(string peerIdHex)
@@ -2079,7 +2192,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             ChannelIndex = 0,
             ChannelArchiveName = "Primary",
             SortNameKey = (peerIdHex ?? "").ToUpperInvariant(),
-            SortIdKey = (peerIdHex ?? "").ToUpperInvariant()
+            SortIdKey = (peerIdHex ?? "").ToUpperInvariant(),
+            FavoriteVisibility = Visibility.Collapsed,
+            HopsBadgeText = ""
         };
 
     public void ClearArchiveSection()
@@ -2125,6 +2240,11 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
         ChannelArchiveName = "Primary";
         SortNameKey = BuildSortNameKey(n.LongName, n.ShortName, n.IdHex);
         SortIdKey = (n.IdHex ?? "").ToUpperInvariant();
+        IsFavorite = n.IsFavorite;
+        FavoriteVisibility = Visibility.Visible;
+        HopsBadgeText = n.HopsBadgeText;
+        PositionIconVisibility = n.PositionIconVisibility;
+        HasLogIndicator = HasLogIndicator || n.HasLogIndicator;
     }
 
     private static string BuildSortNameKey(string? longName, string? shortName, string? idHex)

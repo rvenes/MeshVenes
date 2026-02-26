@@ -26,6 +26,7 @@ public sealed class MqttProxyService
     private string _configSignature = string.Empty;
     private CancellationTokenSource? _reconnectLoopCts;
     private Task? _reconnectLoopTask;
+    private bool _manualSuspend;
 
     private bool _proxyEnabledByConfig;
     private string _runtimeStatus = "Disabled";
@@ -102,6 +103,12 @@ public sealed class MqttProxyService
                 .ConfigureAwait(false);
 
             var config = module.Mqtt ?? new ModuleConfig.Types.MQTTConfig();
+            if (_manualSuspend && !forceReconnect)
+            {
+                await ApplyConfigWhileSuspendedAsync(nodeNum, config).ConfigureAwait(false);
+                return;
+            }
+
             await ApplyConfigAsync(nodeNum, config, forceReconnect).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -115,6 +122,7 @@ public sealed class MqttProxyService
         await _sync.WaitAsync().ConfigureAwait(false);
         try
         {
+            _manualSuspend = false;
             if (!_proxyEnabledByConfig)
             {
                 SetState("Proxy disabled in node config.", _broker, null);
@@ -129,6 +137,20 @@ public sealed class MqttProxyService
         }
 
         await RefreshFromConnectedNodeConfigAsync(forceReconnect: true).ConfigureAwait(false);
+    }
+
+    public async Task DisconnectRuntimeProxyAsync()
+    {
+        await _sync.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _manualSuspend = true;
+            await StopInternalLockedAsync("Proxy manually disconnected.", clearConfigEnabled: false).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sync.Release();
+        }
     }
 
     public async Task HandleFromNodeMessageAsync(MqttClientProxyMessage proxyMessage)
@@ -211,6 +233,30 @@ public sealed class MqttProxyService
 
             _configSignature = signature;
             await RestartReconnectLoopLockedAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _sync.Release();
+        }
+    }
+
+    private async Task ApplyConfigWhileSuspendedAsync(uint nodeNum, ModuleConfig.Types.MQTTConfig config)
+    {
+        var address = (config.Address ?? string.Empty).Trim();
+        var root = (config.Root ?? string.Empty).Trim();
+        var enabled = config.Enabled && config.ProxyToClientEnabled && !string.IsNullOrWhiteSpace(address);
+        var brokerText = string.IsNullOrWhiteSpace(address) ? "—" : address;
+
+        await _sync.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _currentConfig = config.Clone();
+            _connectedNodeNum = nodeNum;
+            _proxyEnabledByConfig = enabled;
+            _broker = brokerText;
+            _topicFilter = BuildTopicFilter(root);
+            _configSignature = BuildSignature(config, nodeNum);
+            await StopInternalLockedAsync("Proxy manually disconnected.", clearConfigEnabled: false).ConfigureAwait(false);
         }
         finally
         {
