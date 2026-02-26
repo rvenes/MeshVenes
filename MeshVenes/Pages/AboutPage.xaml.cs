@@ -16,14 +16,13 @@ public sealed partial class AboutPage : Page
     private const string LatestReleaseApiUrl = "https://api.github.com/repos/rvenes/MeshVenes/releases/latest";
     private static readonly HttpClient UpdateHttpClient = CreateUpdateHttpClient();
 
-    public string VersionText { get; }
-
     public AboutPage()
     {
         InitializeComponent();
-        VersionText = $"Version: {ResolveVersion()}";
         Loaded += AboutPage_Loaded;
     }
+
+    public string VersionText => $"Version: {ResolveVersion()}";
 
     private async void AboutPage_Loaded(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {

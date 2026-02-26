@@ -60,6 +60,9 @@ public sealed partial class SettingsPage : Page
             case "firmware-header":
                 ToggleSection(FirmwareSectionPanel, FirmwareHeaderButton, "Firmware");
                 break;
+            case "appearance-header":
+                ToggleSection(AppearanceSectionPanel, AppearanceHeaderButton, "Appearance");
+                break;
         }
     }
 
@@ -82,6 +85,7 @@ public sealed partial class SettingsPage : Page
         SetSectionExpanded(ModuleSectionPanel, ModuleHeaderButton, "Module Configuration", false);
         SetSectionExpanded(LoggingSectionPanel, LoggingHeaderButton, "Logging", false);
         SetSectionExpanded(FirmwareSectionPanel, FirmwareHeaderButton, "Firmware", false);
+        SetSectionExpanded(AppearanceSectionPanel, AppearanceHeaderButton, "Appearance", false);
     }
 
     private void ExpandSectionForTag(string tag)
@@ -124,6 +128,9 @@ public sealed partial class SettingsPage : Page
             case "firmware-remote-admin":
             case "firmware-import-export":
                 SetSectionExpanded(FirmwareSectionPanel, FirmwareHeaderButton, "Firmware", true);
+                break;
+            case "appearance-theme":
+                SetSectionExpanded(AppearanceSectionPanel, AppearanceHeaderButton, "Appearance", true);
                 break;
             default:
                 break;
@@ -218,6 +225,9 @@ public sealed partial class SettingsPage : Page
                 break;
             case "module-telemetry":
                 SettingsContentFrame.Navigate(typeof(SettingsModuleTelemetryPage));
+                break;
+            case "appearance-theme":
+                SettingsContentFrame.Navigate(typeof(SettingsAppearancePage));
                 break;
             default:
                 SettingsContentFrame.Navigate(typeof(SettingsComingSoonPage), tag);

@@ -91,6 +91,9 @@ public sealed partial class SettingsModuleMqttPage : Page
 
         try
         {
+            var requestedEnabled = EnabledToggle.IsOn;
+            var requestedProxy = ProxyToggle.IsOn;
+
             var map = new ModuleConfig.Types.MapReportSettings
             {
                 ShouldReportLocation = ConsentToggle.IsOn
@@ -113,9 +116,20 @@ public sealed partial class SettingsModuleMqttPage : Page
 
             StatusText.Text = "Saving MQTT configuration...";
             await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, new ModuleConfig { Mqtt = config });
-            StatusText.Text = "MQTT configuration saved.";
             await MqttProxyService.Instance.RefreshFromConnectedNodeConfigAsync(forceReconnect: true);
             SettingsReconnectHelper.StartPostSaveReconnectWatchdog(text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+
+            // Reload and verify actual persisted values after save/reboot.
+            await LoadAsync();
+            if (requestedEnabled && !requestedProxy && ProxyToggle.IsOn)
+            {
+                StatusText.Text =
+                    "Saved, but node kept MQTT client proxy ON. This is expected on nodes without direct networking when MQTT is enabled.";
+            }
+            else
+            {
+                StatusText.Text = "MQTT configuration saved.";
+            }
         }
         catch (Exception ex)
         {
@@ -127,7 +141,10 @@ public sealed partial class SettingsModuleMqttPage : Page
                     ? "MQTT configuration saved. Reconnected."
                     : "MQTT configuration may be saved, but reconnect failed.";
                 if (reconnected)
+                {
                     await MqttProxyService.Instance.RefreshFromConnectedNodeConfigAsync(forceReconnect: true);
+                    await LoadAsync();
+                }
                 return;
             }
 
@@ -139,6 +156,13 @@ public sealed partial class SettingsModuleMqttPage : Page
     {
         RuntimeStatusText.Text = "Proxy reconnect requested...";
         await MqttProxyService.Instance.ForceReconnectAsync();
+        UpdateRuntimeStatusUi();
+    }
+
+    private async void DisconnectProxy_Click(object sender, RoutedEventArgs e)
+    {
+        RuntimeStatusText.Text = "Disconnecting runtime proxy...";
+        await MqttProxyService.Instance.DisconnectRuntimeProxyAsync();
         UpdateRuntimeStatusUi();
     }
 

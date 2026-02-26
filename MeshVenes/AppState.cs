@@ -16,6 +16,7 @@ public static class AppState
     private const string UnreadLastReadKey = "UnreadLastReadUtcByPeerJson";
     private const string ActiveChatPeerKey = "ActiveChatPeerIdHex";
     private const string AdminTargetNodeKey = "AdminTargetNodeIdHex";
+    private const string AppThemeModeKey = "AppThemeMode";
 
     public static ObservableCollection<NodeLive> Nodes { get; } = new();
     public static ObservableCollection<MessageLive> Messages { get; } = new();
@@ -184,6 +185,7 @@ private static string NormalizePeerKey(string? peerIdHex)
         _showPowerMetricsTab = SettingsStore.GetBool(ShowPowerMetricsKey) ?? false;
         _showDetectionSensorLogTab = SettingsStore.GetBool(ShowDetectionSensorKey) ?? false;
         _hideInactiveAdminTargets = SettingsStore.GetBool(HideInactiveAdminTargetsKey) ?? true;
+        _appThemeMode = ParseThemeMode(SettingsStore.GetString(AppThemeModeKey));
 
         // Unread state (optional persistence for chat read markers)
         try
@@ -266,5 +268,36 @@ private static string NormalizePeerKey(string? peerIdHex)
         ActiveChatPeerIdHex = peerIdHex;
         SettingsStore.SetString(ActiveChatPeerKey, peerIdHex);
         ActiveChatChanged?.Invoke();
+    }
+
+    public enum ThemeMode
+    {
+        System = 0,
+        Light = 1,
+        Dark = 2,
+        DarkGray = 3
+    }
+
+    private static ThemeMode _appThemeMode = ThemeMode.System;
+    public static ThemeMode AppThemeMode
+    {
+        get => _appThemeMode;
+        set
+        {
+            if (_appThemeMode == value) return;
+            _appThemeMode = value;
+            SettingsStore.SetString(AppThemeModeKey, value.ToString());
+            SettingsChanged?.Invoke();
+        }
+    }
+
+    public static ThemeMode ParseThemeMode(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return ThemeMode.System;
+
+        return Enum.TryParse<ThemeMode>(raw, ignoreCase: true, out var mode)
+            ? mode
+            : ThemeMode.System;
     }
 }

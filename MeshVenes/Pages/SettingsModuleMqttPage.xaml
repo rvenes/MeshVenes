@@ -20,7 +20,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Enabled"/><ToggleSwitch Grid.Row="0" Grid.Column="1" x:Name="EnabledToggle"/>
@@ -34,13 +34,20 @@
                 <TextBlock Grid.Row="8" Grid.Column="0" VerticalAlignment="Center" Text="Username"/><TextBox Grid.Row="8" Grid.Column="1" x:Name="UsernameBox"/>
                 <TextBlock Grid.Row="9" Grid.Column="0" VerticalAlignment="Center" Text="Password"/><TextBox Grid.Row="9" Grid.Column="1" x:Name="PasswordBox"/>
                 <TextBlock Grid.Row="10" Grid.Column="0" VerticalAlignment="Center" Text="TLS enabled"/><ToggleSwitch Grid.Row="10" Grid.Column="1" x:Name="TlsToggle"/>
+                <TextBlock Grid.Row="11" Grid.Column="0" Grid.ColumnSpan="2" Opacity="0.75" TextWrapping="Wrap"
+                           Text="Proxy uses app as bridge: app -> broker -> node. If MQTT is enabled and proxy is disabled, the node must have its own internet networking."/>
             </Grid>
 
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="Reload" Click="Reload_Click"/>
                 <Button Content="Save" Click="Save_Click"/>
                 <Button Content="Reconnect proxy" Click="ReconnectProxy_Click"/>
+                <Button Content="Disconnect proxy" Click="DisconnectProxy_Click"/>
             </StackPanel>
+
+            <TextBlock Opacity="0.75"
+                       TextWrapping="Wrap"
+                       Text="If MQTT is enabled and proxy is disabled, the node must have its own internet networking. Nodes without networking can force proxy back on after reboot."/>
         </StackPanel>
     </ScrollViewer>
 </Page>

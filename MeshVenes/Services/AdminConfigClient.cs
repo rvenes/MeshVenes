@@ -304,6 +304,109 @@ public sealed class AdminConfigClient
         }
     }
 
+    public async Task SetFavoriteNodeAsync(uint adminNodeNum, uint favoriteNodeNum, bool isFavorite, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(adminNodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage();
+        if (isFavorite)
+            req.SetFavoriteNode = favoriteNodeNum;
+        else
+            req.RemoveFavoriteNode = favoriteNodeNum;
+
+        await SendWithoutResponseAsync(adminNodeNum, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task<DeviceMetadata> GetDeviceMetadataAsync(uint nodeNum, CancellationToken ct = default)
+    {
+        var req = new AdminMessage
+        {
+            GetDeviceMetadataRequest = true
+        };
+
+        var response = await RequestResponseAsync(
+            nodeNum,
+            req,
+            m => m.PayloadVariantCase == AdminMessage.PayloadVariantOneofCase.GetDeviceMetadataResponse,
+            DefaultTimeout,
+            ct).ConfigureAwait(false);
+
+        return response.GetDeviceMetadataResponse?.Clone() ?? new DeviceMetadata();
+    }
+
+    public async Task SetIgnoredNodeAsync(uint adminNodeNum, uint targetNodeNum, bool isIgnored, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(adminNodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage();
+        if (isIgnored)
+            req.SetIgnoredNode = targetNodeNum;
+        else
+            req.RemoveIgnoredNode = targetNodeNum;
+
+        await SendWithoutResponseAsync(adminNodeNum, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task RemoveNodeAsync(uint adminNodeNum, uint targetNodeNum, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(adminNodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage
+        {
+            RemoveByNodenum = targetNodeNum
+        };
+
+        await SendWithoutResponseAsync(adminNodeNum, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task RebootNodeAsync(uint nodeNum, int seconds = 0, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage
+        {
+            RebootSeconds = seconds
+        };
+
+        await SendWithoutResponseAsync(nodeNum, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task ShutdownNodeAsync(uint nodeNum, int seconds = 0, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage
+        {
+            ShutdownSeconds = seconds
+        };
+
+        await SendWithoutResponseAsync(nodeNum, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task FactoryResetConfigAsync(uint nodeNum, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage
+        {
+            FactoryResetConfig = 1
+        };
+
+        await SendWithoutResponseAsync(nodeNum, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task ResetNodeDbAsync(uint nodeNum, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage
+        {
+            NodedbReset = true
+        };
+
+        await SendWithoutResponseAsync(nodeNum, req, ct).ConfigureAwait(false);
+    }
+
     private async Task EnsureSessionPasskeyAsync(uint nodeNum, CancellationToken ct)
     {
         lock (_lock)

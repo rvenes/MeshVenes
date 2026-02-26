@@ -586,6 +586,23 @@ public static class FromRadioRouter
         if (TryGetBool(nodeInfoObj, "ViaMqtt", out var nodeInfoViaMqtt))
             node.ViaMqtt = nodeInfoViaMqtt;
 
+        if (TryGetBool(nodeInfoObj, "IsFavorite", out var nodeInfoIsFavorite))
+            node.IsFavorite = nodeInfoIsFavorite;
+
+        if (TryGetBool(nodeInfoObj, "IsIgnored", out var nodeInfoIsIgnored))
+            node.IsIgnored = nodeInfoIsIgnored;
+
+        if (TryGetBool(nodeInfoObj, "HasHopsAway", out var hasHopsAway))
+        {
+            node.HopsAway = hasHopsAway && TryGetUInt(nodeInfoObj, "HopsAway", out var optionalHopsAway)
+                ? unchecked((int)optionalHopsAway)
+                : null;
+        }
+        else if (TryGetUInt(nodeInfoObj, "HopsAway", out var hopsAway))
+        {
+            node.HopsAway = unchecked((int)hopsAway);
+        }
+
         if (TryGetObj(nodeInfoObj, "DeviceMetrics", out var deviceMetricsObj) &&
             deviceMetricsObj is not null &&
             TryGetUInt(deviceMetricsObj, "UptimeSeconds", out var uptimeSeconds) &&
