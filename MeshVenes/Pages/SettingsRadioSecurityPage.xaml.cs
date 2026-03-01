@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 
 namespace MeshVenes.Pages;
@@ -73,10 +74,11 @@ public sealed partial class SettingsRadioSecurityPage : Page
 
         try
         {
+            var privateKey = ParseBase64Key32(PrivateKeyBox.Text, "Private key", allowEmpty: true);
+
             var security = new Config.Types.SecurityConfig
             {
-                PublicKey = ParseBase64(PublicKeyBox.Text),
-                PrivateKey = ParseBase64(PrivateKeyBox.Text),
+                PrivateKey = privateKey,
                 IsManaged = IsManagedToggle.IsOn,
                 SerialEnabled = SerialEnabledToggle.IsOn,
                 DebugLogApiEnabled = DebugLogApiToggle.IsOn,
@@ -85,7 +87,7 @@ public sealed partial class SettingsRadioSecurityPage : Page
 
             foreach (var key in new[] { AdminKey1Box.Text, AdminKey2Box.Text, AdminKey3Box.Text })
             {
-                var parsed = ParseBase64(key, allowEmpty: true);
+                var parsed = ParseBase64Key32(key, "Admin key", allowEmpty: true);
                 if (parsed.Length > 0)
                     security.AdminKey.Add(parsed);
             }
@@ -96,6 +98,7 @@ public sealed partial class SettingsRadioSecurityPage : Page
             StatusText.Text = "Security configuration saved.";
             SettingsReconnectHelper.StartPostSaveReconnectWatchdog(
                 text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+            await LoadAsync();
         }
         catch (Exception ex)
         {
@@ -107,6 +110,10 @@ public sealed partial class SettingsRadioSecurityPage : Page
                 StatusText.Text = reconnected
                     ? "Security configuration saved. Reconnected."
                     : "Security configuration may be saved, but reconnect failed.";
+
+                if (reconnected)
+                    await LoadAsync();
+
                 return;
             }
 
@@ -114,12 +121,53 @@ public sealed partial class SettingsRadioSecurityPage : Page
         }
     }
 
-    private static ByteString ParseBase64(string? text, bool allowEmpty = true)
+    private void CopyPublicKey_Click(object sender, RoutedEventArgs e)
+    {
+        var copied = ClipboardUtil.TrySetText(PublicKeyBox.Text, flush: true);
+        StatusText.Text = copied ? "Public key copied." : "Public key is empty.";
+    }
+
+    private void GeneratePrivateKey_Click(object sender, RoutedEventArgs e)
+    {
+        PrivateKeyBox.Text = GeneratePrivateKeyBase64();
+        StatusText.Text = "Generated new private key. Save to apply on node.";
+    }
+
+    private void ClearPrivateKey_Click(object sender, RoutedEventArgs e)
+    {
+        PrivateKeyBox.Text = string.Empty;
+        StatusText.Text = "Private key cleared. Save to let node generate a new key pair.";
+    }
+
+    private static string GeneratePrivateKeyBase64()
+    {
+        Span<byte> raw = stackalloc byte[32];
+        RandomNumberGenerator.Fill(raw);
+        raw[0] &= 0xF8;
+        raw[31] &= 0x7F;
+        raw[31] |= 0x40;
+        return Convert.ToBase64String(raw);
+    }
+
+    private static ByteString ParseBase64Key32(string? text, string keyName, bool allowEmpty = true)
     {
         var value = (text ?? string.Empty).Trim();
         if (value.Length == 0)
-            return allowEmpty ? ByteString.Empty : throw new InvalidOperationException("Key cannot be empty.");
+            return allowEmpty ? ByteString.Empty : throw new InvalidOperationException($"{keyName} cannot be empty.");
 
-        return ByteString.FromBase64(value);
+        ByteString parsed;
+        try
+        {
+            parsed = ByteString.FromBase64(value);
+        }
+        catch (Exception)
+        {
+            throw new InvalidOperationException($"{keyName} must be valid base64.");
+        }
+
+        if (parsed.Length != 32)
+            throw new InvalidOperationException($"{keyName} must be 32 bytes (base64).");
+
+        return parsed;
     }
 }

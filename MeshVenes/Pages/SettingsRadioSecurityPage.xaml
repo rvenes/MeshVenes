@@ -8,7 +8,12 @@
             <TextBlock Text="Security" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock x:Name="StatusText" Text="Loading..." Opacity="0.85"/>
 
-            <Grid ColumnDefinitions="220,360" RowSpacing="8" ColumnSpacing="12">
+            <TextBlock
+                Text="Public key is generated from private key by the node firmware. Edit private key only, then save and reload to see updated public key."
+                TextWrapping="Wrap"
+                Opacity="0.75"/>
+
+            <Grid ColumnDefinitions="220,*" RowSpacing="8" ColumnSpacing="12">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -21,10 +26,17 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Public key (base64)"/>
-                <TextBox Grid.Row="0" Grid.Column="1" x:Name="PublicKeyBox"/>
+                <Grid Grid.Row="0" Grid.Column="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBox x:Name="PublicKeyBox" IsReadOnly="True" TextWrapping="NoWrap"/>
+                    <Button Grid.Column="1" Content="Copy" Click="CopyPublicKey_Click"/>
+                </Grid>
 
                 <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Private key (base64)"/>
-                <TextBox Grid.Row="1" Grid.Column="1" x:Name="PrivateKeyBox"/>
+                <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                    <TextBox x:Name="PrivateKeyBox" TextWrapping="NoWrap"/>
+                    <Button Grid.Column="1" Content="Generate" Click="GeneratePrivateKey_Click"/>
+                    <Button Grid.Column="2" Content="Clear" Click="ClearPrivateKey_Click"/>
+                </Grid>
 
                 <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Admin key 1 (base64)"/>
                 <TextBox Grid.Row="2" Grid.Column="1" x:Name="AdminKey1Box"/>
