@@ -33,7 +33,12 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
         IReadOnlyList<RouteMapPoint> backPoints,
         IReadOnlyList<double?> forwardQualities,
         IReadOnlyList<double?> backQualities,
-        bool canViewRoute)
+        bool canViewRoute,
+        double routeContentWidth,
+        IReadOnlyList<RouteDisplayNode> forwardDisplayNodes,
+        IReadOnlyList<RouteDisplaySegment> forwardDisplaySegments,
+        IReadOnlyList<RouteDisplayNode> backDisplayNodes,
+        IReadOnlyList<RouteDisplaySegment> backDisplaySegments)
     {
         RawLine = rawLine;
         TimestampUtc = timestampUtc;
@@ -52,7 +57,15 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
         ForwardQualities = forwardQualities;
         BackQualities = backQualities;
         CanViewRoute = canViewRoute;
+        RouteContentWidth = routeContentWidth;
+        ForwardDisplayNodes = forwardDisplayNodes;
+        ForwardDisplaySegments = forwardDisplaySegments;
+        BackDisplayNodes = backDisplayNodes;
+        BackDisplaySegments = backDisplaySegments;
         RouteBackVisibility = string.IsNullOrWhiteSpace(routeBackHeaderText) && string.IsNullOrWhiteSpace(routeBackPathText)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        RouteBackDetailVisibility = string.IsNullOrWhiteSpace(routeBackPathText)
             ? Visibility.Collapsed
             : Visibility.Visible;
         MetricsVisibility = string.IsNullOrWhiteSpace(overlayMetricsText) ? Visibility.Collapsed : Visibility.Visible;
@@ -70,12 +83,18 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
     public IReadOnlyList<double?> ForwardQualities { get; private set; }
     public IReadOnlyList<double?> BackQualities { get; private set; }
     public bool CanViewRoute { get; private set; }
+    public double RouteContentWidth { get; private set; }
+    public IReadOnlyList<RouteDisplayNode> ForwardDisplayNodes { get; private set; }
+    public IReadOnlyList<RouteDisplaySegment> ForwardDisplaySegments { get; private set; }
+    public IReadOnlyList<RouteDisplayNode> BackDisplayNodes { get; private set; }
+    public IReadOnlyList<RouteDisplaySegment> BackDisplaySegments { get; private set; }
 
     public string HeaderText { get; private set; }
     public string PathText { get; private set; }
     public string? RouteBackHeaderText { get; private set; }
     public string? RouteBackPathText { get; private set; }
     public Visibility RouteBackVisibility { get; private set; }
+    public Visibility RouteBackDetailVisibility { get; private set; }
     public Brush HeaderBrush { get; private set; }
     public Brush PathBrush { get; private set; }
     public Brush RouteBackBrush { get; private set; }
@@ -103,7 +122,15 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
         ForwardQualities = other.ForwardQualities;
         BackQualities = other.BackQualities;
         CanViewRoute = other.CanViewRoute;
+        RouteContentWidth = other.RouteContentWidth;
+        ForwardDisplayNodes = other.ForwardDisplayNodes;
+        ForwardDisplaySegments = other.ForwardDisplaySegments;
+        BackDisplayNodes = other.BackDisplayNodes;
+        BackDisplaySegments = other.BackDisplaySegments;
         RouteBackVisibility = string.IsNullOrWhiteSpace(RouteBackHeaderText) && string.IsNullOrWhiteSpace(RouteBackPathText)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        RouteBackDetailVisibility = string.IsNullOrWhiteSpace(RouteBackPathText)
             ? Visibility.Collapsed
             : Visibility.Visible;
         MetricsVisibility = string.IsNullOrWhiteSpace(OverlayMetricsText) ? Visibility.Collapsed : Visibility.Visible;
@@ -116,6 +143,7 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
         OnChanged(nameof(RouteBackHeaderText));
         OnChanged(nameof(RouteBackPathText));
         OnChanged(nameof(RouteBackVisibility));
+        OnChanged(nameof(RouteBackDetailVisibility));
         OnChanged(nameof(HeaderBrush));
         OnChanged(nameof(PathBrush));
         OnChanged(nameof(RouteBackBrush));
@@ -131,6 +159,11 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
         OnChanged(nameof(ForwardQualities));
         OnChanged(nameof(BackQualities));
         OnChanged(nameof(CanViewRoute));
+        OnChanged(nameof(RouteContentWidth));
+        OnChanged(nameof(ForwardDisplayNodes));
+        OnChanged(nameof(ForwardDisplaySegments));
+        OnChanged(nameof(BackDisplayNodes));
+        OnChanged(nameof(BackDisplaySegments));
     }
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -140,3 +173,21 @@ public sealed record RouteMapPoint(
     [property: System.Text.Json.Serialization.JsonPropertyName("lat")] double Lat,
     [property: System.Text.Json.Serialization.JsonPropertyName("lon")] double Lon,
     [property: System.Text.Json.Serialization.JsonPropertyName("label")] string? Label);
+
+public sealed record RouteDisplayNode(
+    uint NodeNum,
+    string DisplayName,
+    string ShortName,
+    string ShortId,
+    string FullName,
+    string NodeId,
+    bool HasPosition,
+    double? Latitude,
+    double? Longitude,
+    string TooltipText);
+
+public sealed record RouteDisplaySegment(
+    string DistanceText,
+    string SnrText,
+    Brush SnrBrush,
+    string TooltipText);
