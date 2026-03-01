@@ -59,6 +59,8 @@ public static class AppDataPaths
 
     public static string GpsPath => GpsLogsPath;
 
+    public static string WaypointsPath => Path.Combine(LogsPath, "waypoints.json");
+
     public static void SetActiveNodeScope(string? idHex, string? nodeName = null)
     {
         var scope = BuildNodeScope(idHex, nodeName);

@@ -15,6 +15,7 @@ namespace MeshVenes.Services;
 public sealed class RadioClient
 {
     public static RadioClient Instance { get; } = new();
+    private const uint BroadcastNodeNum = 0xFFFFFFFF;
 
     private const int MaxLogLines = 500;
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
@@ -786,6 +787,21 @@ public sealed class RadioClient
             return 0;
 
         var msg = ToRadioFactory.CreateNodeInfoRequest(toNodeNum, out var packetId);
+        var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
+        var sent = await SendPacketWithQueueControlAsync(framed, packetId);
+        return sent ? packetId : 0;
+    }
+
+    public async System.Threading.Tasks.Task<uint> SendWaypointAsync(Waypoint waypoint, uint? toNodeNum = null, uint channel = 0)
+    {
+        if (!IsConnected || _transport is null)
+            return 0;
+
+        if (waypoint is null)
+            throw new ArgumentNullException(nameof(waypoint));
+
+        var to = toNodeNum ?? BroadcastNodeNum;
+        var msg = ToRadioFactory.CreateWaypointMessage(waypoint, to, channel, out var packetId);
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
         var sent = await SendPacketWithQueueControlAsync(framed, packetId);
         return sent ? packetId : 0;
