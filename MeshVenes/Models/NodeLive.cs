@@ -16,6 +16,9 @@ public sealed class NodeLive : INotifyPropertyChanged
     private static readonly Brush MqttBrush = new SolidColorBrush(Colors.DeepSkyBlue);
     private static readonly Brush FavoriteOnBrush = new SolidColorBrush(Colors.Gold);
     private static readonly Brush FavoriteOffBrush = new SolidColorBrush(Colors.DimGray);
+    private static readonly Brush BatteryGoodBrush = new SolidColorBrush(Colors.LimeGreen);
+    private static readonly Brush BatteryMidBrush = new SolidColorBrush(Colors.Goldenrod);
+    private static readonly Brush BatteryLowBrush = new SolidColorBrush(Colors.OrangeRed);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -285,6 +288,66 @@ public sealed class NodeLive : INotifyPropertyChanged
 
     public string HopsAwayText => HopsAway?.ToString(CultureInfo.InvariantCulture) ?? "—";
     public string HopsBadgeText => $"Hops: {HopsAwayText}";
+
+    private double? _batteryPercent;
+    public double? BatteryPercent
+    {
+        get => _batteryPercent;
+        set
+        {
+            var normalized = value.HasValue
+                ? Math.Clamp(value.Value, 0.0, 100.0)
+                : (double?)null;
+            if (_batteryPercent == normalized) return;
+            _batteryPercent = normalized;
+            OnPowerPresentationChanged();
+        }
+    }
+
+    private bool? _isPowered;
+    public bool? IsPowered
+    {
+        get => _isPowered;
+        set
+        {
+            if (_isPowered == value) return;
+            _isPowered = value;
+            OnPowerPresentationChanged();
+        }
+    }
+
+    public string BatteryBadgeText
+    {
+        get
+        {
+            if (IsPowered == true)
+                return "PWR";
+            if (BatteryPercent.HasValue)
+                return $"🔋 {Math.Round(BatteryPercent.Value).ToString("0", CultureInfo.InvariantCulture)}%";
+            return "";
+        }
+    }
+
+    public Brush BatteryBadgeBrush
+    {
+        get
+        {
+            if (IsPowered == true)
+                return BatteryGoodBrush;
+            if (!BatteryPercent.HasValue)
+                return UnknownLinkBrush;
+
+            var level = BatteryPercent.Value;
+            if (level > 75.0)
+                return BatteryGoodBrush;
+            if (level > 30.0)
+                return BatteryMidBrush;
+            return BatteryLowBrush;
+        }
+    }
+
+    public Visibility BatteryBadgeVisibility =>
+        IsPowered == true || BatteryPercent.HasValue ? Visibility.Visible : Visibility.Collapsed;
 
     private bool _isIgnored;
     public bool IsIgnored
@@ -594,6 +657,15 @@ public sealed class NodeLive : INotifyPropertyChanged
         OnChanged(nameof(TransportBadgeText));
         OnChanged(nameof(TransportBrush));
         OnChanged(nameof(SignalDetailsText));
+    }
+
+    private void OnPowerPresentationChanged()
+    {
+        OnChanged(nameof(BatteryPercent));
+        OnChanged(nameof(IsPowered));
+        OnChanged(nameof(BatteryBadgeText));
+        OnChanged(nameof(BatteryBadgeBrush));
+        OnChanged(nameof(BatteryBadgeVisibility));
     }
 
     private void OnChanged(string name) =>

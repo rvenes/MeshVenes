@@ -73,6 +73,10 @@
                             <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8" Opacity="0.75" Margin="0,2,0,0">
                                 <TextBlock Text="🗒"/>
                                 <TextBlock Text="📍" Visibility="{x:Bind PositionIconVisibility}"/>
+                                <TextBlock Text="{x:Bind BatteryBadgeText}"
+                                           Foreground="{x:Bind BatteryBadgeForeground}"
+                                           Visibility="{x:Bind BatteryBadgeVisibility}"
+                                           FontWeight="SemiBold"/>
                             </StackPanel>
                         </Grid>
                     </DataTemplate>
@@ -105,6 +109,10 @@
                     <Button Content="Delete all"
                             Click="DeleteMessageLogAll_Click"
                             IsEnabled="{x:Bind HasAnyChatSelection, Mode=OneWay}"/>
+                    <Button Content="Open node"
+                            Click="OpenNodeFromDm_Click"
+                            IsEnabled="{x:Bind CanOpenNodeFromDm, Mode=OneWay}"
+                            Visibility="{x:Bind OpenNodeFromDmVisibility, Mode=OneWay}"/>
                 </StackPanel>
 
             <!-- Messages -->

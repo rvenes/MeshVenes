@@ -98,6 +98,10 @@
                                            Foreground="{x:Bind UnmonitoredBrush}"
                                            ToolTipService.ToolTip="Unmonitored node"/>
                                 <TextBlock Text="{x:Bind DistanceDirectionText}" Visibility="{x:Bind DistanceDirectionVisibility}" Foreground="#FF7CB8FF"/>
+                                <TextBlock Text="{x:Bind BatteryBadgeText}"
+                                           Foreground="{x:Bind BatteryBadgeBrush}"
+                                           Visibility="{x:Bind BatteryBadgeVisibility}"
+                                           FontWeight="SemiBold"/>
                             </StackPanel>
                         </Grid>
                     </DataTemplate>
@@ -301,7 +305,7 @@
                                          Visibility="{x:Bind DeviceMetricsTabIndicatorVisibility, Mode=OneWay}"/>
                             </StackPanel>
                         </controls:TabViewItem.Header>
-                        <Grid RowDefinitions="Auto,Auto,*" Padding="12">
+                        <Grid RowDefinitions="Auto,*" Padding="12">
                             <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
                                 <TextBlock Text="{x:Bind DeviceMetricsCountText, Mode=OneWay}" FontWeight="SemiBold"/>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
@@ -327,29 +331,34 @@
                                             IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
                                 </StackPanel>
                             </Grid>
-                            <Grid Grid.Row="1" RowDefinitions="Auto,*" Margin="0,8,0,8">
-                                <StackPanel Orientation="Horizontal" Spacing="16">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Ellipse Width="8" Height="8" Fill="#FF4CAF50"/>
-                                        <TextBlock Text="Battery"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Ellipse Width="8" Height="8" Fill="#FF2196F3"/>
-                                        <TextBlock Text="Channel Utilization"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Ellipse Width="8" Height="8" Fill="#FFFF9800"/>
-                                        <TextBlock Text="Airtime"/>
-                                    </StackPanel>
-                                </StackPanel>
-                                <localcontrols:DeviceMetricsGraph Grid.Row="1"
-                                                                  x:Name="DeviceMetricsGraph"
-                                                                  Height="220"/>
-                            </Grid>
-                            <ListView Grid.Row="2"
+                            <ListView Grid.Row="1"
                                       x:Name="DeviceMetricsLogList"
                                       ItemsSource="{Binding DeviceMetricSamples, ElementName=Root}"
-                                      SelectionMode="None">
+                                      SelectionMode="Single"
+                                      SelectionChanged="DeviceMetricsLogList_SelectionChanged"
+                                      IsItemClickEnabled="True"
+                                      ItemClick="DeviceMetricsLogList_ItemClick"
+                                      Margin="0,8,0,0">
+                                <ListView.Header>
+                                    <StackPanel Spacing="8" Margin="0,0,0,8">
+                                        <StackPanel Orientation="Horizontal" Spacing="16">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse Width="8" Height="8" Fill="#FF4CAF50"/>
+                                                <TextBlock Text="Battery"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse Width="8" Height="8" Fill="#FF2196F3"/>
+                                                <TextBlock Text="Channel Utilization"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse Width="8" Height="8" Fill="#FFFF9800"/>
+                                                <TextBlock Text="Airtime"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <localcontrols:DeviceMetricsGraph x:Name="DeviceMetricsGraph"
+                                                                          Height="220"/>
+                                    </StackPanel>
+                                </ListView.Header>
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="ListViewItem">
                                         <Setter Property="MinHeight" Value="22"/>
@@ -507,29 +516,167 @@
                                 <ListView x:Name="TraceRouteLogList"
                                           ItemsSource="{x:Bind TraceRouteLogEntries, Mode=OneWay}"
                                           SelectionMode="None"
-                                          IsItemClickEnabled="True"
-                                          ItemClick="TraceRouteLogList_ItemClick">
+                                          IsItemClickEnabled="False"
+                                          PointerWheelChanged="TraceRouteLogList_PointerWheelChanged"
+                                          ScrollViewer.HorizontalScrollBarVisibility="Visible"
+                                          ScrollViewer.HorizontalScrollMode="Enabled"
+                                          ScrollViewer.IsHorizontalRailEnabled="True"
+                                          ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                                            <Setter Property="VerticalContentAlignment" Value="Top"/>
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
                                     <ListView.ItemTemplate>
                                         <DataTemplate x:DataType="pages:TraceRouteLogEntry">
                                             <Border Padding="8" Margin="0,0,0,6"
                                                     BorderThickness="1"
                                                     BorderBrush="{ThemeResource CardStrokeColorDefault}"
-                                                    CornerRadius="6">
-                                                <StackPanel Spacing="2">
-                                                    <TextBlock Text="{x:Bind HeaderText}"
-                                                               FontFamily="Consolas"
-                                                               Foreground="{x:Bind HeaderBrush}"
-                                                               FontWeight="SemiBold"
-                                                               TextWrapping="Wrap"/>
-                                                    <TextBlock Text="{x:Bind PathText}"
-                                                               FontFamily="Consolas"
-                                                               Foreground="{x:Bind PathBrush}"
-                                                               TextWrapping="Wrap"/>
-                                                    <TextBlock Text="{x:Bind RouteBackHeaderText}"
-                                                               FontFamily="Consolas"
-                                                               Foreground="{x:Bind RouteBackBrush}"
-                                                               TextWrapping="Wrap"
-                                                               Visibility="{x:Bind RouteBackVisibility}"/>
+                                                    CornerRadius="6"
+                                                    HorizontalAlignment="Left">
+                                                <StackPanel Spacing="6" Width="{x:Bind RouteContentWidth}">
+                                                    <Button Background="Transparent"
+                                                            BorderThickness="0"
+                                                            Padding="0"
+                                                            HorizontalContentAlignment="Left"
+                                                            HorizontalAlignment="Stretch"
+                                                            Tag="{x:Bind}"
+                                                            Click="TraceRouteHeader_Click"
+                                                            ToolTipService.ToolTip="Open detailed route dialog">
+                                                        <TextBlock Text="{x:Bind HeaderText}"
+                                                                   FontFamily="Consolas"
+                                                                   Foreground="{x:Bind HeaderBrush}"
+                                                                   FontWeight="SemiBold"
+                                                                   TextWrapping="NoWrap"/>
+                                                    </Button>
+                                                    <StackPanel Spacing="6" HorizontalAlignment="Left">
+                                                            <Grid ColumnDefinitions="56,Auto">
+                                                                <TextBlock Text="FWD"
+                                                                           FontFamily="Consolas"
+                                                                           Foreground="{x:Bind PathBrush}"
+                                                                           FontWeight="SemiBold"/>
+                                                                <ItemsControl Grid.Column="1" ItemsSource="{x:Bind ForwardDisplayNodes}">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <StackPanel Orientation="Horizontal"/>
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate x:DataType="pages:RouteDisplayNode">
+                                                                            <Button Width="185"
+                                                                                    Margin="0,0,10,0"
+                                                                                    Padding="0"
+                                                                                    Background="Transparent"
+                                                                                    BorderThickness="0"
+                                                                                    HorizontalContentAlignment="Left"
+                                                                                    Click="TraceRouteNodeInfo_Click"
+                                                                                    Tag="{x:Bind}">
+                                                                                <TextBlock Text="{x:Bind DisplayName}"
+                                                                                           FontFamily="Consolas"
+                                                                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                                                           TextTrimming="CharacterEllipsis"
+                                                                                           ToolTipService.ToolTip="{x:Bind TooltipText}"/>
+                                                                            </Button>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="56,Auto" Visibility="{x:Bind MetricsVisibility}">
+                                                                <TextBlock Text=" "
+                                                                           FontFamily="Consolas"/>
+                                                                <ItemsControl Grid.Column="1" ItemsSource="{x:Bind ForwardDisplaySegments}">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <StackPanel Orientation="Horizontal"/>
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate x:DataType="pages:RouteDisplaySegment">
+                                                                            <StackPanel Width="185"
+                                                                                        Margin="0,0,10,0"
+                                                                                        Orientation="Horizontal"
+                                                                                        Spacing="10"
+                                                                                        ToolTipService.ToolTip="{x:Bind TooltipText}">
+                                                                                <TextBlock Text="{x:Bind DistanceText}"
+                                                                                           FontFamily="Consolas"
+                                                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                                <TextBlock Text="{x:Bind SnrText}"
+                                                                                           FontFamily="Consolas"
+                                                                                           Foreground="{x:Bind SnrBrush}"
+                                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                            </StackPanel>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="56,Auto" Visibility="{x:Bind RouteBackVisibility}">
+                                                                <TextBlock Text="BACK"
+                                                                           FontFamily="Consolas"
+                                                                           Foreground="{x:Bind RouteBackBrush}"
+                                                                           FontWeight="SemiBold"/>
+                                                                <ItemsControl Grid.Column="1" ItemsSource="{x:Bind BackDisplayNodes}">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <StackPanel Orientation="Horizontal"/>
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate x:DataType="pages:RouteDisplayNode">
+                                                                            <Button Width="185"
+                                                                                    Margin="0,0,10,0"
+                                                                                    Padding="0"
+                                                                                    Background="Transparent"
+                                                                                    BorderThickness="0"
+                                                                                    HorizontalContentAlignment="Left"
+                                                                                    Click="TraceRouteNodeInfo_Click"
+                                                                                    Tag="{x:Bind}">
+                                                                                <TextBlock Text="{x:Bind DisplayName}"
+                                                                                           FontFamily="Consolas"
+                                                                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                                                           TextTrimming="CharacterEllipsis"
+                                                                                           ToolTipService.ToolTip="{x:Bind TooltipText}"/>
+                                                                            </Button>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </Grid>
+                                                            <Grid ColumnDefinitions="56,Auto" Visibility="{x:Bind RouteBackDetailVisibility}">
+                                                                <TextBlock Text=" "
+                                                                           FontFamily="Consolas"/>
+                                                                <ItemsControl Grid.Column="1" ItemsSource="{x:Bind BackDisplaySegments}">
+                                                                    <ItemsControl.ItemsPanel>
+                                                                        <ItemsPanelTemplate>
+                                                                            <StackPanel Orientation="Horizontal"/>
+                                                                        </ItemsPanelTemplate>
+                                                                    </ItemsControl.ItemsPanel>
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate x:DataType="pages:RouteDisplaySegment">
+                                                                            <StackPanel Width="185"
+                                                                                        Margin="0,0,10,0"
+                                                                                        Orientation="Horizontal"
+                                                                                        Spacing="10"
+                                                                                        ToolTipService.ToolTip="{x:Bind TooltipText}">
+                                                                                <TextBlock Text="{x:Bind DistanceText}"
+                                                                                           FontFamily="Consolas"
+                                                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                                <TextBlock Text="{x:Bind SnrText}"
+                                                                                           FontFamily="Consolas"
+                                                                                           Foreground="{x:Bind SnrBrush}"
+                                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                            </StackPanel>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </Grid>
+                                                    </StackPanel>
+                                                    <Button Content="View route in map"
+                                                            HorizontalAlignment="Left"
+                                                            IsEnabled="{x:Bind CanViewRoute}"
+                                                            Tag="{x:Bind}"
+                                                            Click="TraceRouteEntryViewMap_Click"/>
                                                 </StackPanel>
                                             </Border>
                                         </DataTemplate>
@@ -544,18 +691,49 @@
                                                       PreferredPlacement="Top"
                                                       IsLightDismissEnabled="True"
                                                       Title="{x:Bind TraceRouteDetailTitle, Mode=OneWay}">
-                                    <StackPanel Spacing="8" MaxWidth="520">
+                                    <StackPanel Spacing="8" MaxWidth="980">
                                         <TextBlock Text="{x:Bind TraceRouteDetailHeader, Mode=OneWay}"
                                                    FontWeight="SemiBold"
                                                    TextWrapping="Wrap"/>
-                                        <TextBlock Text="{x:Bind TraceRouteDetailRoute, Mode=OneWay}"
-                                                   TextWrapping="Wrap"/>
-                                        <TextBlock Text="{x:Bind TraceRouteDetailRouteBack, Mode=OneWay}"
-                                                   TextWrapping="Wrap"
-                                                   Visibility="{x:Bind TraceRouteDetailRouteBackVisibility, Mode=OneWay}"/>
-                                        <TextBlock Text="{x:Bind TraceRouteDetailMetrics, Mode=OneWay}"
-                                                   TextWrapping="Wrap"
-                                                   Visibility="{x:Bind TraceRouteDetailMetricsVisibility, Mode=OneWay}"/>
+                                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Disabled"
+                                                      HorizontalScrollMode="Enabled"
+                                                      VerticalScrollMode="Disabled"
+                                                      ZoomMode="Disabled">
+                                            <TextBlock Text="{x:Bind TraceRouteDetailRoute, Mode=OneWay}"
+                                                       TextWrapping="NoWrap"
+                                                       FontFamily="Consolas"/>
+                                        </ScrollViewer>
+                                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Disabled"
+                                                      HorizontalScrollMode="Enabled"
+                                                      VerticalScrollMode="Disabled"
+                                                      ZoomMode="Disabled"
+                                                      Visibility="{x:Bind TraceRouteDetailRouteBackVisibility, Mode=OneWay}">
+                                            <TextBlock Text="{x:Bind TraceRouteDetailRouteBack, Mode=OneWay}"
+                                                       TextWrapping="NoWrap"
+                                                       FontFamily="Consolas"/>
+                                        </ScrollViewer>
+                                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Disabled"
+                                                      HorizontalScrollMode="Enabled"
+                                                      VerticalScrollMode="Disabled"
+                                                      ZoomMode="Disabled"
+                                                      Visibility="{x:Bind TraceRouteDetailMetricsVisibility, Mode=OneWay}">
+                                            <TextBlock Text="{x:Bind TraceRouteDetailMetrics, Mode=OneWay}"
+                                                       TextWrapping="NoWrap"
+                                                       FontFamily="Consolas"/>
+                                        </ScrollViewer>
+                                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Disabled"
+                                                      HorizontalScrollMode="Enabled"
+                                                      VerticalScrollMode="Disabled"
+                                                      ZoomMode="Disabled"
+                                                      Visibility="{x:Bind TraceRouteDetailBackMetricsVisibility, Mode=OneWay}">
+                                            <TextBlock Text="{x:Bind TraceRouteDetailBackMetrics, Mode=OneWay}"
+                                                       TextWrapping="NoWrap"
+                                                       FontFamily="Consolas"/>
+                                        </ScrollViewer>
                                         <Button Content="View route in map"
                                                 Click="TraceRouteViewMap_Click"
                                                 IsEnabled="{x:Bind CanViewTraceRouteMap, Mode=OneWay}"/>
@@ -573,7 +751,7 @@
                                          Visibility="{x:Bind EnvironmentMetricsTabIndicatorVisibility, Mode=OneWay}"/>
                             </StackPanel>
                         </controls:TabViewItem.Header>
-                        <Grid RowDefinitions="Auto,Auto,*" Padding="12">
+                        <Grid RowDefinitions="Auto,*" Padding="12">
                             <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
                                 <TextBlock Text="{x:Bind EnvironmentMetricsCountText, Mode=OneWay}" FontWeight="SemiBold"/>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -597,29 +775,34 @@
                                     <Button Content="Export..." IsEnabled="False"/>
                                 </StackPanel>
                             </Grid>
-                            <Grid Grid.Row="1" RowDefinitions="Auto,*" Margin="0,8,0,8">
-                                <StackPanel Orientation="Horizontal" Spacing="16">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Ellipse Width="8" Height="8" Fill="#FF4FC3F7"/>
-                                        <TextBlock Text="Temperature"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Ellipse Width="8" Height="8" Fill="#FF81C784"/>
-                                        <TextBlock Text="Humidity"/>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Ellipse Width="8" Height="8" Fill="#FFFFB74D"/>
-                                        <TextBlock Text="Pressure"/>
-                                    </StackPanel>
-                                </StackPanel>
-                                <localcontrols:EnvironmentMetricsGraph Grid.Row="1"
-                                                                       x:Name="EnvironmentMetricsGraph"
-                                                                       Height="220"/>
-                            </Grid>
-                            <ListView Grid.Row="2"
+                            <ListView Grid.Row="1"
                                       x:Name="EnvironmentMetricsLogList"
                                       ItemsSource="{Binding EnvironmentMetricSamples, ElementName=Root}"
-                                      SelectionMode="None">
+                                      SelectionMode="Single"
+                                      SelectionChanged="EnvironmentMetricsLogList_SelectionChanged"
+                                      IsItemClickEnabled="True"
+                                      ItemClick="EnvironmentMetricsLogList_ItemClick"
+                                      Margin="0,8,0,0">
+                                <ListView.Header>
+                                    <StackPanel Spacing="8" Margin="0,0,0,8">
+                                        <StackPanel Orientation="Horizontal" Spacing="16">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse Width="8" Height="8" Fill="#FF4FC3F7"/>
+                                                <TextBlock Text="Temperature"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse Width="8" Height="8" Fill="#FF81C784"/>
+                                                <TextBlock Text="Humidity"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse Width="8" Height="8" Fill="#FFFFB74D"/>
+                                                <TextBlock Text="Pressure"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <localcontrols:EnvironmentMetricsGraph x:Name="EnvironmentMetricsGraph"
+                                                                               Height="220"/>
+                                    </StackPanel>
+                                </ListView.Header>
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="ListViewItem">
                                         <Setter Property="MinHeight" Value="22"/>

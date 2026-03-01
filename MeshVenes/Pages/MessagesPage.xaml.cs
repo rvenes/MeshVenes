@@ -30,6 +30,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private const int MaxMessageBytes = 200;
     private const int MaxArchiveMessagesPerChat = 800;
     private const string MessageLogRetentionDaysKey = "MessageLogRetentionDays";
+    private const string LastSelectedNodeKey = "NodesLastSelectedNodeIdHex";
     private bool _isAdjustingInputText;
     private bool _inputWasTruncated;
     private ScrollViewer? _messagesScrollViewer;
@@ -73,7 +74,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private bool _suppressListEvent;
     private string _chatFilter = "";
-    private SortMode _sortMode = SortMode.LastActive;
+    private SortMode _sortMode = SortMode.LastHeard;
     private ObservableCollection<ChatListItemVm> ChatsView { get; }
 
     private bool _hideInactive = true;
@@ -105,13 +106,15 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     }
 
     public bool HasAnyChatSelection => _selectedChatItem is not null;
+    public bool CanOpenNodeFromDm => TryGetActiveDmPeerIdHex(out _);
+    public Visibility OpenNodeFromDmVisibility => CanOpenNodeFromDm ? Visibility.Visible : Visibility.Collapsed;
 
     private enum SortMode
     {
-        AlphabeticalAsc,
-        AlphabeticalDesc,
-        LastActive,
-        OldestActive
+        Alphabetical,
+        HopsAway,
+        LastHeard,
+        FavoritesFirst
     }
 
     public MessagesPage()
@@ -121,10 +124,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         MessagesList.Loaded += MessagesList_Loaded;
         MessagesList.Unloaded += MessagesList_Unloaded;
 
-        SortCombo.Items.Add("Sort: Alphabetical A–Z");
-        SortCombo.Items.Add("Sort: Alphabetical Z–A");
-        SortCombo.Items.Add("Sort: Last active");
-        SortCombo.Items.Add("Sort: Oldest active");
+        SortCombo.Items.Add("Sort: Alphabetical");
+        SortCombo.Items.Add("Sort: Hops away");
+        SortCombo.Items.Add("Sort: Last heard");
+        SortCombo.Items.Add("Sort: Favorites first");
         SortCombo.SelectedIndex = 2;
 
         HideInactiveToggle.IsChecked = _hideInactive;
@@ -170,7 +173,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         SyncListToActiveChat();
         UpdateMessageLengthCounter();
         UpdateSendButtonState();
-        OnChanged(nameof(ActiveChatTitle));
+        OnActiveChatUiChanged();
     }
 
     private void HookAppStateEvents()
@@ -270,7 +273,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
             ScheduleChatFilterRefresh();
             SyncListToActiveChat();
-            OnChanged(nameof(ActiveChatTitle));
+            OnActiveChatUiChanged();
         });
 
     private void ActiveChatChanged()
@@ -279,7 +282,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             SyncListToActiveChat();
             MeshVenes.AppState.MarkChatRead(MeshVenes.AppState.ActiveChatPeerIdHex);
             ApplyMessageVisibilityToAll();
-            OnChanged(nameof(ActiveChatTitle));
+            OnActiveChatUiChanged();
         });
 
     private void ConnectedNodeChanged()
@@ -308,7 +311,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
                     EnsureChatHistoryLoaded(_selectedChatItem);
                     OnChanged(nameof(SelectedChatMessages));
-                    OnChanged(nameof(ActiveChatTitle));
+                    OnActiveChatUiChanged();
                 }
                 catch
                 {
@@ -399,7 +402,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             EnsureConfiguredChannelChatItems();
             ApplyChannelDisplayNamesToChatItems();
             RebuildVisibleChats();
-            OnChanged(nameof(ActiveChatTitle));
+            OnActiveChatUiChanged();
         });
     }
 
@@ -551,7 +554,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             or nameof(NodeLive.IsFavorite)
             or nameof(NodeLive.HopsAway)
             or nameof(NodeLive.HasLogIndicator)
-            or nameof(NodeLive.LastPositionUtc))
+            or nameof(NodeLive.LastPositionUtc)
+            or nameof(NodeLive.BatteryPercent)
+            or nameof(NodeLive.IsPowered))
         {
             UpdateChatItemFromNode(node);
 
@@ -569,7 +574,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 ScheduleChatFilterRefresh();
 
             if (string.Equals(MeshVenes.AppState.ActiveChatPeerIdHex, node.IdHex, StringComparison.OrdinalIgnoreCase))
-                OnChanged(nameof(ActiveChatTitle));
+                OnActiveChatUiChanged();
         }
     }
 
@@ -784,6 +789,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             {
                 OnChanged(nameof(SelectedChatMessages));
                 OnChanged(nameof(HasAnyChatSelection));
+                OnChanged(nameof(CanOpenNodeFromDm));
+                OnChanged(nameof(OpenNodeFromDmVisibility));
             }
         }
         else if (!string.IsNullOrWhiteSpace(peer))
@@ -795,6 +802,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 ResetPendingMessagesIndicator();
                 OnChanged(nameof(SelectedChatMessages));
                 OnChanged(nameof(HasAnyChatSelection));
+                OnChanged(nameof(CanOpenNodeFromDm));
+                OnChanged(nameof(OpenNodeFromDmVisibility));
             }
         }
         else
@@ -821,6 +830,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         EnsureChatHistoryLoaded(chat);
         OnChanged(nameof(SelectedChatMessages));
         OnChanged(nameof(HasAnyChatSelection));
+        OnChanged(nameof(CanOpenNodeFromDm));
+        OnChanged(nameof(OpenNodeFromDmVisibility));
         RequestInitialScrollPosition(force: true);
     }
 
@@ -847,8 +858,19 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         EnsureChatHistoryLoaded(target);
         OnChanged(nameof(SelectedChatMessages));
         OnChanged(nameof(HasAnyChatSelection));
+        OnChanged(nameof(CanOpenNodeFromDm));
+        OnChanged(nameof(OpenNodeFromDmVisibility));
         SyncListToActiveChat();
         RequestInitialScrollPosition(force: true);
+    }
+
+    private void OpenNodeFromDm_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetActiveDmPeerIdHex(out var peerIdHex) || string.IsNullOrWhiteSpace(peerIdHex))
+            return;
+
+        SettingsStore.SetString(LastSelectedNodeKey, peerIdHex);
+        App.MainWindowInstance?.NavigateTo("nodes");
     }
 
     private async void ChatFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -972,10 +994,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     {
         _sortMode = SortCombo.SelectedIndex switch
         {
-            1 => SortMode.AlphabeticalDesc,
-            2 => SortMode.LastActive,
-            3 => SortMode.OldestActive,
-            _ => SortMode.AlphabeticalAsc
+            1 => SortMode.HopsAway,
+            2 => SortMode.LastHeard,
+            3 => SortMode.FavoritesFirst,
+            _ => SortMode.Alphabetical
         };
 
         ApplyChatSorting();
@@ -1023,7 +1045,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     {
         return _sortMode switch
         {
-            SortMode.LastActive => items
+            SortMode.LastHeard => items
                 .OrderByDescending(item => item.PeerIdHex is null)
                 .ThenBy(item => item.IsChannel ? 0 : 1)
                 .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
@@ -1032,21 +1054,25 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            SortMode.OldestActive => items
+            SortMode.HopsAway => items
                 .OrderByDescending(item => item.PeerIdHex is null)
                 .ThenBy(item => item.IsChannel ? 0 : 1)
                 .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
+                .ThenBy(item => item.IsChannel ? int.MinValue : item.HopsSortValue)
                 .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenBy(item => item.LastHeardUtc)
+                .ThenByDescending(item => item.LastHeardUtc)
                 .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            SortMode.AlphabeticalDesc => items
+            SortMode.FavoritesFirst => items
                 .OrderByDescending(item => item.PeerIdHex is null)
                 .ThenBy(item => item.IsChannel ? 0 : 1)
+                .ThenBy(item => item.IsChannel ? 0 : (item.IsFavorite ? 0 : 1))
                 .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
-                .ThenByDescending(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             _ => items
                 .OrderByDescending(item => item.PeerIdHex is null)
@@ -1066,7 +1092,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         var indexed = VisibleChatItems.Select((item, index) => (item, index));
         var sorted = _sortMode switch
         {
-            SortMode.LastActive => indexed
+            SortMode.LastHeard => indexed
                 .OrderByDescending(entry => entry.item.PeerIdHex is null)
                 .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
                 .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
@@ -1077,23 +1103,27 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 .ThenBy(entry => entry.index)
                 .Select(entry => entry.item)
                 .ToList(),
-            SortMode.OldestActive => indexed
+            SortMode.HopsAway => indexed
                 .OrderByDescending(entry => entry.item.PeerIdHex is null)
                 .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
                 .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
+                .ThenBy(entry => entry.item.IsChannel ? int.MinValue : entry.item.HopsSortValue)
                 .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
-                .ThenBy(entry => entry.item.LastHeardUtc)
+                .ThenByDescending(entry => entry.item.LastHeardUtc)
                 .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.index)
                 .Select(entry => entry.item)
                 .ToList(),
-            SortMode.AlphabeticalDesc => indexed
+            SortMode.FavoritesFirst => indexed
                 .OrderByDescending(entry => entry.item.PeerIdHex is null)
                 .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
+                .ThenBy(entry => entry.item.IsChannel ? 0 : (entry.item.IsFavorite ? 0 : 1))
                 .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
-                .ThenByDescending(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(entry => entry.item.LastHeardUtc)
+                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.index)
                 .Select(entry => entry.item)
                 .ToList(),
@@ -1936,6 +1966,30 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         }
     }
 
+    private void OnActiveChatUiChanged()
+    {
+        OnChanged(nameof(ActiveChatTitle));
+        OnChanged(nameof(CanOpenNodeFromDm));
+        OnChanged(nameof(OpenNodeFromDmVisibility));
+    }
+
+    private bool TryGetActiveDmPeerIdHex(out string? peerIdHex)
+    {
+        peerIdHex = null;
+        var peer = MeshVenes.AppState.ActiveChatPeerIdHex;
+        if (string.IsNullOrWhiteSpace(peer))
+            return false;
+
+        if (TryParseChannelPeerKey(peer, out _))
+            return false;
+
+        if (!MeshVenes.AppState.Nodes.Any(n => string.Equals(n.IdHex, peer, StringComparison.OrdinalIgnoreCase)))
+            return false;
+
+        peerIdHex = peer;
+        return true;
+    }
+
 }
 
 public sealed class ChatListItemVm : INotifyPropertyChanged
@@ -1947,6 +2001,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
     private static readonly Brush DefaultBrush = new SolidColorBrush(Colors.Gray);
     private static readonly Brush FavoriteOnBrush = new SolidColorBrush(Colors.Gold);
     private static readonly Brush FavoriteOffBrush = new SolidColorBrush(Colors.DimGray);
+    private static readonly Brush BatteryGoodBrush = new SolidColorBrush(Colors.LimeGreen);
+    private static readonly Brush BatteryMidBrush = new SolidColorBrush(Colors.Goldenrod);
+    private static readonly Brush BatteryLowBrush = new SolidColorBrush(Colors.OrangeRed);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -2059,11 +2116,39 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
         set { if (_hopsBadgeText != value) { _hopsBadgeText = value; OnChanged(nameof(HopsBadgeText)); } }
     }
 
+    private int _hopsSortValue = int.MaxValue;
+    public int HopsSortValue
+    {
+        get => _hopsSortValue;
+        set { if (_hopsSortValue != value) { _hopsSortValue = value; OnChanged(nameof(HopsSortValue)); } }
+    }
+
     private Visibility _positionIconVisibility = Visibility.Collapsed;
     public Visibility PositionIconVisibility
     {
         get => _positionIconVisibility;
         set { if (_positionIconVisibility != value) { _positionIconVisibility = value; OnChanged(nameof(PositionIconVisibility)); } }
+    }
+
+    private string _batteryBadgeText = "";
+    public string BatteryBadgeText
+    {
+        get => _batteryBadgeText;
+        set { if (_batteryBadgeText != value) { _batteryBadgeText = value; OnChanged(nameof(BatteryBadgeText)); } }
+    }
+
+    private Brush _batteryBadgeForeground = DefaultBrush;
+    public Brush BatteryBadgeForeground
+    {
+        get => _batteryBadgeForeground;
+        set { if (!ReferenceEquals(_batteryBadgeForeground, value)) { _batteryBadgeForeground = value; OnChanged(nameof(BatteryBadgeForeground)); } }
+    }
+
+    private Visibility _batteryBadgeVisibility = Visibility.Collapsed;
+    public Visibility BatteryBadgeVisibility
+    {
+        get => _batteryBadgeVisibility;
+        set { if (_batteryBadgeVisibility != value) { _batteryBadgeVisibility = value; OnChanged(nameof(BatteryBadgeVisibility)); } }
     }
 
     public string? PeerIdHex { get; set; } // null = Primary
@@ -2118,7 +2203,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             SortNameKey = "PRIMARY CHANNEL",
             SortIdKey = "",
             FavoriteVisibility = Visibility.Collapsed,
-            HopsBadgeText = ""
+            HopsBadgeText = "",
+            HopsSortValue = int.MaxValue,
+            BatteryBadgeVisibility = Visibility.Collapsed
         };
 
     public static ChatListItemVm ForChannel(uint channelIndex, string? channelName)
@@ -2146,7 +2233,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             SortNameKey = title.ToUpperInvariant(),
             SortIdKey = channelIndex.ToString(CultureInfo.InvariantCulture).PadLeft(4, '0'),
             FavoriteVisibility = Visibility.Collapsed,
-            HopsBadgeText = ""
+            HopsBadgeText = "",
+            HopsSortValue = int.MaxValue,
+            BatteryBadgeVisibility = Visibility.Collapsed
         };
     }
 
@@ -2172,8 +2261,12 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             IsFavorite = n.IsFavorite,
             FavoriteVisibility = Visibility.Visible,
             HopsBadgeText = n.HopsBadgeText,
+            HopsSortValue = n.HopsAway ?? int.MaxValue,
             PositionIconVisibility = n.PositionIconVisibility,
-            HasLogIndicator = n.HasLogIndicator
+            HasLogIndicator = n.HasLogIndicator,
+            BatteryBadgeText = BuildBatteryBadgeText(n),
+            BatteryBadgeForeground = BuildBatteryBrush(n),
+            BatteryBadgeVisibility = n.BatteryBadgeVisibility
         };
 
     public static ChatListItemVm ForPeer(string peerIdHex)
@@ -2194,7 +2287,9 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             SortNameKey = (peerIdHex ?? "").ToUpperInvariant(),
             SortIdKey = (peerIdHex ?? "").ToUpperInvariant(),
             FavoriteVisibility = Visibility.Collapsed,
-            HopsBadgeText = ""
+            HopsBadgeText = "",
+            HopsSortValue = int.MaxValue,
+            BatteryBadgeVisibility = Visibility.Collapsed
         };
 
     public void ClearArchiveSection()
@@ -2243,8 +2338,12 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
         IsFavorite = n.IsFavorite;
         FavoriteVisibility = Visibility.Visible;
         HopsBadgeText = n.HopsBadgeText;
+        HopsSortValue = n.HopsAway ?? int.MaxValue;
         PositionIconVisibility = n.PositionIconVisibility;
         HasLogIndicator = HasLogIndicator || n.HasLogIndicator;
+        BatteryBadgeText = BuildBatteryBadgeText(n);
+        BatteryBadgeForeground = BuildBatteryBrush(n);
+        BatteryBadgeVisibility = n.BatteryBadgeVisibility;
     }
 
     private static string BuildSortNameKey(string? longName, string? shortName, string? idHex)
@@ -2276,6 +2375,30 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             "Weak" => LoRaWeakBrush,
             _ => DefaultBrush
         };
+    }
+
+    private static string BuildBatteryBadgeText(NodeLive node)
+    {
+        if (node.IsPowered == true)
+            return "PWR";
+        if (node.BatteryPercent.HasValue)
+            return $"🔋 {Math.Round(node.BatteryPercent.Value).ToString("0", CultureInfo.InvariantCulture)}%";
+        return "";
+    }
+
+    private static Brush BuildBatteryBrush(NodeLive node)
+    {
+        if (node.IsPowered == true)
+            return BatteryGoodBrush;
+        if (!node.BatteryPercent.HasValue)
+            return DefaultBrush;
+
+        var level = node.BatteryPercent.Value;
+        if (level > 75.0)
+            return BatteryGoodBrush;
+        if (level > 30.0)
+            return BatteryMidBrush;
+        return BatteryLowBrush;
     }
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

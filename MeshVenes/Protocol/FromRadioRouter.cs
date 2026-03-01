@@ -955,10 +955,16 @@ public static class FromRadioRouter
             isPowered = batteryLevel > 100;
         }
 
+        var node = MeshVenes.AppState.Nodes.FirstOrDefault(n =>
+            string.Equals(n.IdHex, fromIdHex, StringComparison.OrdinalIgnoreCase));
+        if (node is not null)
+        {
+            node.BatteryPercent = batteryPercent;
+            node.IsPowered = isPowered;
+        }
+
         if (TryGetUInt(metricsObj, "UptimeSeconds", out var uptimeSeconds) && uptimeSeconds > 0)
         {
-            var node = MeshVenes.AppState.Nodes.FirstOrDefault(n =>
-                string.Equals(n.IdHex, fromIdHex, StringComparison.OrdinalIgnoreCase));
             if (node is not null)
                 node.UptimeSeconds = uptimeSeconds;
         }
