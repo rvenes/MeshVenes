@@ -20,6 +20,7 @@ public static class AppState
 
     public static ObservableCollection<NodeLive> Nodes { get; } = new();
     public static ObservableCollection<MessageLive> Messages { get; } = new();
+    public static ObservableCollection<WaypointLive> Waypoints { get; } = new();
     public static event Action? SettingsChanged;
 
     private static bool _showPowerMetricsTab;
@@ -66,6 +67,7 @@ public static class AppState
                 var currentName = Nodes.FirstOrDefault(n => string.Equals(n.IdHex, idHex, StringComparison.OrdinalIgnoreCase))?.Name;
                 AppDataPaths.SetActiveNodeScope(idHex, currentName);
                 RadioClient.Instance.RotateLiveLogForCurrentScope();
+                LoadWaypointsForActiveScope();
             }
             return;
         }
@@ -78,6 +80,7 @@ public static class AppState
             var nodeName = Nodes.FirstOrDefault(n => string.Equals(n.IdHex, idHex, StringComparison.OrdinalIgnoreCase))?.Name;
             AppDataPaths.SetActiveNodeScope(idHex, nodeName);
             RadioClient.Instance.RotateLiveLogForCurrentScope();
+            LoadWaypointsForActiveScope();
         }
 
         ConnectedNodeChanged?.Invoke();
@@ -233,6 +236,8 @@ private static string NormalizePeerKey(string? peerIdHex)
         {
             AdminTargetNodeIdHex = null;
         }
+
+        LoadWaypointsForActiveScope();
     }
 
     private static void PersistUnreadState()
@@ -300,4 +305,71 @@ private static string NormalizePeerKey(string? peerIdHex)
             ? mode
             : ThemeMode.System;
     }
+
+    public static WaypointLive? FindWaypoint(uint waypointId)
+        => Waypoints.FirstOrDefault(w => w.WaypointId == waypointId);
+
+    public static void UpsertWaypoint(WaypointLive waypoint)
+    {
+        if (waypoint is null || waypoint.WaypointId == 0)
+            return;
+
+        var existing = FindWaypoint(waypoint.WaypointId);
+        if (existing is null)
+        {
+            Waypoints.Insert(0, waypoint);
+        }
+        else
+        {
+            existing.ApplyFrom(waypoint);
+            var existingIndex = Waypoints.IndexOf(existing);
+            if (existingIndex > 0)
+                Waypoints.Move(existingIndex, 0);
+        }
+
+        PurgeExpiredWaypoints(persistAfter: false);
+        PersistWaypoints();
+    }
+
+    public static bool RemoveWaypoint(uint waypointId)
+    {
+        if (waypointId == 0)
+            return false;
+
+        var existing = FindWaypoint(waypointId);
+        if (existing is null)
+            return false;
+
+        Waypoints.Remove(existing);
+        PersistWaypoints();
+        return true;
+    }
+
+    public static void PurgeExpiredWaypoints()
+        => PurgeExpiredWaypoints(persistAfter: true);
+
+    private static void PurgeExpiredWaypoints(bool persistAfter)
+    {
+        var removed = false;
+        for (var i = Waypoints.Count - 1; i >= 0; i--)
+        {
+            if (!Waypoints[i].IsExpired)
+                continue;
+
+            Waypoints.RemoveAt(i);
+            removed = true;
+        }
+
+        if (removed && persistAfter)
+            PersistWaypoints();
+    }
+
+    private static void LoadWaypointsForActiveScope()
+    {
+        WaypointArchive.LoadIntoCollection(Waypoints);
+        PurgeExpiredWaypoints(persistAfter: false);
+    }
+
+    private static void PersistWaypoints()
+        => WaypointArchive.SaveCurrentScope(Waypoints);
 }

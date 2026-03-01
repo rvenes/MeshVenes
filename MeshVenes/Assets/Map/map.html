@@ -66,12 +66,201 @@
       text-shadow: none;
       user-select: none;
     }
+
+    .waypoint-chip {
+      min-width: 22px;
+      height: 22px;
+      border-radius: 11px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(248, 248, 248, 0.96);
+      border: 1px solid rgba(0, 0, 0, 0.35);
+      box-shadow: 0 5px 12px rgba(0,0,0,0.35);
+      font-size: 14px;
+      line-height: 1;
+      padding: 0 5px;
+      user-select: none;
+    }
+
+    .waypoint-popup {
+      font-family: Segoe UI, sans-serif;
+      min-width: 220px;
+      max-width: 280px;
+    }
+
+    .waypoint-popup-title {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .waypoint-popup-meta {
+      opacity: 0.82;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .waypoint-popup-actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 6px;
+    }
+
+    .waypoint-popup-actions button {
+      border: 1px solid rgba(255,255,255,0.25);
+      background: rgba(32,32,32,0.95);
+      color: #fff;
+      border-radius: 6px;
+      padding: 3px 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .waypoint-modal-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 12000;
+      font-family: Segoe UI, sans-serif;
+    }
+
+    .waypoint-modal-overlay.hidden {
+      display: none;
+    }
+
+    .waypoint-modal {
+      width: min(560px, calc(100vw - 28px));
+      background: #26272b;
+      color: #f4f6fb;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 10px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+      padding: 16px;
+    }
+
+    .waypoint-modal h3 {
+      margin: 0 0 12px 0;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .waypoint-modal-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 14px;
+      margin-bottom: 10px;
+    }
+
+    .waypoint-modal-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .waypoint-modal-field.full {
+      grid-column: 1 / -1;
+    }
+
+    .waypoint-modal-field label {
+      font-size: 13px;
+      font-weight: 600;
+      opacity: 0.9;
+    }
+
+    .waypoint-modal input,
+    .waypoint-modal textarea,
+    .waypoint-modal select {
+      background: #1f2024;
+      color: #f4f6fb;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 7px;
+      padding: 8px 10px;
+      font-size: 14px;
+      font-family: Segoe UI, sans-serif;
+    }
+
+    .waypoint-modal textarea {
+      resize: vertical;
+      min-height: 72px;
+    }
+
+    .waypoint-modal-meta {
+      font-size: 12px;
+      opacity: 0.82;
+      margin-bottom: 12px;
+    }
+
+    .waypoint-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .waypoint-modal-actions button {
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      background: #2f3137;
+      color: #fff;
+    }
+
+    .waypoint-modal-actions button.primary {
+      background: #3e8bf2;
+      border-color: #3e8bf2;
+    }
   </style>
 </head>
 <body>
 <div id="map"></div>
 <div class="top" id="top">MAP: loading…</div>
-
+<div id="waypointModalOverlay" class="waypoint-modal-overlay hidden">
+  <div class="waypoint-modal" role="dialog" aria-modal="true" aria-labelledby="waypointModalTitle">
+    <h3 id="waypointModalTitle">Create waypoint</h3>
+    <div class="waypoint-modal-meta" id="waypointModalMeta"></div>
+    <div class="waypoint-modal-grid">
+      <div class="waypoint-modal-field">
+        <label for="waypointNameInput">Waypoint name</label>
+        <input id="waypointNameInput" type="text" maxlength="30" />
+      </div>
+      <div class="waypoint-modal-field">
+        <label for="waypointIconInput">Icon emoji (optional)</label>
+        <input id="waypointIconInput" type="text" maxlength="8" />
+      </div>
+      <div class="waypoint-modal-field full">
+        <label for="waypointDescriptionInput">Description (optional)</label>
+        <textarea id="waypointDescriptionInput" maxlength="100"></textarea>
+      </div>
+      <div class="waypoint-modal-field">
+        <label for="waypointExpireSelect">Expires</label>
+        <select id="waypointExpireSelect">
+          <option value="never">Never</option>
+          <option value="1h">In 1 hour</option>
+          <option value="6h">In 6 hours</option>
+          <option value="24h">In 24 hours</option>
+          <option value="7d">In 7 days</option>
+          <option value="30d">In 30 days</option>
+          <option value="custom">Custom date/time</option>
+        </select>
+      </div>
+      <div class="waypoint-modal-field" id="waypointCustomExpireField">
+        <label for="waypointCustomExpireInput">Custom expiry (local time)</label>
+        <input id="waypointCustomExpireInput" type="datetime-local" />
+      </div>
+    </div>
+    <div class="waypoint-modal-actions">
+      <button type="button" id="waypointCancelBtn">Cancel</button>
+      <button type="button" class="primary" id="waypointSaveBtn">Save waypoint</button>
+    </div>
+  </div>
+</div>
+	
 <script>
   const web = (window.chrome && window.chrome.webview) ? window.chrome.webview : null;
   function post(o){ if (web) web.postMessage(o); }
@@ -127,6 +316,8 @@
     const markers = new Map(); // idHex -> L.Marker
     const labels  = new Map(); // idHex -> L.Marker (divIcon)
     const nodeStates = new Map(); // idHex -> last node payload
+    const waypointMarkers = new Map(); // waypointId -> L.Marker
+    const waypointStates = new Map(); // waypointId -> waypoint payload
     const tracks = new Map(); // nodeId -> { polyline, markersLayer, pointsCount }
     let routeForwardLayer = null;
     let routeBackLayer = null;
@@ -134,6 +325,20 @@
     let selectedId = null;
     let peekMarker = null;
     let peekTimer = null;
+    const waypointModal = {
+      overlay: document.getElementById('waypointModalOverlay'),
+      title: document.getElementById('waypointModalTitle'),
+      meta: document.getElementById('waypointModalMeta'),
+      name: document.getElementById('waypointNameInput'),
+      description: document.getElementById('waypointDescriptionInput'),
+      icon: document.getElementById('waypointIconInput'),
+      expireSelect: document.getElementById('waypointExpireSelect'),
+      customExpireField: document.getElementById('waypointCustomExpireField'),
+      customExpireInput: document.getElementById('waypointCustomExpireInput'),
+      cancel: document.getElementById('waypointCancelBtn'),
+      save: document.getElementById('waypointSaveBtn')
+    };
+    let waypointEditorState = null;
 
     const clusterLayer = L.layerGroup().addTo(map);
     const spiderLayer = L.layerGroup().addTo(map);
@@ -321,6 +526,279 @@
         </div>`;
     }
 
+    function normalizeWaypointId(id){
+      if (id === null || id === undefined) return null;
+      const n = Number(id);
+      if (!Number.isFinite(n)) return null;
+      if (n <= 0) return null;
+      return Math.trunc(n);
+    }
+
+    function formatWaypointTimestampIso(isoText){
+      if (!isoText) return "—";
+      const d = new Date(isoText);
+      if (isNaN(d.getTime())) return String(isoText);
+      return d.toLocaleString();
+    }
+
+    function formatWaypointExpire(expireUnix){
+      if (!expireUnix || !Number.isFinite(Number(expireUnix)) || Number(expireUnix) <= 0) return "Never";
+      const d = new Date(Number(expireUnix) * 1000);
+      if (isNaN(d.getTime())) return "—";
+      return d.toLocaleString();
+    }
+
+    function waypointIconFromGlyph(glyph){
+      const iconText = (glyph && String(glyph).trim()) ? String(glyph).trim() : "📍";
+      return L.divIcon({
+        className: '',
+        html: `<div class="waypoint-chip">${escapeHtml(iconText)}</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+        popupAnchor: [0, -12]
+      });
+    }
+
+    function waypointPopupHtml(waypoint){
+      const title = (waypoint.name && waypoint.name.trim()) ? waypoint.name.trim() : `Waypoint ${String(waypoint.id)}`;
+      const description = (waypoint.description && waypoint.description.trim()) ? waypoint.description.trim() : "";
+      const updated = formatWaypointTimestampIso(waypoint.updatedUtc);
+      const expireText = formatWaypointExpire(waypoint.expireUnix);
+      return `
+        <div class="waypoint-popup">
+          <div class="waypoint-popup-title">${escapeHtml(title)}</div>
+          ${description ? `<div>${escapeHtml(description)}</div>` : ""}
+          <div class="waypoint-popup-meta">Lat/Lon: ${Number(waypoint.lat).toFixed(6)}, ${Number(waypoint.lon).toFixed(6)}</div>
+          <div class="waypoint-popup-meta">Updated: ${escapeHtml(updated)}</div>
+          <div class="waypoint-popup-meta">Expires: ${escapeHtml(expireText)}</div>
+          <div class="waypoint-popup-actions">
+            <button type="button" class="mw-waypoint-edit" data-waypoint-id="${escapeAttr(String(waypoint.id))}">Edit</button>
+            <button type="button" class="mw-waypoint-delete" data-waypoint-id="${escapeAttr(String(waypoint.id))}">Delete</button>
+          </div>
+        </div>`;
+    }
+
+    function requestWaypointUpsert(waypoint){
+      post({ type: "waypointUpsert", waypoint });
+    }
+
+    function requestWaypointDelete(id){
+      const waypointId = normalizeWaypointId(id);
+      if (!waypointId) return;
+      post({ type: "waypointDelete", id: waypointId });
+    }
+
+    function toDatetimeLocalValue(date){
+      if (!date || !(date instanceof Date) || isNaN(date.getTime()))
+        return "";
+      const localMs = date.getTime() - (date.getTimezoneOffset() * 60000);
+      return new Date(localMs).toISOString().slice(0, 16);
+    }
+
+    function parseExpireUnixFromDialog(){
+      const mode = waypointModal.expireSelect.value || "never";
+      const nowUnix = Math.floor(Date.now() / 1000);
+
+      if (mode === "never") return null;
+      if (mode === "1h") return nowUnix + 3600;
+      if (mode === "6h") return nowUnix + (6 * 3600);
+      if (mode === "24h") return nowUnix + (24 * 3600);
+      if (mode === "7d") return nowUnix + (7 * 24 * 3600);
+      if (mode === "30d") return nowUnix + (30 * 24 * 3600);
+
+      if (mode === "custom"){
+        const raw = waypointModal.customExpireInput.value;
+        if (!raw) return null;
+        const parsed = new Date(raw);
+        if (isNaN(parsed.getTime())) return null;
+        const unix = Math.floor(parsed.getTime() / 1000);
+        return unix > nowUnix ? unix : nowUnix + 60;
+      }
+
+      return null;
+    }
+
+    function syncExpireVisibility(){
+      const isCustom = waypointModal.expireSelect.value === "custom";
+      waypointModal.customExpireField.style.visibility = isCustom ? "visible" : "hidden";
+      waypointModal.customExpireField.style.pointerEvents = isCustom ? "auto" : "none";
+      waypointModal.customExpireField.style.opacity = isCustom ? "1" : "0.45";
+    }
+
+    function closeWaypointEditor(){
+      waypointEditorState = null;
+      waypointModal.overlay.classList.add('hidden');
+    }
+
+    function openWaypointEditor(mode, seed){
+      waypointEditorState = {
+        mode,
+        id: Number(seed.id || 0),
+        lat: Number(seed.lat),
+        lon: Number(seed.lon),
+        lockedTo: Number(seed.lockedTo || 0),
+        channel: Number(seed.channel || 0),
+        originalExpireUnix: seed.expireUnix || null
+      };
+
+      waypointModal.title.textContent = mode === "edit" ? "Edit waypoint" : "Create waypoint";
+      waypointModal.meta.textContent = `Lat/Lon: ${waypointEditorState.lat.toFixed(6)}, ${waypointEditorState.lon.toFixed(6)}`;
+      waypointModal.name.value = (seed.name && String(seed.name).trim()) ? String(seed.name).trim() : "Waypoint";
+      waypointModal.description.value = (seed.description && String(seed.description).trim()) ? String(seed.description).trim() : "";
+      waypointModal.icon.value = (seed.iconGlyph && String(seed.iconGlyph).trim()) ? String(seed.iconGlyph).trim() : "📍";
+
+      if (seed.expireUnix && Number(seed.expireUnix) > Math.floor(Date.now() / 1000)){
+        waypointModal.expireSelect.value = "custom";
+        waypointModal.customExpireInput.value = toDatetimeLocalValue(new Date(Number(seed.expireUnix) * 1000));
+      } else {
+        waypointModal.expireSelect.value = "never";
+        waypointModal.customExpireInput.value = "";
+      }
+
+      syncExpireVisibility();
+      waypointModal.overlay.classList.remove('hidden');
+      requestAnimationFrame(() => waypointModal.name.focus());
+    }
+
+    function submitWaypointEditor(){
+      if (!waypointEditorState) return;
+
+      const name = (waypointModal.name.value || "").trim() || "Waypoint";
+      const description = (waypointModal.description.value || "").trim();
+      const iconGlyph = (waypointModal.icon.value || "").trim() || "📍";
+      const expireUnix = parseExpireUnixFromDialog();
+
+      requestWaypointUpsert({
+        id: waypointEditorState.id || 0,
+        lat: waypointEditorState.lat,
+        lon: waypointEditorState.lon,
+        name,
+        description,
+        iconGlyph,
+        lockedTo: waypointEditorState.lockedTo || 0,
+        expireUnix: expireUnix,
+        channel: waypointEditorState.channel || 0
+      });
+
+      closeWaypointEditor();
+    }
+
+    function beginWaypointCreate(lat, lon){
+      openWaypointEditor("create", {
+        id: 0,
+        lat,
+        lon,
+        name: "Waypoint",
+        description: "",
+        iconGlyph: "📍",
+        lockedTo: 0,
+        expireUnix: null,
+        channel: 0
+      });
+    }
+
+    function beginWaypointEdit(waypointId){
+      const id = normalizeWaypointId(waypointId);
+      if (!id || !waypointStates.has(id)) return;
+
+      const current = waypointStates.get(id);
+      openWaypointEditor("edit", {
+        id,
+        lat: Number(current.lat),
+        lon: Number(current.lon),
+        name: current.name || `Waypoint ${id}`,
+        description: current.description || "",
+        iconGlyph: current.iconGlyph || "📍",
+        lockedTo: Number(current.lockedTo || 0),
+        expireUnix: current.expireUnix || null,
+        channel: Number(current.channel || 0)
+      });
+    }
+
+    function beginWaypointDelete(waypointId){
+      const id = normalizeWaypointId(waypointId);
+      if (!id || !waypointStates.has(id)) return;
+      const current = waypointStates.get(id);
+      const title = (current.name && current.name.trim()) ? current.name.trim() : `Waypoint ${id}`;
+      if (!window.confirm(`Delete waypoint \"${title}\"?`)) return;
+      requestWaypointDelete(id);
+    }
+
+    function setWaypoints(list){
+      const alive = new Set();
+
+      for (const raw of (list || [])){
+        const id = normalizeWaypointId(raw.id);
+        if (!id) continue;
+
+        const lat = Number(raw.lat);
+        const lon = Number(raw.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+
+        const waypoint = {
+          id,
+          name: raw.name || "",
+          description: raw.description || "",
+          lat,
+          lon,
+          iconGlyph: raw.iconGlyph || "📍",
+          iconCodepoint: Number(raw.iconCodepoint || 0),
+          lockedTo: Number(raw.lockedTo || 0),
+          expireUnix: raw.expireUnix || null,
+          sourceNodeNum: Number(raw.sourceNodeNum || 0),
+          sourceIdHex: raw.sourceIdHex || "",
+          updatedUtc: raw.updatedUtc || "",
+          channel: Number(raw.channel || 0)
+        };
+
+        alive.add(id);
+        waypointStates.set(id, waypoint);
+
+        let marker = waypointMarkers.get(id);
+        if (!marker){
+          marker = L.marker([lat, lon], {
+            icon: waypointIconFromGlyph(waypoint.iconGlyph),
+            title: waypoint.name || `Waypoint ${id}`
+          });
+          marker.bindPopup(waypointPopupHtml(waypoint), { maxWidth: 300 });
+          marker.on('popupopen', (event) => {
+            const popupEl = event.popup?.getElement();
+            if (!popupEl) return;
+
+            const editButton = popupEl.querySelector('.mw-waypoint-edit');
+            if (editButton){
+              editButton.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                beginWaypointEdit(id);
+              }, { once: true });
+            }
+
+            const deleteButton = popupEl.querySelector('.mw-waypoint-delete');
+            if (deleteButton){
+              deleteButton.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                beginWaypointDelete(id);
+              }, { once: true });
+            }
+          });
+          marker.addTo(map);
+          waypointMarkers.set(id, marker);
+        } else {
+          marker.setLatLng([lat, lon]);
+          marker.setIcon(waypointIconFromGlyph(waypoint.iconGlyph));
+          marker.setPopupContent(waypointPopupHtml(waypoint));
+        }
+      }
+
+      for (const [id, marker] of waypointMarkers.entries()){
+        if (alive.has(id)) continue;
+        map.removeLayer(marker);
+        waypointMarkers.delete(id);
+        waypointStates.delete(id);
+      }
+    }
+
     window.requestHistory = function(idHex){
       post({ type:"requestHistory", idHex });
     };
@@ -397,7 +875,7 @@
     }
 
     function fitAll(){
-      const list = Array.from(markers.values());
+      const list = Array.from(markers.values()).concat(Array.from(waypointMarkers.values()));
       if (list.length === 0) return;
       const fg = L.featureGroup(list);
       const b = fg.getBounds();
@@ -593,6 +1071,23 @@
       }
     }
 
+    syncExpireVisibility();
+    waypointModal.cancel.addEventListener('click', () => closeWaypointEditor());
+    waypointModal.save.addEventListener('click', () => submitWaypointEditor());
+    waypointModal.expireSelect.addEventListener('change', () => syncExpireVisibility());
+    waypointModal.overlay.addEventListener('click', (ev) => {
+      if (ev.target === waypointModal.overlay)
+        closeWaypointEditor();
+    });
+    window.addEventListener('keydown', (ev) => {
+      if (waypointModal.overlay.classList.contains('hidden'))
+        return;
+      if (ev.key === 'Escape'){
+        ev.preventDefault();
+        closeWaypointEditor();
+      }
+    });
+
     window.mwTrackSet = mwTrackSet;
     window.mwTrackAppend = mwTrackAppend;
     window.mwTrackClear = mwTrackClear;
@@ -609,6 +1104,7 @@
         if (msg.type === "zoomTo") { zoomTo(msg.idHex); return; }
         if (msg.type === "positionPeek") { showPositionPeek(msg.lat, msg.lon); return; }
         if (msg.type === "history") { mwTrackSet(msg.idHex, msg.points || []); return; }
+        if (msg.type === "waypoints") { setWaypoints(msg.waypoints || []); return; }
         if (msg.type === "trackSet") { mwTrackSet(msg.idHex, msg.points || []); return; }
         if (msg.type === "trackAppend") { mwTrackAppend(msg.idHex, msg.point); return; }
         if (msg.type === "trackClear") { mwTrackClear(msg.idHex); return; }
@@ -624,6 +1120,10 @@
     map.on('click', () => {
       clearSpider();
       renderOverlapClusters();
+    });
+    map.on('contextmenu', (ev) => {
+      if (!ev || !ev.latlng) return;
+      beginWaypointCreate(ev.latlng.lat, ev.latlng.lng);
     });
 
     post({ type:"ready" });

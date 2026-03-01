@@ -18,6 +18,7 @@ public static class FromRadioRouter
     private const int PositionPortNum = 3;    // POSITION_APP
     private const int RoutingAppPortNum = 5;  // ROUTING_APP
     private const int AdminAppPortNum = 6; // ADMIN_APP
+    private const int WaypointPortNum = 8; // WAYPOINT_APP
     private const int DetectionSensorPortNum = 10; // DETECTION_SENSOR_APP
     private const int TelemetryAppPortNum = 67; // TELEMETRY_APP
     private const int TraceRoutePortNum = 70; // TRACEROUTE_APP
@@ -206,6 +207,14 @@ public static class FromRadioRouter
         {
             if (TryHandleDetectionSensorFromPayload(decodedObj, fromNodeNum, logToUi, out var s))
                 logToUi("Detection: " + s);
+            return;
+        }
+
+        // --- WAYPOINT_APP ---
+        if (portNum == WaypointPortNum)
+        {
+            if (TryHandleWaypointFromPayload(decodedObj, fromNodeNum, channelIndex, logToUi, out var s))
+                logToUi("Waypoint: " + s);
             return;
         }
 
@@ -1142,6 +1151,76 @@ public static class FromRadioRouter
         var fromIdHex = $"0x{fromNodeNum:x8}";
         NodeLogArchive.Append(NodeLogType.DetectionSensor, fromIdHex, DateTime.UtcNow, text);
         summary = text;
+        return true;
+    }
+
+    private static bool TryHandleWaypointFromPayload(object decodedObj, uint fromNodeNum, uint? channelIndex, Action<string> logToUi, out string summary)
+    {
+        summary = "waypoint empty";
+        var payloadBytes = TryGetPayloadBytes(decodedObj);
+        if (payloadBytes is null || payloadBytes.Length == 0)
+            return false;
+
+        Waypoint waypoint;
+        try
+        {
+            waypoint = Waypoint.Parser.ParseFrom(payloadBytes);
+        }
+        catch (Exception ex)
+        {
+            summary = $"Waypoint.ParseFrom exception: {ex.GetType().Name}: {ex.Message}";
+            return false;
+        }
+
+        if (waypoint.Id == 0)
+        {
+            summary = "id=0 ignored";
+            return false;
+        }
+
+        var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var expireUtc = waypoint.Expire > 0
+            ? DateTimeOffset.FromUnixTimeSeconds(waypoint.Expire).UtcDateTime
+            : (DateTime?)null;
+
+        if (waypoint.Expire > 0 && waypoint.Expire <= nowUnix)
+        {
+            AppState.RemoveWaypoint(waypoint.Id);
+            summary = $"deleted id=0x{waypoint.Id:x8}";
+            return true;
+        }
+
+        if (!waypoint.HasLatitudeI || !waypoint.HasLongitudeI)
+        {
+            summary = $"id=0x{waypoint.Id:x8} missing lat/lon";
+            return false;
+        }
+
+        var lat = waypoint.LatitudeI / 1e7;
+        var lon = waypoint.LongitudeI / 1e7;
+        var sourceIdHex = $"0x{fromNodeNum:x8}";
+
+        var live = new WaypointLive(waypoint.Id)
+        {
+            SourceNodeNum = fromNodeNum,
+            SourceIdHex = sourceIdHex,
+            Name = waypoint.Name?.Trim() ?? "",
+            Description = waypoint.Description?.Trim() ?? "",
+            Latitude = lat,
+            Longitude = lon,
+            IconCodepoint = waypoint.Icon,
+            LockedToNodeNum = waypoint.LockedTo,
+            ExpireUtc = expireUtc,
+            LastUpdatedUtc = DateTime.UtcNow,
+            ChannelIndex = channelIndex.GetValueOrDefault(0)
+        };
+
+        if (string.IsNullOrWhiteSpace(live.Name))
+            live.Name = $"Waypoint {waypoint.Id:x8}";
+
+        AppState.UpsertWaypoint(live);
+
+        summary = $"{live.DisplayName} ({lat.ToString("0.000000", CultureInfo.InvariantCulture)},{lon.ToString("0.000000", CultureInfo.InvariantCulture)}) id=0x{waypoint.Id:x8}";
         return true;
     }
 

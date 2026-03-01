@@ -67,6 +67,35 @@ public static class ToRadioFactory
         return new ToRadio { Packet = packet };
     }
 
+    public static IMessage CreateWaypointMessage(
+        Waypoint waypoint,
+        uint to,
+        uint channel,
+        out uint packetId)
+    {
+        if (waypoint is null)
+            throw new ArgumentNullException(nameof(waypoint));
+
+        packetId = PacketIdGenerator.Next();
+
+        var packet = new MeshPacket
+        {
+            To = to,
+            Channel = channel,
+            HopLimit = DefaultHopLimit,
+            Id = packetId,
+            WantAck = true,
+            Decoded = new Data
+            {
+                Portnum = PortNum.WaypointApp,
+                Payload = ByteString.CopyFrom(waypoint.ToByteArray()),
+                WantResponse = false
+            }
+        };
+
+        return new ToRadio { Packet = packet };
+    }
+
     public static IMessage CreateNodeInfoRequest(uint to, out uint packetId)
         => CreateRequestMessage(
             to,

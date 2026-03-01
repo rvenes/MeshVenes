@@ -2,10 +2,13 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using MeshVenes.Models;
+using MeshVenes.Protocol;
 using MeshVenes.Services;
+using Meshtastic.Protobufs;
 using Microsoft.Web.WebView2.Core;
 using System;
 using System.Collections.Generic;
@@ -26,6 +29,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
+using MapGeoPoint = MeshVenes.Models.GeoPoint;
 
 namespace MeshVenes.Pages;
 
@@ -33,6 +37,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 {
     private const string LastSelectedNodeKey = "NodesLastSelectedNodeIdHex";
     private static readonly Brush DefaultSignalBrush = new SolidColorBrush(Colors.Gray);
+    private static readonly Brush SnrExcellentBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 76, 175, 80));
+    private static readonly Brush SnrGoodBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 255, 235, 59));
+    private static readonly Brush SnrFairBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 255, 167, 38));
+    private static readonly Brush SnrPoorBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 244, 67, 54));
+    private static readonly Brush SnrUnknownBrush = new SolidColorBrush(Colors.Gray);
     private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
         TypeInfoResolver = new DefaultJsonTypeInfoResolver()
@@ -42,7 +51,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private bool _hideInactive = true;
     private string _filter = "";
-    private SortMode _sortMode = SortMode.LastActive;
+    private SortMode _sortMode = SortMode.LastHeard;
     private readonly DispatcherTimer _throttle = new();
     private readonly DispatcherTimer _filterApplyTimer = new();
     private bool _mapReady;
@@ -90,6 +99,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private string? _traceRouteNodeId;
     private TraceRouteLogEntry? _selectedTraceRouteEntry;
     private bool _isPublicKeyVisible;
+    private bool _isSyncingRouteScroll;
 
     private NodeLive? _selected;
     private string? _lastSelectedNodeIdHex;
@@ -342,6 +352,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(TraceRouteDetailRouteBackVisibility));
             OnChanged(nameof(TraceRouteDetailMetrics));
             OnChanged(nameof(TraceRouteDetailMetricsVisibility));
+            OnChanged(nameof(TraceRouteDetailBackMetrics));
+            OnChanged(nameof(TraceRouteDetailBackMetricsVisibility));
             OnChanged(nameof(CanViewTraceRouteMap));
         }
     }
@@ -402,6 +414,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         string.IsNullOrWhiteSpace(SelectedTraceRouteEntry?.OverlayRouteBackText) ? Visibility.Collapsed : Visibility.Visible;
     public string TraceRouteDetailMetrics => SelectedTraceRouteEntry?.OverlayMetricsText ?? "";
     public Visibility TraceRouteDetailMetricsVisibility => SelectedTraceRouteEntry?.MetricsVisibility ?? Visibility.Collapsed;
+    public string TraceRouteDetailBackMetrics => SelectedTraceRouteEntry?.RouteBackPathText ?? "";
+    public Visibility TraceRouteDetailBackMetricsVisibility => SelectedTraceRouteEntry?.RouteBackDetailVisibility ?? Visibility.Collapsed;
     public bool CanViewTraceRouteMap => SelectedTraceRouteEntry?.CanViewRoute ?? false;
 
     public string NodeCountsText
@@ -421,10 +435,10 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private enum SortMode
     {
-        AlphabeticalAsc,
-        AlphabeticalDesc,
-        LastActive,
-        OldestActive
+        Alphabetical,
+        HopsAway,
+        LastHeard,
+        FavoritesFirst
     }
 
     public NodesPage()
@@ -441,10 +455,10 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(TraceRouteLogCountText));
         };
 
-        SortCombo.Items.Add("Sort: Alphabetical A–Z");
-        SortCombo.Items.Add("Sort: Alphabetical Z–A");
-        SortCombo.Items.Add("Sort: Last active");
-        SortCombo.Items.Add("Sort: Oldest active");
+        SortCombo.Items.Add("Sort: Alphabetical");
+        SortCombo.Items.Add("Sort: Hops away");
+        SortCombo.Items.Add("Sort: Last heard");
+        SortCombo.Items.Add("Sort: Favorites first");
         SortCombo.SelectedIndex = 2;
 
         HideInactiveToggle.IsChecked = _hideInactive;
@@ -457,6 +471,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             n.PropertyChanged += Node_PropertyChanged;
             _allNodes.Add(n);
         }
+        MeshVenes.AppState.Waypoints.CollectionChanged += Waypoints_CollectionChanged;
+        foreach (var waypoint in MeshVenes.AppState.Waypoints)
+            waypoint.PropertyChanged += Waypoint_PropertyChanged;
         AppState.ConnectedNodeChanged += ConnectedNodeChanged;
         AppState.SettingsChanged += AppState_SettingsChanged;
 
@@ -480,7 +497,12 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         };
 
         _throttle.Interval = TimeSpan.FromMilliseconds(350);
-        _throttle.Tick += (_, __) => { _throttle.Stop(); _ = PushAllNodesToMapAsync(); };
+        _throttle.Tick += (_, __) =>
+        {
+            _throttle.Stop();
+            _ = PushAllNodesToMapAsync();
+            _ = PushWaypointsToMapAsync();
+        };
 
         _traceRouteTimer.Interval = TimeSpan.FromSeconds(1);
         _traceRouteTimer.Tick += (_, __) => TraceRouteCooldownTick();
@@ -497,6 +519,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         MeshVenes.AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
         foreach (var n in MeshVenes.AppState.Nodes)
             n.PropertyChanged -= Node_PropertyChanged;
+        MeshVenes.AppState.Waypoints.CollectionChanged -= Waypoints_CollectionChanged;
+        foreach (var waypoint in MeshVenes.AppState.Waypoints)
+            waypoint.PropertyChanged -= Waypoint_PropertyChanged;
 
         DeviceMetricsLogService.SampleAdded -= DeviceMetricsLogService_SampleAdded;
         AppState.ConnectedNodeChanged -= ConnectedNodeChanged;
@@ -688,6 +713,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             {
                 _mapReady = true;
                 _ = PushAllNodesToMapAsync();
+                _ = PushWaypointsToMapAsync();
                 _ = PushSelectionToMapAsync();
                 _ = PushEnabledTracksToMapAsync();
                 TryAutoFitMapOnLoad();
@@ -729,6 +755,20 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                         p.TsUtc.ToString("o", CultureInfo.InvariantCulture)))
                 };
                 MapView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(payload, s_jsonOptions));
+                return;
+            }
+
+            if (type == "waypointUpsert")
+            {
+                if (TryParseWaypointUpsertRequest(root, out var request))
+                    _ = HandleWaypointUpsertRequestAsync(request);
+                return;
+            }
+
+            if (type == "waypointDelete")
+            {
+                if (TryParseWaypointDeleteRequest(root, out var waypointId))
+                    _ = HandleWaypointDeleteRequestAsync(waypointId);
             }
         }
         catch { }
@@ -749,6 +789,237 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         ShowMapFallback($"Map failed to load: {e.WebErrorStatus}");
         _mapConfigured = false;
         _mapInitializationTask = null;
+    }
+
+    private sealed record WaypointUpsertRequest(
+        uint WaypointId,
+        double Latitude,
+        double Longitude,
+        string Name,
+        string Description,
+        string IconGlyph,
+        uint LockedToNodeNum,
+        long? ExpireUnixUtc,
+        uint ChannelIndex);
+
+    private static bool TryParseWaypointUpsertRequest(JsonElement root, out WaypointUpsertRequest request)
+    {
+        request = new WaypointUpsertRequest(0, 0, 0, "", "", "", 0, null, 0);
+
+        if (!root.TryGetProperty("waypoint", out var waypointEl) || waypointEl.ValueKind != JsonValueKind.Object)
+            return false;
+
+        uint waypointId = 0;
+        _ = TryReadUInt(waypointEl, "id", out waypointId);
+
+        if (!TryReadDouble(waypointEl, "lat", out var lat) || !TryReadDouble(waypointEl, "lon", out var lon))
+            return false;
+
+        var name = TryReadString(waypointEl, "name");
+        var description = TryReadString(waypointEl, "description");
+        var iconGlyph = TryReadString(waypointEl, "iconGlyph");
+
+        uint lockedTo = 0;
+        _ = TryReadUInt(waypointEl, "lockedTo", out lockedTo);
+
+        long? expireUnix = null;
+        if (TryReadLong(waypointEl, "expireUnix", out var parsedExpire) && parsedExpire > 0)
+            expireUnix = parsedExpire;
+
+        uint channel = 0;
+        _ = TryReadUInt(waypointEl, "channel", out channel);
+
+        request = new WaypointUpsertRequest(waypointId, lat, lon, name, description, iconGlyph, lockedTo, expireUnix, channel);
+        return true;
+    }
+
+    private static bool TryParseWaypointDeleteRequest(JsonElement root, out uint waypointId)
+    {
+        waypointId = 0;
+        return TryReadUInt(root, "id", out waypointId) && waypointId != 0;
+    }
+
+    private async System.Threading.Tasks.Task HandleWaypointUpsertRequestAsync(WaypointUpsertRequest request)
+    {
+        if (!IsValidMapPosition(request.Latitude, request.Longitude))
+            return;
+
+        if (!RadioClient.Instance.IsConnected)
+        {
+            RadioClient.Instance.AddLogFromUiThread("Waypoint send skipped: radio is not connected.");
+            return;
+        }
+
+        var waypointId = request.WaypointId != 0 ? request.WaypointId : PacketIdGenerator.Next();
+        var expireUtc = request.ExpireUnixUtc.HasValue
+            ? DateTimeOffset.FromUnixTimeSeconds(request.ExpireUnixUtc.Value).UtcDateTime
+            : (DateTime?)null;
+
+        var payload = new Waypoint
+        {
+            Id = waypointId,
+            LatitudeI = (int)Math.Round(request.Latitude * 1e7),
+            LongitudeI = (int)Math.Round(request.Longitude * 1e7),
+            Name = LimitText(string.IsNullOrWhiteSpace(request.Name) ? $"Waypoint {waypointId:x8}" : request.Name.Trim(), 30),
+            Description = LimitText(request.Description?.Trim() ?? "", 100),
+            LockedTo = request.LockedToNodeNum,
+            Icon = WaypointLive.ParseCodepointFromGlyph(request.IconGlyph)
+        };
+
+        if (request.ExpireUnixUtc.HasValue && request.ExpireUnixUtc.Value > 0)
+            payload.Expire = (uint)Math.Clamp(request.ExpireUnixUtc.Value, 1L, uint.MaxValue);
+
+        var sentPacketId = await RadioClient.Instance.SendWaypointAsync(payload, channel: request.ChannelIndex);
+        if (sentPacketId == 0)
+        {
+            RadioClient.Instance.AddLogFromUiThread($"Waypoint send failed: {payload.Name}");
+            return;
+        }
+
+        var sourceNodeNum = Selected is { NodeNum: > 0 } ? (uint)Selected.NodeNum : 0u;
+        var sourceIdHex = sourceNodeNum > 0 ? $"0x{sourceNodeNum:x8}" : (AppState.ConnectedNodeIdHex ?? "");
+        var live = new WaypointLive(waypointId)
+        {
+            SourceNodeNum = sourceNodeNum,
+            SourceIdHex = sourceIdHex,
+            Name = payload.Name,
+            Description = payload.Description,
+            Latitude = request.Latitude,
+            Longitude = request.Longitude,
+            IconCodepoint = payload.Icon,
+            LockedToNodeNum = payload.LockedTo,
+            ExpireUtc = expireUtc,
+            LastUpdatedUtc = DateTime.UtcNow,
+            ChannelIndex = request.ChannelIndex
+        };
+
+        AppState.UpsertWaypoint(live);
+        await PushWaypointsToMapAsync();
+        RadioClient.Instance.AddLogFromUiThread($"Waypoint sent: {live.DisplayName} (0x{waypointId:x8})");
+    }
+
+    private async System.Threading.Tasks.Task HandleWaypointDeleteRequestAsync(uint waypointId)
+    {
+        if (waypointId == 0)
+            return;
+
+        if (!RadioClient.Instance.IsConnected)
+        {
+            RadioClient.Instance.AddLogFromUiThread("Waypoint delete skipped: radio is not connected.");
+            return;
+        }
+
+        var existing = AppState.FindWaypoint(waypointId);
+        var deletePayload = new Waypoint
+        {
+            Id = waypointId,
+            Expire = (uint)Math.Max(1, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 1)
+        };
+
+        if (existing is not null)
+        {
+            deletePayload.Name = LimitText(existing.Name, 30);
+            deletePayload.Description = LimitText(existing.Description, 100);
+            deletePayload.Icon = existing.IconCodepoint;
+            deletePayload.LockedTo = existing.LockedToNodeNum;
+            if (existing.HasPosition)
+            {
+                deletePayload.LatitudeI = (int)Math.Round(existing.Latitude * 1e7);
+                deletePayload.LongitudeI = (int)Math.Round(existing.Longitude * 1e7);
+            }
+        }
+
+        var channel = existing?.ChannelIndex ?? 0u;
+        var sentPacketId = await RadioClient.Instance.SendWaypointAsync(deletePayload, channel: channel);
+        if (sentPacketId == 0)
+        {
+            RadioClient.Instance.AddLogFromUiThread($"Waypoint delete failed: 0x{waypointId:x8}");
+            return;
+        }
+
+        AppState.RemoveWaypoint(waypointId);
+        await PushWaypointsToMapAsync();
+        RadioClient.Instance.AddLogFromUiThread($"Waypoint deleted: 0x{waypointId:x8}");
+    }
+
+    private static string LimitText(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value) || maxLength <= 0)
+            return "";
+
+        var text = value.Trim();
+        return text.Length <= maxLength ? text : text[..maxLength];
+    }
+
+    private static string TryReadString(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var value))
+            return "";
+
+        if (value.ValueKind == JsonValueKind.String)
+            return value.GetString() ?? "";
+
+        if (value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+            return value.ToString();
+
+        return "";
+    }
+
+    private static bool TryReadUInt(JsonElement root, string propertyName, out uint value)
+    {
+        value = 0;
+        if (!root.TryGetProperty(propertyName, out var element))
+            return false;
+
+        if (element.ValueKind == JsonValueKind.Number)
+            return element.TryGetUInt32(out value);
+
+        if (element.ValueKind == JsonValueKind.String &&
+            uint.TryParse(element.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryReadLong(JsonElement root, string propertyName, out long value)
+    {
+        value = 0;
+        if (!root.TryGetProperty(propertyName, out var element))
+            return false;
+
+        if (element.ValueKind == JsonValueKind.Number)
+            return element.TryGetInt64(out value);
+
+        if (element.ValueKind == JsonValueKind.String &&
+            long.TryParse(element.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryReadDouble(JsonElement root, string propertyName, out double value)
+    {
+        value = 0;
+        if (!root.TryGetProperty(propertyName, out var element))
+            return false;
+
+        if (element.ValueKind == JsonValueKind.Number)
+            return element.TryGetDouble(out value);
+
+        if (element.ValueKind == JsonValueKind.String &&
+            double.TryParse(element.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+        {
+            value = parsed;
+            return true;
+        }
+
+        return false;
     }
 
     private void ShowMapFallback(string message)
@@ -788,6 +1059,43 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         TriggerMapUpdate();
     }
 
+    private void Waypoints_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (!EnsureOnUi(() => Waypoints_CollectionChanged(sender, e)))
+            return;
+
+        if (e.NewItems is not null)
+        {
+            foreach (WaypointLive waypoint in e.NewItems)
+                waypoint.PropertyChanged += Waypoint_PropertyChanged;
+        }
+
+        if (e.OldItems is not null)
+        {
+            foreach (WaypointLive waypoint in e.OldItems)
+                waypoint.PropertyChanged -= Waypoint_PropertyChanged;
+        }
+
+        TriggerMapUpdate();
+    }
+
+    private void Waypoint_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!EnsureOnUi(() => Waypoint_PropertyChanged(sender, e)))
+            return;
+
+        if (e.PropertyName is nameof(WaypointLive.Latitude)
+            or nameof(WaypointLive.Longitude)
+            or nameof(WaypointLive.Name)
+            or nameof(WaypointLive.Description)
+            or nameof(WaypointLive.IconCodepoint)
+            or nameof(WaypointLive.ExpireUtc)
+            or nameof(WaypointLive.LockedToNodeNum))
+        {
+            TriggerMapUpdate();
+        }
+    }
+
     private void Node_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (!EnsureOnUi(() => Node_PropertyChanged(sender, e)))
@@ -822,7 +1130,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude) or nameof(NodeLive.LastPositionUtc)
             or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR) or nameof(NodeLive.ViaMqtt)
             or nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey)
-            or nameof(NodeLive.IsFavorite) or nameof(NodeLive.NodeNum) or nameof(NodeLive.IsIgnored))
+            or nameof(NodeLive.IsFavorite) or nameof(NodeLive.NodeNum) or nameof(NodeLive.IsIgnored)
+            or nameof(NodeLive.HopsAway))
         {
             OnChanged(nameof(NodeCountsText));
             ScheduleFilterApply();
@@ -1144,10 +1453,10 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         _sortMode = SortCombo.SelectedIndex switch
         {
-            1 => SortMode.AlphabeticalDesc,
-            2 => SortMode.LastActive,
-            3 => SortMode.OldestActive,
-            _ => SortMode.AlphabeticalAsc
+            1 => SortMode.HopsAway,
+            2 => SortMode.LastHeard,
+            3 => SortMode.FavoritesFirst,
+            _ => SortMode.Alphabetical
         };
 
         ApplyNodeSorting();
@@ -1163,7 +1472,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         var indexed = VisibleNodes.Select((item, index) => (item, index));
         var sorted = _sortMode switch
         {
-            SortMode.LastActive => indexed
+            SortMode.LastHeard => indexed
                 .OrderByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
                 .ThenByDescending(entry => entry.item.LastHeardUtc)
                 .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
@@ -1171,17 +1480,21 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 .ThenBy(entry => entry.index)
                 .Select(entry => entry.item)
                 .ToList(),
-            SortMode.OldestActive => indexed
-                .OrderByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
-                .ThenBy(entry => entry.item.LastHeardUtc)
+            SortMode.HopsAway => indexed
+                .OrderBy(entry => entry.item.HopsAway ?? int.MaxValue)
+                .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(entry => entry.item.LastHeardUtc)
                 .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.index)
                 .Select(entry => entry.item)
                 .ToList(),
-            SortMode.AlphabeticalDesc => indexed
-                .OrderByDescending(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+            SortMode.FavoritesFirst => indexed
+                .OrderByDescending(entry => entry.item.IsFavorite)
+                .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(entry => entry.item.LastHeardUtc)
+                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(entry => entry.index)
                 .Select(entry => entry.item)
                 .ToList(),
@@ -1255,21 +1568,25 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         return _sortMode switch
         {
-            SortMode.LastActive => nodes
+            SortMode.LastHeard => nodes
                 .OrderByDescending(n => n.LastHeardUtc != DateTime.MinValue)
                 .ThenByDescending(n => n.LastHeardUtc)
                 .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            SortMode.OldestActive => nodes
-                .OrderByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenBy(n => n.LastHeardUtc)
+            SortMode.HopsAway => nodes
+                .OrderBy(n => n.HopsAway ?? int.MaxValue)
+                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(n => n.LastHeardUtc)
                 .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            SortMode.AlphabeticalDesc => nodes
-                .OrderByDescending(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
+            SortMode.FavoritesFirst => nodes
+                .OrderByDescending(n => n.IsFavorite)
+                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(n => n.LastHeardUtc)
+                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             _ => nodes
                 .OrderBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
@@ -1363,6 +1680,38 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         await System.Threading.Tasks.Task.CompletedTask;
     }
 
+    private async System.Threading.Tasks.Task PushWaypointsToMapAsync()
+    {
+        if (!_mapReady || MapView.CoreWebView2 is null)
+            return;
+
+        AppState.PurgeExpiredWaypoints();
+
+        var waypoints = AppState.Waypoints
+            .Where(w => !w.IsExpired)
+            .Where(w => w.HasPosition)
+            .Select(w => new
+            {
+                id = w.WaypointId,
+                name = w.DisplayName,
+                description = w.Description,
+                lat = w.Latitude,
+                lon = w.Longitude,
+                iconGlyph = w.IconGlyph,
+                iconCodepoint = w.IconCodepoint,
+                lockedTo = w.LockedToNodeNum,
+                expireUnix = w.ExpireUnixUtc,
+                sourceNodeNum = w.SourceNodeNum,
+                sourceIdHex = w.SourceIdHex,
+                updatedUtc = w.LastUpdatedUtc.ToString("o", CultureInfo.InvariantCulture),
+                channel = w.ChannelIndex
+            })
+            .ToArray();
+
+        MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "waypoints", waypoints }, s_jsonOptions));
+        await System.Threading.Tasks.Task.CompletedTask;
+    }
+
     private async System.Threading.Tasks.Task PushSelectionToMapAsync()
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
@@ -1413,7 +1762,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             .Where(p => !string.Equals(p.Src, "nodeinfo_bootstrap", StringComparison.OrdinalIgnoreCase))
             .Where(p => IsValidMapPosition(p.Lat, p.Lon))
             .OrderBy(p => p.TsUtc)
-            .Select(p => new GeoPoint(p.Lat, p.Lon))
+            .Select(p => new MapGeoPoint(p.Lat, p.Lon))
             .ToArray();
 
         SendTrackSet(nodeId, points);
@@ -1658,6 +2007,48 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         _selectedPositionEntry = PositionLogList.SelectedItem as PositionLogEntry;
         OnChanged(nameof(HasPositionSelection));
+    }
+
+    private void DeviceMetricsLogList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DeviceMetricsLogList.SelectedItem is DeviceMetricSample selectedSample)
+        {
+            DeviceMetricsGraph.HighlightSample(selectedSample.Timestamp);
+        }
+        else
+        {
+            DeviceMetricsGraph.ClearHighlight();
+        }
+    }
+
+    private void EnvironmentMetricsLogList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (EnvironmentMetricsLogList.SelectedItem is EnvironmentMetricSample selectedSample)
+        {
+            EnvironmentMetricsGraph.HighlightSample(selectedSample.TimestampUtc);
+        }
+        else
+        {
+            EnvironmentMetricsGraph.ClearHighlight();
+        }
+    }
+
+    private void DeviceMetricsLogList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not DeviceMetricSample sample)
+            return;
+
+        DeviceMetricsLogList.SelectedItem = sample;
+        DeviceMetricsGraph.HighlightSample(sample.Timestamp);
+    }
+
+    private void EnvironmentMetricsLogList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not EnvironmentMetricSample sample)
+            return;
+
+        EnvironmentMetricsLogList.SelectedItem = sample;
+        EnvironmentMetricsGraph.HighlightSample(sample.TimestampUtc);
     }
 
     private void PositionLogList_ItemClick(object _, ItemClickEventArgs e)
@@ -2249,20 +2640,582 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
     }
 
+    private void TraceRouteEntryViewMap_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not TraceRouteLogEntry entry)
+            return;
+
+        SelectedTraceRouteEntry = entry;
+        if (TraceRouteDetailsTip is not null)
+            TraceRouteDetailsTip.IsOpen = false;
+
+        ViewTraceRouteOnMap(entry);
+    }
+
+    private void RouteContentScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (sender is not ScrollViewer source)
+            return;
+
+        UpdateRouteHorizontalBarMetrics(source);
+        if (_isSyncingRouteScroll)
+            return;
+
+        SyncRouteHorizontalScroll(source, "RouteHorizontalBarScroll");
+    }
+
+    private void RouteHorizontalBarScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (_isSyncingRouteScroll || sender is not ScrollViewer source)
+            return;
+
+        SyncRouteHorizontalScroll(source, "RouteContentScroll");
+    }
+
+    private void RouteContentScroll_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is ScrollViewer source)
+            UpdateRouteHorizontalBarMetrics(source);
+    }
+
+    private void RouteContentScroll_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is ScrollViewer source)
+            UpdateRouteHorizontalBarMetrics(source);
+    }
+
+    private void SyncRouteHorizontalScroll(ScrollViewer source, string peerName)
+    {
+        var peer = FindPeerScrollViewerForTemplate(source, peerName);
+        if (peer is null)
+            return;
+
+        if (Math.Abs(peer.HorizontalOffset - source.HorizontalOffset) < 0.5)
+            return;
+
+        try
+        {
+            _isSyncingRouteScroll = true;
+            peer.ChangeView(source.HorizontalOffset, null, null, disableAnimation: true);
+        }
+        finally
+        {
+            _isSyncingRouteScroll = false;
+        }
+    }
+
+    private void UpdateRouteHorizontalBarMetrics(ScrollViewer routeContentScroll)
+    {
+        var proxyScroll = FindPeerScrollViewerForTemplate(routeContentScroll, "RouteHorizontalBarScroll");
+        var proxyContent = FindPeerElementForTemplate<FrameworkElement>(routeContentScroll, "RouteHorizontalBarContent");
+        if (proxyScroll is null || proxyContent is null)
+            return;
+
+        var proxyViewport = proxyScroll.ActualWidth;
+        if (proxyViewport <= 0)
+            return;
+
+        var contentWidth = proxyViewport + Math.Max(0, routeContentScroll.ScrollableWidth);
+        proxyContent.Width = Math.Max(proxyViewport, contentWidth);
+        var hasHorizontalOverflow = routeContentScroll.ScrollableWidth > 0.5;
+        proxyScroll.IsEnabled = hasHorizontalOverflow;
+
+        if (!hasHorizontalOverflow && proxyScroll.HorizontalOffset > 0)
+            proxyScroll.ChangeView(0, null, null, disableAnimation: true);
+    }
+
+    private static T? FindPeerElementForTemplate<T>(FrameworkElement source, string peerName) where T : class
+    {
+        for (DependencyObject? current = source; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is FrameworkElement fe &&
+                fe.FindName(peerName) is T peer &&
+                !ReferenceEquals(peer, source))
+            {
+                return peer;
+            }
+        }
+
+        return null;
+    }
+
+    private static ScrollViewer? FindPeerScrollViewerForTemplate(FrameworkElement source, string peerName)
+    {
+        for (DependencyObject? current = source; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is FrameworkElement fe &&
+                fe.FindName(peerName) is ScrollViewer peer &&
+                !ReferenceEquals(peer, source))
+            {
+                return peer;
+            }
+        }
+
+        return null;
+    }
+
+    private void TraceRouteHorizontalScroll_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is not ScrollViewer source)
+            return;
+
+        var point = e.GetCurrentPoint(source);
+        var props = point.Properties;
+        var delta = props.MouseWheelDelta;
+        if (delta == 0)
+            return;
+
+        if (props.IsHorizontalMouseWheel &&
+            string.Equals(source.Name, "RouteHorizontalBarScroll", StringComparison.Ordinal))
+        {
+            var targetHorizontal = Math.Max(0, source.HorizontalOffset - delta);
+            source.ChangeView(targetHorizontal, null, null, disableAnimation: true);
+            SyncRouteHorizontalScroll(source, "RouteHorizontalBarScroll");
+            SyncRouteHorizontalScroll(source, "RouteContentScroll");
+            e.Handled = true;
+            return;
+        }
+
+        e.Handled = true;
+
+        var parentScroller = FindAncestorScrollViewer(source);
+        if (parentScroller is null || ReferenceEquals(parentScroller, source))
+            parentScroller = FindScrollViewer(TraceRouteLogList);
+
+        if (parentScroller is null || ReferenceEquals(parentScroller, source))
+            return;
+
+        var targetOffset = Math.Max(0, parentScroller.VerticalOffset - delta);
+        parentScroller.ChangeView(null, targetOffset, null, disableAnimation: true);
+    }
+
+    private static ScrollViewer? FindAncestorScrollViewer(DependencyObject start)
+    {
+        var current = VisualTreeHelper.GetParent(start);
+        while (current is not null)
+        {
+            if (current is ScrollViewer viewer)
+                return viewer;
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
+    }
+
+    private void TraceRouteLogList_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is not ListView list)
+            return;
+
+        var props = e.GetCurrentPoint(list).Properties;
+        if (props.IsHorizontalMouseWheel)
+            return;
+
+        var delta = props.MouseWheelDelta;
+        if (delta == 0)
+            return;
+
+        var listScroller = FindScrollViewer(list);
+        if (listScroller is null)
+            return;
+
+        var targetOffset = Math.Max(0, listScroller.VerticalOffset - delta);
+        listScroller.ChangeView(null, targetOffset, null, disableAnimation: true);
+        e.Handled = true;
+    }
+
+    private async void TraceRouteHeader_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not TraceRouteLogEntry entry)
+            return;
+
+        SelectedTraceRouteEntry = entry;
+        await ShowTraceRouteHeaderDialogAsync(entry);
+    }
+
+    private void TraceRouteNodeInfo_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not RouteDisplayNode node)
+            return;
+
+        NavigateToNodeInList(node.NodeNum);
+    }
+
+    private void NavigateToNodeInList(uint nodeNum)
+    {
+        if (nodeNum == 0)
+            return;
+
+        var target = MeshVenes.AppState.Nodes.FirstOrDefault(n => n.NodeNum == nodeNum);
+        if (target is null)
+            return;
+
+        var wasHiddenByInactive = _hideInactive && IsHiddenByInactive(target);
+        if (wasHiddenByInactive)
+        {
+            _hideInactive = false;
+            if (HideInactiveToggle is not null)
+                HideInactiveToggle.IsChecked = false;
+        }
+
+        if (SearchBox is not null && !string.IsNullOrWhiteSpace(SearchBox.Text))
+            SearchBox.Text = string.Empty;
+
+        RebuildVisibleNodes();
+        ApplyNodeSorting();
+
+        Selected = target;
+        NodesList.SelectedItem = target;
+        NodesList.ScrollIntoView(target);
+    }
+
     private void TraceRouteViewMap_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedTraceRouteEntry is null || !SelectedTraceRouteEntry.CanViewRoute)
             return;
 
+        ViewTraceRouteOnMap(SelectedTraceRouteEntry);
+    }
+
+    private async System.Threading.Tasks.Task ShowTraceRouteHeaderDialogAsync(TraceRouteLogEntry entry)
+    {
+        var rootWidth = XamlRoot?.Size.Width ?? 1400;
+        var rootHeight = XamlRoot?.Size.Height ?? 900;
+        var desiredWidth = Math.Clamp(rootWidth - 100, 980, 1320);
+        var desiredHeight = Math.Clamp(rootHeight - 70, 860, 1180);
+
+        var dialogMap = new WebView2
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            MinHeight = 700
+        };
+
+        var detailsPanel = BuildTraceRouteDetailPanel(entry);
+        var detailsScroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = detailsPanel,
+            Padding = new Thickness(10),
+            MaxHeight = Math.Max(180, Math.Min(260, desiredHeight * 0.30))
+        };
+
+        var grid = new Grid
+        {
+            Width = desiredWidth,
+            Height = desiredHeight
+        };
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var detailBorder = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 60, 60, 60)),
+            Background = new SolidColorBrush(ColorHelper.FromArgb(255, 22, 22, 22)),
+            Child = detailsScroll,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        Grid.SetRow(detailBorder, 0);
+        grid.Children.Add(detailBorder);
+
+        var mapBorder = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 60, 60, 60)),
+            Background = new SolidColorBrush(ColorHelper.FromArgb(255, 18, 18, 18)),
+            Child = dialogMap
+        };
+        Grid.SetRow(mapBorder, 1);
+        grid.Children.Add(mapBorder);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Trace route details",
+            PrimaryButtonText = "Copy details",
+            CloseButtonText = "Close",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot,
+            Content = grid
+        };
+        dialog.Resources["ContentDialogMaxWidth"] = desiredWidth + 36;
+        dialog.Resources["ContentDialogMinWidth"] = desiredWidth;
+        dialog.PrimaryButtonClick += (_, _) => _ = ClipboardUtil.TrySetText(BuildTraceRouteDetailsCopyText(entry));
+
+        _ = InitializeTraceRouteDialogMapAsync(dialogMap, entry);
+        await dialog.ShowAsync();
+    }
+
+    private async System.Threading.Tasks.Task InitializeTraceRouteDialogMapAsync(WebView2 dialogMap, TraceRouteLogEntry entry)
+    {
+        try
+        {
+            await dialogMap.EnsureCoreWebView2Async();
+            var core = dialogMap.CoreWebView2;
+            if (core is null)
+                return;
+
+            var mapFolder = _mapFolderPath;
+            if (string.IsNullOrWhiteSpace(mapFolder) || !Directory.Exists(mapFolder))
+            {
+                var installPath = ResolveInstallPath();
+                mapFolder = Path.GetFullPath(Path.Combine(installPath, "Assets"));
+            }
+
+            if (string.IsNullOrWhiteSpace(mapFolder) || !Directory.Exists(mapFolder))
+                return;
+
+            var routePayload = JsonSerializer.Serialize(new
+            {
+                type = "routeSet",
+                forward = new { points = entry.ForwardPoints, qualities = entry.ForwardQualities },
+                back = new { points = entry.BackPoints, qualities = entry.BackQualities }
+            }, s_jsonOptions);
+
+            var sent = false;
+            void SendOnce()
+            {
+                if (sent || dialogMap.CoreWebView2 is null)
+                    return;
+
+                sent = true;
+                dialogMap.CoreWebView2.PostWebMessageAsJson(routePayload);
+            }
+
+            core.WebMessageReceived += (_, args) =>
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(args.WebMessageAsJson);
+                    if (doc.RootElement.TryGetProperty("type", out var t) &&
+                        string.Equals(t.GetString(), "ready", StringComparison.OrdinalIgnoreCase))
+                    {
+                        SendOnce();
+                    }
+                }
+                catch
+                {
+                    // ignore dialog map parse errors
+                }
+            };
+            dialogMap.NavigationCompleted += async (_, navArgs) =>
+            {
+                if (navArgs.IsSuccess)
+                {
+                    if (dialogMap.CoreWebView2 is not null)
+                        await dialogMap.CoreWebView2.ExecuteScriptAsync("window.dispatchEvent(new Event('resize'));");
+                    SendOnce();
+                }
+            };
+
+            core.SetVirtualHostNameToFolderMapping("routemap.local", mapFolder, CoreWebView2HostResourceAccessKind.Allow);
+            dialogMap.Source = new Uri("https://routemap.local/Map/map.html");
+        }
+        catch
+        {
+            // dialog map is optional; detail panel remains useful even if map init fails
+        }
+    }
+
+    private StackPanel BuildTraceRouteDetailPanel(TraceRouteLogEntry entry)
+    {
+        var panel = new StackPanel { Spacing = 10 };
+
+        var allSnrValues = entry.ForwardDisplaySegments
+            .Concat(entry.BackDisplaySegments)
+            .Where(s => !string.IsNullOrWhiteSpace(s.SnrText) && s.SnrText != "--")
+            .Select(s => TryParseSnrDb(s.SnrText))
+            .Where(v => v.HasValue)
+            .Select(v => v!.Value)
+            .ToList();
+
+        var totalKm = entry.ForwardDisplaySegments
+            .Concat(entry.BackDisplaySegments)
+            .Select(s => TryParseDistanceKm(s.DistanceText))
+            .Where(v => v.HasValue)
+            .Sum(v => v!.Value);
+
+        var headerRssi = TryExtractHeaderRssi(entry.HeaderText);
+        var qualityText = allSnrValues.Count > 0
+            ? $"min {allSnrValues.Min().ToString("0", CultureInfo.InvariantCulture)} dB / avg {allSnrValues.Average().ToString("0.0", CultureInfo.InvariantCulture)} dB"
+            : "not available";
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Timestamp: {entry.TimestampUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}",
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Hops: {entry.HopCount} | Total km: {(totalKm > 0 ? totalKm.ToString("0.0", CultureInfo.InvariantCulture) : "--")} | RSSI: {(headerRssi.HasValue ? headerRssi.Value.ToString("0", CultureInfo.InvariantCulture) : "--")}",
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Route quality: {qualityText}",
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Forward route: {BuildFullRouteLine(entry.ForwardDisplayNodes)}",
+            FontFamily = new FontFamily("Consolas"),
+            TextWrapping = TextWrapping.WrapWholeWords
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Forward links: {BuildSegmentOverviewLine(entry.ForwardDisplayNodes, entry.ForwardDisplaySegments)}",
+            FontFamily = new FontFamily("Consolas"),
+            TextWrapping = TextWrapping.WrapWholeWords
+        });
+        if (entry.BackDisplayNodes.Count >= 2)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"Back route: {BuildFullRouteLine(entry.BackDisplayNodes)}",
+                FontFamily = new FontFamily("Consolas"),
+                TextWrapping = TextWrapping.WrapWholeWords
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"Back links: {BuildSegmentOverviewLine(entry.BackDisplayNodes, entry.BackDisplaySegments)}",
+                FontFamily = new FontFamily("Consolas"),
+                TextWrapping = TextWrapping.WrapWholeWords
+            });
+        }
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Nodes",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+
+        var uniqueNodes = entry.ForwardDisplayNodes
+            .Concat(entry.BackDisplayNodes)
+            .GroupBy(n => n.NodeId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+        foreach (var node in uniqueNodes)
+        {
+            var positionText = node.HasPosition && node.Latitude.HasValue && node.Longitude.HasValue
+                ? $"{node.Latitude.Value.ToString("0.000000", CultureInfo.InvariantCulture)}, {node.Longitude.Value.ToString("0.000000", CultureInfo.InvariantCulture)}"
+                : "No position";
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"LongName: {node.FullName}\nShortName: {node.ShortName}\nShortId: {node.ShortId}\nNodeId: {node.NodeId}\nPosition: {positionText}",
+                FontFamily = new FontFamily("Consolas"),
+                TextWrapping = TextWrapping.WrapWholeWords
+            });
+        }
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Per-hop details",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+
+        AppendHopDetailRows(panel, "FWD", entry.ForwardDisplayNodes, entry.ForwardDisplaySegments, headerRssi);
+        AppendHopDetailRows(panel, "BACK", entry.BackDisplayNodes, entry.BackDisplaySegments, headerRssi);
+
+        return panel;
+    }
+
+    private static string BuildFullRouteLine(IReadOnlyList<RouteDisplayNode> nodes)
+    {
+        if (nodes.Count == 0)
+            return "(not received)";
+
+        return string.Join(" -> ", nodes.Select(n => $"{n.FullName} {n.ShortId}"));
+    }
+
+    private static string BuildSegmentOverviewLine(
+        IReadOnlyList<RouteDisplayNode> nodes,
+        IReadOnlyList<RouteDisplaySegment> segments)
+    {
+        if (nodes.Count < 2 || segments.Count == 0)
+            return "(not received)";
+
+        var parts = new List<string>();
+        var segmentCount = Math.Min(nodes.Count - 1, segments.Count);
+        for (var i = 0; i < segmentCount; i++)
+        {
+            var segment = segments[i];
+            if (string.IsNullOrWhiteSpace(segment.DistanceText) && string.IsNullOrWhiteSpace(segment.SnrText))
+                continue;
+
+            var from = nodes[i].ShortId;
+            var to = nodes[i + 1].ShortId;
+            var distance = string.IsNullOrWhiteSpace(segment.DistanceText) ? "--km" : segment.DistanceText;
+            var snr = string.IsNullOrWhiteSpace(segment.SnrText) ? "--" : segment.SnrText;
+            parts.Add($"{from}->{to}: {distance} {snr}");
+        }
+
+        return parts.Count == 0 ? "(not received)" : string.Join(" | ", parts);
+    }
+
+    private static void AppendHopDetailRows(
+        Panel host,
+        string direction,
+        IReadOnlyList<RouteDisplayNode> nodes,
+        IReadOnlyList<RouteDisplaySegment> segments,
+        double? rssi)
+    {
+        if (nodes.Count < 2 || segments.Count == 0)
+            return;
+
+        var segmentCount = Math.Min(nodes.Count - 1, segments.Count);
+        for (var i = 0; i < segmentCount; i++)
+        {
+            var seg = segments[i];
+            if (string.IsNullOrWhiteSpace(seg.DistanceText) && string.IsNullOrWhiteSpace(seg.SnrText))
+                continue;
+
+            var line = new TextBlock
+            {
+                FontFamily = new FontFamily("Consolas"),
+                TextWrapping = TextWrapping.WrapWholeWords
+            };
+            line.Inlines.Add(new Run { Text = $"{direction} {nodes[i].FullName} -> {nodes[i + 1].FullName} | {seg.DistanceText} | " });
+            line.Inlines.Add(new Run { Text = seg.SnrText, Foreground = seg.SnrBrush });
+            line.Inlines.Add(new Run { Text = $" | RSSI {(rssi.HasValue ? rssi.Value.ToString("0", CultureInfo.InvariantCulture) : "--")} dB" });
+            host.Children.Add(line);
+        }
+    }
+
+    private static string BuildTraceRouteDetailsCopyText(TraceRouteLogEntry entry)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(entry.HeaderText);
+        sb.AppendLine(entry.PathText);
+        if (!string.IsNullOrWhiteSpace(entry.OverlayMetricsText))
+            sb.AppendLine(entry.OverlayMetricsText);
+        if (!string.IsNullOrWhiteSpace(entry.RouteBackHeaderText))
+            sb.AppendLine(entry.RouteBackHeaderText);
+        if (!string.IsNullOrWhiteSpace(entry.RouteBackPathText))
+            sb.AppendLine(entry.RouteBackPathText);
+        return sb.ToString().TrimEnd();
+    }
+
+    private void ViewTraceRouteOnMap(TraceRouteLogEntry entry)
+    {
         if (!_mapReady || MapView.CoreWebView2 is null)
             return;
 
         DetailsTabs.SelectedIndex = 0;
         SendRouteSet(
-            SelectedTraceRouteEntry.ForwardPoints,
-            SelectedTraceRouteEntry.ForwardQualities,
-            SelectedTraceRouteEntry.BackPoints,
-            SelectedTraceRouteEntry.BackQualities);
+            entry.ForwardPoints,
+            entry.ForwardQualities,
+            entry.BackPoints,
+            entry.BackQualities);
     }
 
     private void RefreshTraceRouteEntries()
@@ -2887,7 +3840,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 .Where(p => !string.Equals(p.Src, "nodeinfo_bootstrap", StringComparison.OrdinalIgnoreCase))
                 .Where(p => IsValidMapPosition(p.Lat, p.Lon))
                 .OrderBy(p => p.TsUtc)
-                .Select(p => new GeoPoint(p.Lat, p.Lon))
+                .Select(p => new MapGeoPoint(p.Lat, p.Lon))
                 .ToArray();
 
             SendTrackSet(nodeId, points);
@@ -2917,7 +3870,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         SendTrackAppend(nodeId, point.Lat, point.Lon);
     }
 
-    private void SendTrackSet(string nodeId, IReadOnlyList<GeoPoint> points)
+    private void SendTrackSet(string nodeId, IReadOnlyList<MapGeoPoint> points)
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
         var payload = new { type = "trackSet", idHex = nodeId, points };
@@ -2927,7 +3880,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private void SendTrackAppend(string nodeId, double lat, double lon)
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
-        var payload = new { type = "trackAppend", idHex = nodeId, point = new GeoPoint(lat, lon) };
+        var payload = new { type = "trackAppend", idHex = nodeId, point = new MapGeoPoint(lat, lon) };
         MapView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(payload, s_jsonOptions));
     }
 
@@ -3081,7 +4034,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         var summary = parts.Length > 1 ? parts[1] : "";
 
         var timestamp = TryParseTimestamp(tsPart);
-        var tsText = timestamp?.ToLocalTime().ToString("yyyy.MM.dd HH:mm:ss", CultureInfo.InvariantCulture) ?? tsPart;
+        var tsText = timestamp?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) ?? tsPart;
 
         var parsed = ParseTraceRouteSummary(summary);
         var isActive = parsed.IsActive;
@@ -3091,8 +4044,12 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         {
             var noResponseFrom = ResolveNodeIdentityDetailed(parsed.FromNode);
             var noResponseTo = ResolveNodeIdentityDetailed(parsed.ToNode);
-            var noResponseHeader = $"{tag} {tsText} - 0 hops";
+            var noResponseHeader = $"{tag} {tsText} · 0 hops · -- km · RSSI --";
             var noResponseLine = $"Route: {noResponseFrom} -> {noResponseTo} (no response)";
+            var noResponseRouteNodes = BuildDisplayRouteNodes(Array.Empty<uint>(), parsed.FromNode, parsed.ToNode);
+            var noResponseDisplayNodes = BuildRouteDisplayNodes(noResponseRouteNodes);
+            var noResponseDisplaySegments = BuildRouteDisplaySegments(noResponseRouteNodes, Array.Empty<int>(), out _);
+            var noResponseContentWidth = BuildRouteContentWidth(noResponseDisplayNodes, Array.Empty<RouteDisplayNode>());
             return new TraceRouteLogEntry(
                 rawLine,
                 timestamp?.UtcDateTime ?? DateTime.MinValue,
@@ -3110,7 +4067,12 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 Array.Empty<RouteMapPoint>(),
                 Array.Empty<double?>(),
                 Array.Empty<double?>(),
-                false);
+                false,
+                noResponseContentWidth,
+                noResponseDisplayNodes,
+                noResponseDisplaySegments,
+                Array.Empty<RouteDisplayNode>(),
+                Array.Empty<RouteDisplaySegment>());
         }
 
         var hasForward = parsed.Route.Count > 0;
@@ -3137,31 +4099,42 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         var fromText = ResolveNodeIdentityDetailed(fromNode);
         var toText = ResolveNodeIdentityDetailed(toNode);
-
-        var header = new StringBuilder();
         var forwardHopCount = CountRelayHops(forwardRouteNodes, parsed.FromNode, parsed.ToNode);
         var backHopCount = CountRelayHops(backRouteNodes, parsed.ToNode, parsed.FromNode);
         var hopCount = hasForward ? forwardHopCount : (showBack ? backHopCount : forwardHopCount);
-        header.Append(tag).Append(' ').Append(tsText).Append(" - ").Append(hopCount).Append(" hops");
-        if (parsed.Channel.HasValue)
-            header.Append(" | Ch ").Append(parsed.Channel.Value);
+
+        var forwardDisplayNodes = BuildRouteDisplayNodes(forwardRouteNodes);
+        var forwardDisplaySegments = BuildRouteDisplaySegments(forwardRouteNodes, parsed.SnrTowards, out var forwardTotalKm);
+        var header = BuildTraceHeaderLine(tag, tsText, hopCount, forwardTotalKm, parsed.RxRssi);
 
         var routeLine = BuildRouteDisplayLine("Route", forwardRouteNodes, fromText, toText);
         if (forwardRouteNodes.Count < 2 && fromNode.HasValue && toNode.HasValue)
             routeLine = $"Route: {fromText} -> {toText}";
+        if (forwardTotalKm.HasValue)
+            routeLine = $"{routeLine} (Total km: {forwardTotalKm.Value.ToString("0.#", CultureInfo.InvariantCulture)})";
+        var forwardDetailLine = BuildFullSegmentLine("Links", forwardRouteNodes, parsed.SnrTowards, includeRxRssi: true, parsed.RxRssi);
 
         string? routeBackLine = null;
+        string? routeBackDetailLine = null;
+        IReadOnlyList<RouteDisplayNode> backDisplayNodes = Array.Empty<RouteDisplayNode>();
+        IReadOnlyList<RouteDisplaySegment> backDisplaySegments = Array.Empty<RouteDisplaySegment>();
         if (showBack)
         {
             var backFromText = ResolveNodeIdentityDetailed(parsed.ToNode ?? backRouteNodes[0]);
             var backToText = ResolveNodeIdentityDetailed(parsed.FromNode ?? backRouteNodes[^1]);
             routeBackLine = BuildRouteDisplayLine("Route Back", backRouteNodes, backFromText, backToText);
+            backDisplayNodes = BuildRouteDisplayNodes(backRouteNodes);
+            backDisplaySegments = BuildRouteDisplaySegments(backRouteNodes, parsed.SnrBack, out var backTotalKm);
+            if (backTotalKm.HasValue)
+                routeBackLine = $"{routeBackLine} (Total km: {backTotalKm.Value.ToString("0.#", CultureInfo.InvariantCulture)})";
+            routeBackDetailLine = BuildFullSegmentLine("Back links", backRouteNodes, parsed.SnrBack, includeRxRssi: false, null);
         }
+        var routeContentWidth = BuildRouteContentWidth(forwardDisplayNodes, backDisplayNodes);
 
-        var overlayHeader = header.ToString();
+        var overlayHeader = header;
         var overlayRoute = routeLine;
         var overlayBack = routeBackLine;
-        var overlayMetrics = BuildOverlayMetrics(parsed);
+        var overlayMetrics = BuildPopupMetrics(parsed);
 
         var (forwardPoints, forwardQualities) = BuildRouteMapPoints(parsed.Route, parsed.FromNode, parsed.ToNode, parsed.SnrTowards);
         var (backPoints, backQualities) = BuildRouteMapPoints(backRoute, parsed.ToNode, parsed.FromNode, parsed.SnrBack);
@@ -3170,21 +4143,26 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         return new TraceRouteLogEntry(
             rawLine,
             timestamp?.UtcDateTime ?? DateTime.MinValue,
-            header.ToString(),
+            header,
             routeLine,
             routeBackLine,
-            null,
+            routeBackDetailLine,
             overlayHeader,
             overlayRoute,
             overlayBack,
-            overlayMetrics,
+            forwardDetailLine ?? overlayMetrics,
             isPassive,
             hopCount,
             forwardPoints,
             backPoints,
             forwardQualities,
             backQualities,
-            canViewRoute);
+            canViewRoute,
+            routeContentWidth,
+            forwardDisplayNodes,
+            forwardDisplaySegments,
+            backDisplayNodes,
+            backDisplaySegments);
     }
 
     private static List<uint> BuildDisplayRouteNodes(IReadOnlyList<uint> route, uint? fromNode, uint? toNode)
@@ -3237,19 +4215,184 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         return $"{label}: (not received)";
     }
 
-    private static string? BuildOverlayMetrics(TraceRouteParsed parsed)
+    private static string BuildTraceHeaderLine(string tag, string tsText, int hopCount, double? totalKm, double? rssi)
     {
-        var metrics = new List<string>();
-        if (parsed.SnrTowards.Count > 0)
-            metrics.Add($"toSNR={FormatSnrValue(parsed.SnrTowards[^1])}");
-        if (parsed.SnrBack.Count > 0)
-            metrics.Add($"backSNR={FormatSnrValue(parsed.SnrBack[^1])}");
-        if (parsed.RxSnr.HasValue)
-            metrics.Add($"rxSNR={FormatSnrValue(parsed.RxSnr.Value)}");
-        if (parsed.RxRssi.HasValue)
-            metrics.Add($"rxRSSI={parsed.RxRssi.Value.ToString("0.0", CultureInfo.InvariantCulture)}");
+        var kmText = totalKm.HasValue
+            ? totalKm.Value.ToString("0.#", CultureInfo.InvariantCulture)
+            : "--";
+        var rssiText = rssi.HasValue
+            ? rssi.Value.ToString("0", CultureInfo.InvariantCulture)
+            : "--";
+        return $"{tag} {tsText} · {hopCount} hops · {kmText} km · RSSI {rssiText}";
+    }
 
-        return metrics.Count > 0 ? "Metrics: " + string.Join(" | ", metrics) : null;
+    private static IReadOnlyList<RouteDisplayNode> BuildRouteDisplayNodes(IReadOnlyList<uint> routeNodes)
+    {
+        if (routeNodes.Count == 0)
+            return Array.Empty<RouteDisplayNode>();
+
+        var nodes = new List<RouteDisplayNode>(routeNodes.Count);
+        foreach (var nodeNum in routeNodes)
+        {
+            var node = MeshVenes.AppState.Nodes.FirstOrDefault(n => n.NodeNum == nodeNum);
+            var rawLongName = !string.IsNullOrWhiteSpace(node?.LongName)
+                ? node!.LongName!
+                : ResolveHopLabel(nodeNum);
+            var shortName = !string.IsNullOrWhiteSpace(node?.ShortName) ? node!.ShortName! : "—";
+            var nodeId = node?.IdHex ?? $"0x{nodeNum:x8}";
+            var shortId = ResolveRouteShortId(node, nodeNum);
+            var longName = TrimTrailingShortId(rawLongName, shortId);
+            var displayName = $"{TruncateMiddle(longName, 18)} {shortId}";
+            var hasPos = node is not null && node.HasPosition && IsValidMapPosition(node.Latitude, node.Longitude);
+            var lat = hasPos ? node!.Latitude : (double?)null;
+            var lon = hasPos ? node!.Longitude : (double?)null;
+            var tooltip = $"Long name: {longName}\nShort name: {shortName}\nShort ID: {shortId}\nNode ID: {nodeId}";
+            nodes.Add(new RouteDisplayNode(
+                nodeNum,
+                displayName,
+                shortName,
+                shortId,
+                longName,
+                nodeId,
+                hasPos,
+                lat,
+                lon,
+                tooltip));
+        }
+
+        return nodes;
+    }
+
+    private static IReadOnlyList<RouteDisplaySegment> BuildRouteDisplaySegments(
+        IReadOnlyList<uint> routeNodes,
+        IReadOnlyList<int> snrValues,
+        out double? totalKm)
+    {
+        totalKm = null;
+        if (routeNodes.Count < 2)
+            return Array.Empty<RouteDisplaySegment>();
+
+        var segments = new List<RouteDisplaySegment>(routeNodes.Count);
+        var total = 0.0;
+        var knownCount = 0;
+        var segmentCount = routeNodes.Count - 1;
+
+        for (var i = 0; i < segmentCount; i++)
+        {
+            var fromNum = routeNodes[i];
+            var toNum = routeNodes[i + 1];
+            var distanceText = "--km";
+            if (TryGetNodePosition(fromNum, out var fromLat, out var fromLon) &&
+                TryGetNodePosition(toNum, out var toLat, out var toLon))
+            {
+                var km = CalculateDistanceKm(fromLat, fromLon, toLat, toLon);
+                distanceText = $"{km.ToString("0.#", CultureInfo.InvariantCulture)}km";
+                total += km;
+                knownCount++;
+            }
+
+            int? snr = null;
+            if (i < snrValues.Count)
+                snr = snrValues[i];
+            else if (snrValues.Count == 1)
+                snr = snrValues[0];
+
+            var snrText = snr.HasValue ? $"{FormatSignedSnr(snr.Value)} dB" : "--";
+            var brush = snr.HasValue ? GetSnrBrush(snr.Value) : SnrUnknownBrush;
+            var tooltip = snr.HasValue
+                ? $"Distance: {distanceText} | SNR: {snrText}"
+                : $"Distance: {distanceText} | SNR: not received";
+            segments.Add(new RouteDisplaySegment(distanceText, snrText, brush, tooltip));
+        }
+
+        // Keep one empty trailing cell so segment row aligns under node columns.
+        segments.Add(new RouteDisplaySegment(string.Empty, string.Empty, SnrUnknownBrush, string.Empty));
+        if (knownCount > 0)
+            totalKm = total;
+        return segments;
+    }
+
+    private static double BuildRouteContentWidth(
+        IReadOnlyList<RouteDisplayNode> forwardNodes,
+        IReadOnlyList<RouteDisplayNode> backNodes)
+    {
+        var maxNodeCount = Math.Max(Math.Max(forwardNodes.Count, backNodes.Count), 1);
+        const double labelColumn = 56;
+        const double nodeCellWidth = 240;
+        return labelColumn + (maxNodeCount * nodeCellWidth);
+    }
+
+    private static string? BuildFullSegmentLine(
+        string lineLabel,
+        IReadOnlyList<uint> routeNodes,
+        IReadOnlyList<int> snrValues,
+        bool includeRxRssi,
+        double? rxRssi)
+    {
+        if (routeNodes.Count < 2)
+            return null;
+
+        var parts = new List<string>();
+        var segmentCount = routeNodes.Count - 1;
+        for (var i = 0; i < segmentCount; i++)
+        {
+            var fromNum = routeNodes[i];
+            var toNum = routeNodes[i + 1];
+            var fromLabel = ResolveHopLabel(fromNum);
+            var toLabel = ResolveHopLabel(toNum);
+            var distanceText = "--km";
+            if (TryGetNodePosition(fromNum, out var fromLat, out var fromLon) &&
+                TryGetNodePosition(toNum, out var toLat, out var toLon))
+            {
+                var km = CalculateDistanceKm(fromLat, fromLon, toLat, toLon);
+                distanceText = $"{km.ToString("0.#", CultureInfo.InvariantCulture)}km";
+            }
+
+            int? snr = null;
+            if (i < snrValues.Count)
+                snr = snrValues[i];
+            else if (snrValues.Count == 1)
+                snr = snrValues[0];
+            var snrText = snr.HasValue ? $"{FormatSignedSnr(snr.Value)} dB" : "--";
+
+            parts.Add($"{fromLabel}->{toLabel} {distanceText} {snrText}");
+        }
+
+        var line = $"{lineLabel}: {string.Join(" | ", parts)}";
+        if (includeRxRssi && rxRssi.HasValue)
+            line += $" | RSSI {rxRssi.Value.ToString("0", CultureInfo.InvariantCulture)}";
+        return line;
+    }
+
+    private static string? BuildPopupMetrics(TraceRouteParsed parsed)
+    {
+        var lines = new List<string>();
+
+        var radioParts = new List<string>();
+        if (parsed.RxSnr.HasValue)
+            radioParts.Add($"RX SNR {FormatSnrValue(parsed.RxSnr.Value)}");
+        if (parsed.RxRssi.HasValue)
+            radioParts.Add($"RX RSSI {parsed.RxRssi.Value.ToString("0.0", CultureInfo.InvariantCulture)}");
+        if (radioParts.Count > 0)
+            lines.Add("Radio: " + string.Join(" | ", radioParts));
+
+        return lines.Count > 0 ? string.Join(Environment.NewLine, lines) : null;
+    }
+
+    private static bool TryGetNodePosition(uint nodeNum, out double lat, out double lon)
+    {
+        lat = 0;
+        lon = 0;
+
+        var node = MeshVenes.AppState.Nodes.FirstOrDefault(n => n.NodeNum == nodeNum);
+        if (node is null || !node.HasPosition)
+            return false;
+        if (!IsValidMapPosition(node.Latitude, node.Longitude))
+            return false;
+
+        lat = node.Latitude;
+        lon = node.Longitude;
+        return true;
     }
 
     private static (IReadOnlyList<RouteMapPoint> Points, IReadOnlyList<double?> Qualities) BuildRouteMapPoints(
@@ -3497,11 +4640,110 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private static bool TryParseDoubleToken(string token, out double value)
         => double.TryParse(token.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
 
+    private static double? TryParseSnrDb(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        var cleaned = text.Replace("dB", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (double.TryParse(cleaned, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            return value;
+        return null;
+    }
+
+    private static double? TryParseDistanceKm(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        var cleaned = text.Replace("km", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (double.TryParse(cleaned, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            return value;
+        return null;
+    }
+
+    private static double? TryExtractHeaderRssi(string? header)
+    {
+        if (string.IsNullOrWhiteSpace(header))
+            return null;
+
+        const string marker = "RSSI ";
+        var idx = header.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+            return null;
+
+        var valuePart = header[(idx + marker.Length)..];
+        var token = valuePart.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            return value;
+        return null;
+    }
+
     private static string FormatSnrValue(int value)
         => FormatSnrValue((double)value);
 
     private static string FormatSnrValue(double value)
         => value.ToString("0.0", CultureInfo.InvariantCulture);
+
+    private static string FormatSignedSnr(int value)
+        => value >= 0
+            ? "+" + value.ToString("0", CultureInfo.InvariantCulture)
+            : value.ToString("0", CultureInfo.InvariantCulture);
+
+    private static Brush GetSnrBrush(double snrDb)
+    {
+        if (snrDb > 30)
+            return SnrExcellentBrush;
+        if (snrDb >= 10)
+            return SnrGoodBrush;
+        if (snrDb >= 0)
+            return SnrFairBrush;
+        return SnrPoorBrush;
+    }
+
+    private static string ResolveRouteShortId(NodeLive? node, uint nodeNum)
+    {
+        if (!string.IsNullOrWhiteSpace(node?.ShortId))
+            return node.ShortId!.TrimStart('!').ToLowerInvariant();
+
+        if (!string.IsNullOrWhiteSpace(node?.IdHex) && node.IdHex!.Length >= 4)
+            return node.IdHex[^4..].ToLowerInvariant();
+
+        return nodeNum.ToString("x8", CultureInfo.InvariantCulture)[^4..];
+    }
+
+    private static string TruncateMiddle(string? value, int maxChars)
+    {
+        var text = value ?? "";
+        if (maxChars < 5 || text.Length <= maxChars)
+            return text;
+
+        const string ellipsis = "…";
+        var charsToKeep = maxChars - ellipsis.Length;
+        var left = charsToKeep / 2;
+        var right = charsToKeep - left;
+        return text[..left] + ellipsis + text[^right..];
+    }
+
+    private static string TrimTrailingShortId(string longName, string shortId)
+    {
+        var text = (longName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(shortId))
+            return text;
+
+        if (!text.EndsWith(shortId, StringComparison.OrdinalIgnoreCase))
+            return text;
+
+        var trimmed = text[..^shortId.Length].TrimEnd();
+        while (trimmed.EndsWith("-", StringComparison.Ordinal) ||
+               trimmed.EndsWith("_", StringComparison.Ordinal) ||
+               trimmed.EndsWith(" ", StringComparison.Ordinal))
+        {
+            trimmed = trimmed[..^1].TrimEnd();
+        }
+
+        return string.IsNullOrWhiteSpace(trimmed) ? text : trimmed;
+    }
 
     private static bool IsValidMapPosition(double lat, double lon)
     {
