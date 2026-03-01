@@ -33,7 +33,9 @@
 
             <Grid Grid.Column="1"
                   x:Name="PlotHost"
-                  Background="{ThemeResource CardBackgroundFillColorDefault}">
+                  Background="{ThemeResource CardBackgroundFillColorDefault}"
+                  PointerMoved="PlotHost_PointerMoved"
+                  PointerExited="PlotHost_PointerExited">
                 <Canvas x:Name="GridCanvas"
                         IsHitTestVisible="False"/>
                 <Canvas x:Name="ChartCanvas"
@@ -56,6 +58,58 @@
                               StrokeLineJoin="Round"
                               StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round"/>
+                </Canvas>
+                <Canvas x:Name="OverlayCanvas"
+                        IsHitTestVisible="False">
+                    <Line x:Name="SelectionVerticalLine"
+                          Stroke="#AA8AA0C8"
+                          StrokeThickness="1.2"
+                          StrokeDashArray="3,4"
+                          Visibility="Collapsed"/>
+                    <Ellipse x:Name="TemperatureMarker"
+                             Width="10"
+                             Height="10"
+                             Fill="#FF4FC3F7"
+                             Stroke="#CCFFFFFF"
+                             StrokeThickness="1.5"
+                             Visibility="Collapsed"/>
+                    <Ellipse x:Name="HumidityMarker"
+                             Width="9"
+                             Height="9"
+                             Fill="#FF81C784"
+                             Stroke="#CCFFFFFF"
+                             StrokeThickness="1.4"
+                             Visibility="Collapsed"/>
+                    <Ellipse x:Name="PressureMarker"
+                             Width="9"
+                             Height="9"
+                             Fill="#FFFFB74D"
+                             Stroke="#CCFFFFFF"
+                             StrokeThickness="1.4"
+                             Visibility="Collapsed"/>
+                    <Border x:Name="SelectionTooltip"
+                            Visibility="Collapsed"
+                            Background="{ThemeResource CardBackgroundFillColorDefault}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefault}"
+                            BorderThickness="1"
+                            CornerRadius="10"
+                            Padding="10"
+                            MaxWidth="320">
+                        <StackPanel Spacing="3">
+                            <TextBlock x:Name="SelectionTooltipTime"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"/>
+                            <TextBlock x:Name="SelectionTooltipTemperature"
+                                       FontSize="13"
+                                       Foreground="#FF4FC3F7"/>
+                            <TextBlock x:Name="SelectionTooltipHumidity"
+                                       FontSize="13"
+                                       Foreground="#FF81C784"/>
+                            <TextBlock x:Name="SelectionTooltipPressure"
+                                       FontSize="13"
+                                       Foreground="#FFFFB74D"/>
+                        </StackPanel>
+                    </Border>
                 </Canvas>
             </Grid>
 
