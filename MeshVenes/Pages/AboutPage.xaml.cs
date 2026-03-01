@@ -184,7 +184,7 @@ public sealed partial class AboutPage : Page
             var asm = typeof(AboutPage).GetTypeInfo().Assembly;
             var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
             if (!string.IsNullOrWhiteSpace(info))
-                return info;
+                return SanitizeDisplayVersion(info);
 
             return asm.GetName().Version?.ToString() ?? "—";
         }
@@ -192,6 +192,23 @@ public sealed partial class AboutPage : Page
         {
             return "—";
         }
+    }
+
+    private static string SanitizeDisplayVersion(string versionText)
+    {
+        var token = versionText.Trim();
+        if (token.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+            token = token[1..];
+
+        var plusIdx = token.IndexOf('+');
+        if (plusIdx >= 0)
+            token = token[..plusIdx];
+
+        var dashIdx = token.IndexOf('-');
+        if (dashIdx >= 0)
+            token = token[..dashIdx];
+
+        return string.IsNullOrWhiteSpace(token) ? versionText : token;
     }
 
     private sealed class LatestReleaseDto
