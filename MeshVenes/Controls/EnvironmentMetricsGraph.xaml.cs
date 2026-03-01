@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using MeshVenes.Models;
@@ -15,6 +17,15 @@ public sealed partial class EnvironmentMetricsGraph : UserControl
     private const double PlotPadding = 6.0;
     private static readonly SolidColorBrush GridStrokeBrush = new(Color.FromArgb(56, 255, 255, 255));
     private IReadOnlyList<EnvironmentMetricSample> _samples = Array.Empty<EnvironmentMetricSample>();
+    private List<EnvironmentMetricSample> _sortedSamples = new();
+    private EnvironmentMetricSample? _selectedSample;
+    private EnvironmentMetricSample? _hoverSample;
+    private DateTime _minTimestamp;
+    private double _totalSeconds = 1;
+    private double _tempMin;
+    private double _tempMax;
+    private double _pressureMin;
+    private double _pressureMax;
 
     public EnvironmentMetricsGraph()
     {
@@ -26,6 +37,28 @@ public sealed partial class EnvironmentMetricsGraph : UserControl
     {
         _samples = samples ?? Array.Empty<EnvironmentMetricSample>();
         RenderChart();
+    }
+
+    public void HighlightSample(DateTime timestampUtc)
+    {
+        if (_samples.Count == 0)
+        {
+            _selectedSample = null;
+            _hoverSample = null;
+            UpdateSelectionOverlay();
+            return;
+        }
+
+        _selectedSample = FindNearestSampleByTimestamp(timestampUtc);
+        _hoverSample = null;
+        UpdateSelectionOverlay();
+    }
+
+    public void ClearHighlight()
+    {
+        _selectedSample = null;
+        _hoverSample = null;
+        UpdateSelectionOverlay();
     }
 
     private void EnvironmentMetricsGraph_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -45,6 +78,9 @@ public sealed partial class EnvironmentMetricsGraph : UserControl
             AxisStartText.Text = "—";
             AxisMidText.Text = "—";
             AxisEndText.Text = "—";
+            _sortedSamples = new();
+            _hoverSample = null;
+            HideSelectionOverlay();
             return;
         }
 
@@ -53,6 +89,7 @@ public sealed partial class EnvironmentMetricsGraph : UserControl
         var samples = _samples
             .OrderBy(s => s.TimestampUtc)
             .ToList();
+        _sortedSamples = samples;
 
         if (samples.Count == 0)
         {
@@ -63,6 +100,8 @@ public sealed partial class EnvironmentMetricsGraph : UserControl
             AxisStartText.Text = "—";
             AxisMidText.Text = "—";
             AxisEndText.Text = "—";
+            _hoverSample = null;
+            HideSelectionOverlay();
             return;
         }
 
@@ -70,12 +109,18 @@ public sealed partial class EnvironmentMetricsGraph : UserControl
         var maxTs = samples.Last().TimestampUtc;
         var midTs = minTs + TimeSpan.FromSeconds((maxTs - minTs).TotalSeconds / 2.0);
         var totalSeconds = Math.Max(1, (maxTs - minTs).TotalSeconds);
+        _minTimestamp = minTs;
+        _totalSeconds = totalSeconds;
         AxisStartText.Text = FormatAxisTime(minTs);
         AxisMidText.Text = FormatAxisTime(midTs);
         AxisEndText.Text = FormatAxisTime(maxTs);
 
         var (tempMin, tempMax) = ResolveRange(samples.Select(s => s.TemperatureC), defaultMin: -20, defaultMax: 50, padding: 1);
         var (pressureMin, pressureMax) = ResolveRange(samples.Select(s => s.BarometricPressure), defaultMin: 950, defaultMax: 1050, padding: 0.5);
+        _tempMin = tempMin;
+        _tempMax = tempMax;
+        _pressureMin = pressureMin;
+        _pressureMax = pressureMax;
         var tempMid = tempMin + ((tempMax - tempMin) / 2.0);
         var pressureMid = pressureMin + ((pressureMax - pressureMin) / 2.0);
 
@@ -99,6 +144,8 @@ public sealed partial class EnvironmentMetricsGraph : UserControl
 
         PressureLine.Points = BuildPoints(
             samples, width, height, totalSeconds, minTs, s => s.BarometricPressure, pressureMin, pressureMax);
+
+        UpdateSelectionOverlay();
     }
 
     private void SetAxisValuesUnavailable()
@@ -229,5 +276,164 @@ public sealed partial class EnvironmentMetricsGraph : UserControl
         foreach (var point in reduced)
             downsampled.Add(point);
         return downsampled;
+    }
+
+    private void PlotHost_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_sortedSamples.Count == 0 || PlotHost.ActualWidth <= 0)
+            return;
+
+        var point = e.GetCurrentPoint(PlotHost).Position;
+        var sample = FindNearestSampleByX(point.X);
+        if (sample is null || ReferenceEquals(sample, _hoverSample))
+            return;
+
+        _hoverSample = sample;
+        UpdateSelectionOverlay();
+    }
+
+    private void PlotHost_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (_hoverSample is null)
+            return;
+
+        _hoverSample = null;
+        UpdateSelectionOverlay();
+    }
+
+    private EnvironmentMetricSample? FindNearestSampleByTimestamp(DateTime timestampUtc)
+    {
+        if (_sortedSamples.Count == 0)
+            return null;
+
+        EnvironmentMetricSample? nearest = null;
+        long bestTicks = long.MaxValue;
+        foreach (var sample in _sortedSamples)
+        {
+            var diff = Math.Abs((sample.TimestampUtc - timestampUtc).Ticks);
+            if (diff >= bestTicks)
+                continue;
+
+            bestTicks = diff;
+            nearest = sample;
+        }
+
+        return nearest ?? _sortedSamples[^1];
+    }
+
+    private EnvironmentMetricSample? FindNearestSampleByX(double x)
+    {
+        if (_sortedSamples.Count == 0)
+            return null;
+
+        var clampedX = Math.Max(PlotPadding, Math.Min(PlotHost.ActualWidth - PlotPadding, x));
+        var seconds = ((clampedX - PlotPadding) / Math.Max(1, PlotHost.ActualWidth - (2 * PlotPadding))) * _totalSeconds;
+        var target = _minTimestamp.AddSeconds(seconds);
+        return FindNearestSampleByTimestamp(target);
+    }
+
+    private void UpdateSelectionOverlay()
+    {
+        if (_sortedSamples.Count == 0 || PlotHost.ActualWidth <= 0 || PlotHost.ActualHeight <= 0)
+        {
+            HideSelectionOverlay();
+            return;
+        }
+
+        var sample = _hoverSample ?? _selectedSample;
+        if (sample is null)
+        {
+            HideSelectionOverlay();
+            return;
+        }
+
+        sample = FindNearestSampleByTimestamp(sample.TimestampUtc);
+        if (sample is null)
+        {
+            HideSelectionOverlay();
+            return;
+        }
+
+        var width = PlotHost.ActualWidth;
+        var height = PlotHost.ActualHeight;
+        var x = MapSampleX(sample.TimestampUtc, width);
+
+        SelectionVerticalLine.X1 = x;
+        SelectionVerticalLine.X2 = x;
+        SelectionVerticalLine.Y1 = PlotPadding;
+        SelectionVerticalLine.Y2 = Math.Max(PlotPadding, height - PlotPadding);
+        SelectionVerticalLine.Visibility = Visibility.Visible;
+
+        PositionMetricMarker(TemperatureMarker, x, MapSampleY(sample.TemperatureC, _tempMin, _tempMax, height));
+        PositionMetricMarker(HumidityMarker, x, MapSampleY(sample.RelativeHumidity, 0, 100, height));
+        PositionMetricMarker(PressureMarker, x, MapSampleY(sample.BarometricPressure, _pressureMin, _pressureMax, height));
+
+        SelectionTooltipTime.Text = sample.TimestampLocal.ToString("ddd dd MMM yyyy HH:mm:ss", CultureInfo.InvariantCulture);
+        SelectionTooltipTemperature.Text = $"Temperature: {FormatValue(sample.TemperatureC, "0.##", "C")}";
+        SelectionTooltipHumidity.Text = $"Humidity: {FormatValue(sample.RelativeHumidity, "0.##", "%")}";
+        SelectionTooltipPressure.Text = $"Pressure: {FormatValue(sample.BarometricPressure, "0.###", "hPa")}";
+        PositionTooltip(x, height);
+    }
+
+    private static string FormatValue(double? value, string format, string unit)
+        => value.HasValue
+            ? $"{value.Value.ToString(format, CultureInfo.InvariantCulture)} {unit}"
+            : "—";
+
+    private static void PositionMetricMarker(Ellipse marker, double x, double? y)
+    {
+        if (!y.HasValue)
+        {
+            marker.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        Canvas.SetLeft(marker, x - (marker.Width / 2.0));
+        Canvas.SetTop(marker, y.Value - (marker.Height / 2.0));
+        marker.Visibility = Visibility.Visible;
+    }
+
+    private void PositionTooltip(double x, double plotHeight)
+    {
+        SelectionTooltip.Visibility = Visibility.Visible;
+        SelectionTooltip.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var desired = SelectionTooltip.DesiredSize;
+        var maxX = Math.Max(8, PlotHost.ActualWidth - desired.Width - 8);
+        var tooltipX = Math.Max(8, Math.Min(maxX, x + 14));
+        var tooltipY = 10.0;
+        if (tooltipX > PlotHost.ActualWidth * 0.62)
+            tooltipY = Math.Max(8, Math.Min(plotHeight - desired.Height - 8, 18));
+
+        Canvas.SetLeft(SelectionTooltip, tooltipX);
+        Canvas.SetTop(SelectionTooltip, tooltipY);
+    }
+
+    private void HideSelectionOverlay()
+    {
+        SelectionVerticalLine.Visibility = Visibility.Collapsed;
+        TemperatureMarker.Visibility = Visibility.Collapsed;
+        HumidityMarker.Visibility = Visibility.Collapsed;
+        PressureMarker.Visibility = Visibility.Collapsed;
+        SelectionTooltip.Visibility = Visibility.Collapsed;
+    }
+
+    private double MapSampleX(DateTime timestampUtc, double width)
+    {
+        var usableWidth = Math.Max(1, width - (2 * PlotPadding));
+        var seconds = Math.Max(0, (timestampUtc - _minTimestamp).TotalSeconds);
+        var ratio = _totalSeconds <= 0 ? 0 : Math.Min(1, seconds / _totalSeconds);
+        return PlotPadding + (usableWidth * ratio);
+    }
+
+    private static double? MapSampleY(double? value, double minY, double maxY, double height)
+    {
+        if (!value.HasValue)
+            return null;
+
+        var usableHeight = Math.Max(1, height - (2 * PlotPadding));
+        var clamped = Math.Max(minY, Math.Min(maxY, value.Value));
+        var range = Math.Max(1e-6, maxY - minY);
+        var normalized = (clamped - minY) / range;
+        return PlotPadding + usableHeight - (usableHeight * normalized);
     }
 }
