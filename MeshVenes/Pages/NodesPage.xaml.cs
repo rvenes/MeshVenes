@@ -2,6 +2,7 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -50,8 +51,13 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private bool _hideInactive = true;
+    private bool _filterMyNodesOnly;
+    private bool _filterFavoritesOnly;
+    private bool _includeLoRa = true;
+    private bool _includeMqtt = true;
     private string _filter = "";
     private SortMode _sortMode = SortMode.LastHeard;
+    private bool _sortDescending = true;
     private readonly DispatcherTimer _throttle = new();
     private readonly DispatcherTimer _filterApplyTimer = new();
     private bool _mapReady;
@@ -147,6 +153,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(CanEditSelectedNodeState));
             OnChanged(nameof(CanRunConnectedNodeActions));
             OnChanged(nameof(IgnoreNodeButtonText));
+            OnChanged(nameof(IsSelectedMyNode));
 
             SelectedTraceRouteEntry = null;
             if (TraceRouteDetailsTip is not null)
@@ -188,6 +195,19 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         IsConnectedNodeSelected && Selected is { NodeNum: > 0 };
 
     public string IgnoreNodeButtonText => Selected?.IsIgnored == true ? "Unignore Node" : "Ignore Node";
+    public bool IsSelectedMyNode => Selected?.IsMyNode == true;
+    public bool IsSortByAlphabetical => _sortMode == SortMode.Alphabetical;
+    public bool IsSortByHopsAway => _sortMode == SortMode.HopsAway;
+    public bool IsSortByLastHeard => _sortMode == SortMode.LastHeard;
+    public bool IsSortByFavorites => _sortMode == SortMode.FavoritesFirst;
+    public bool IsSortByMyNodes => _sortMode == SortMode.MyNodes;
+    public bool IsSortAscending => !_sortDescending;
+    public bool IsSortDescending => _sortDescending;
+    public bool IsHideInactiveEnabled => _hideInactive;
+    public bool IsMyNodesFilterEnabled => _filterMyNodesOnly;
+    public bool IsFavoritesFilterEnabled => _filterFavoritesOnly;
+    public bool IsLoRaFilterEnabled => _includeLoRa;
+    public bool IsMqttFilterEnabled => _includeMqtt;
 
     public string SelectedTitle => Selected?.Name ?? "Select a node";
     public string SelectedIdHex => Selected?.IdHex ?? "—";
@@ -438,7 +458,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         Alphabetical,
         HopsAway,
         LastHeard,
-        FavoritesFirst
+        FavoritesFirst,
+        MyNodes
     }
 
     public NodesPage()
@@ -455,13 +476,6 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(TraceRouteLogCountText));
         };
 
-        SortCombo.Items.Add("Sort: Alphabetical");
-        SortCombo.Items.Add("Sort: Hops away");
-        SortCombo.Items.Add("Sort: Last heard");
-        SortCombo.Items.Add("Sort: Favorites first");
-        SortCombo.SelectedIndex = 2;
-
-        HideInactiveToggle.IsChecked = _hideInactive;
         NodesView.Source = VisibleNodes;
         ApplyNodeSorting();
 
@@ -1124,13 +1138,14 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(IgnoreNodeButtonText));
             OnChanged(nameof(CanEditSelectedNodeState));
             OnChanged(nameof(CanRunConnectedNodeActions));
+            OnChanged(nameof(IsSelectedMyNode));
         }
 
         if (e.PropertyName is nameof(NodeLive.LastHeardUtc) or nameof(NodeLive.LastHeard)
             or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude) or nameof(NodeLive.LastPositionUtc)
             or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR) or nameof(NodeLive.ViaMqtt)
             or nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey)
-            or nameof(NodeLive.IsFavorite) or nameof(NodeLive.NodeNum) or nameof(NodeLive.IsIgnored)
+            or nameof(NodeLive.IsFavorite) or nameof(NodeLive.IsMyNode) or nameof(NodeLive.NodeNum) or nameof(NodeLive.IsIgnored)
             or nameof(NodeLive.HopsAway))
         {
             OnChanged(nameof(NodeCountsText));
@@ -1205,6 +1220,27 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             if (element is Control c)
                 c.IsEnabled = true;
         }
+    }
+
+    private void MyNodeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is null)
+            return;
+
+        var isMyNode = sender is ToggleButton toggle && toggle.IsChecked == true;
+        var changed = MyNodeStore.Set(Selected.IdHex, isMyNode);
+        Selected.IsMyNode = isMyNode;
+
+        if (changed)
+        {
+            RebuildVisibleNodes();
+            RadioClient.Instance.AddLogFromUiThread(
+                isMyNode
+                    ? $"Marked node {Selected.Name} as My Node."
+                    : $"Removed node {Selected.Name} from My Nodes.");
+        }
+
+        OnChanged(nameof(IsSelectedMyNode));
     }
 
     private void TextCopyFlyout_Opening(object sender, object e)
@@ -1329,7 +1365,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private bool IsHiddenByInactive(NodeLive n)
     {
-        if (n.IsFavorite) return false;
+        if (n.IsFavorite || n.IsMyNode) return false;
         if (!_hideInactive) return false;
         if (n.LastHeardUtc == DateTime.MinValue) return true;
         return !IsOnlineByRssi(n);
@@ -1403,6 +1439,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         if (IsHiddenByInactive(node))
             return false;
 
+        if (!MatchesNodeCategoryFilter(node) || !MatchesNodeTransportFilter(node))
+            return false;
+
         var q = (_filter ?? "").Trim();
         if (string.IsNullOrWhiteSpace(q))
             return true;
@@ -1449,19 +1488,73 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         TriggerMapUpdate();
     }
 
-    private void SortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void SortModeRadio_Checked(object sender, RoutedEventArgs e)
     {
-        _sortMode = SortCombo.SelectedIndex switch
-        {
-            1 => SortMode.HopsAway,
-            2 => SortMode.LastHeard,
-            3 => SortMode.FavoritesFirst,
-            _ => SortMode.Alphabetical
-        };
+        if (sender is not RadioButton radio || radio.Tag is not string tag)
+            return;
 
-        ApplyNodeSorting();
+        if (!Enum.TryParse<SortMode>(tag, ignoreCase: true, out var nextMode) || _sortMode == nextMode)
+            return;
+
+        _sortMode = nextMode;
+        RefreshSortFilterUi();
         RebuildVisibleNodes();
         TriggerMapUpdate();
+    }
+
+    private void SortDirectionRadio_Checked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton radio || radio.Tag is not string tag)
+            return;
+
+        var nextDescending = string.Equals(tag, "Descending", StringComparison.OrdinalIgnoreCase);
+        if (_sortDescending == nextDescending)
+            return;
+
+        _sortDescending = nextDescending;
+        RefreshSortFilterUi();
+        RebuildVisibleNodes();
+        TriggerMapUpdate();
+    }
+
+    private void FilterOption_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox checkBox || checkBox.Tag is not string tag)
+            return;
+
+        var isChecked = checkBox.IsChecked == true;
+        var changed = tag switch
+        {
+            "HideInactive" when _hideInactive != isChecked => SetField(ref _hideInactive, isChecked),
+            "MyNodesOnly" when _filterMyNodesOnly != isChecked => SetField(ref _filterMyNodesOnly, isChecked),
+            "FavoritesOnly" when _filterFavoritesOnly != isChecked => SetField(ref _filterFavoritesOnly, isChecked),
+            "IncludeLoRa" when _includeLoRa != isChecked => SetField(ref _includeLoRa, isChecked),
+            "IncludeMqtt" when _includeMqtt != isChecked => SetField(ref _includeMqtt, isChecked),
+            _ => false
+        };
+
+        if (!changed)
+            return;
+
+        RefreshSortFilterUi();
+        RebuildVisibleNodes();
+        TriggerMapUpdate();
+    }
+
+    private void RefreshSortFilterUi()
+    {
+        OnChanged(nameof(IsSortByAlphabetical));
+        OnChanged(nameof(IsSortByHopsAway));
+        OnChanged(nameof(IsSortByLastHeard));
+        OnChanged(nameof(IsSortByFavorites));
+        OnChanged(nameof(IsSortByMyNodes));
+        OnChanged(nameof(IsSortAscending));
+        OnChanged(nameof(IsSortDescending));
+        OnChanged(nameof(IsHideInactiveEnabled));
+        OnChanged(nameof(IsMyNodesFilterEnabled));
+        OnChanged(nameof(IsFavoritesFilterEnabled));
+        OnChanged(nameof(IsLoRaFilterEnabled));
+        OnChanged(nameof(IsMqttFilterEnabled));
     }
 
     private void ApplyNodeSorting()
@@ -1469,42 +1562,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         if (VisibleNodes.Count <= 1)
             return;
 
-        var indexed = VisibleNodes.Select((item, index) => (item, index));
-        var sorted = _sortMode switch
-        {
-            SortMode.LastHeard => indexed
-                .OrderByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc)
-                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.index)
-                .Select(entry => entry.item)
-                .ToList(),
-            SortMode.HopsAway => indexed
-                .OrderBy(entry => entry.item.HopsAway ?? int.MaxValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc)
-                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.index)
-                .Select(entry => entry.item)
-                .ToList(),
-            SortMode.FavoritesFirst => indexed
-                .OrderByDescending(entry => entry.item.IsFavorite)
-                .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc)
-                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.index)
-                .Select(entry => entry.item)
-                .ToList(),
-            _ => indexed
-                .OrderBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.index)
-                .Select(entry => entry.item)
-                .ToList()
-        };
+        var sorted = SortNodes(VisibleNodes.ToList());
 
         ApplySortedOrder(VisibleNodes, sorted);
         PinConnectedNodeToTop();
@@ -1568,8 +1626,22 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         return _sortMode switch
         {
+            SortMode.LastHeard when _sortDescending => nodes
+                .OrderByDescending(n => n.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(n => n.LastHeardUtc)
+                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
             SortMode.LastHeard => nodes
                 .OrderByDescending(n => n.LastHeardUtc != DateTime.MinValue)
+                .ThenBy(n => n.LastHeardUtc)
+                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.HopsAway when _sortDescending => nodes
+                .OrderBy(n => n.HopsAway.HasValue ? 0 : 1)
+                .ThenByDescending(n => n.HopsAway ?? int.MinValue)
+                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
                 .ThenByDescending(n => n.LastHeardUtc)
                 .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
@@ -1581,12 +1653,37 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
-            SortMode.FavoritesFirst => nodes
+            SortMode.FavoritesFirst when _sortDescending => nodes
                 .OrderByDescending(n => n.IsFavorite)
                 .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
                 .ThenByDescending(n => n.LastHeardUtc)
                 .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.FavoritesFirst => nodes
+                .OrderBy(n => n.IsFavorite ? 1 : 0)
+                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(n => n.LastHeardUtc)
+                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.MyNodes when _sortDescending => nodes
+                .OrderByDescending(n => n.IsMyNode)
+                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(n => n.LastHeardUtc)
+                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.MyNodes => nodes
+                .OrderBy(n => n.IsMyNode ? 1 : 0)
+                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(n => n.LastHeardUtc)
+                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.Alphabetical when _sortDescending => nodes
+                .OrderByDescending(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             _ => nodes
                 .OrderBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
@@ -1595,11 +1692,41 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         };
     }
 
-    private void HideInactiveToggle_Click(object sender, RoutedEventArgs e)
+    private bool HasNodeFilters()
+        => _hideInactive
+            || _filterMyNodesOnly
+            || _filterFavoritesOnly
+            || HasNodeTransportFilter()
+            || !string.IsNullOrWhiteSpace(_filter);
+
+    private bool MatchesNodeCategoryFilter(NodeLive node)
     {
-        _hideInactive = HideInactiveToggle.IsChecked == true;
-        RebuildVisibleNodes();
-        TriggerMapUpdate();
+        if (!_filterMyNodesOnly && !_filterFavoritesOnly)
+            return true;
+
+        return (_filterMyNodesOnly && node.IsMyNode)
+            || (_filterFavoritesOnly && node.IsFavorite);
+    }
+
+    private bool MatchesNodeTransportFilter(NodeLive node)
+    {
+        if (!HasNodeTransportFilter())
+            return true;
+
+        var viaMqtt = node.ViaMqtt == true;
+        return (viaMqtt && _includeMqtt) || (!viaMqtt && _includeLoRa);
+    }
+
+    private bool HasNodeTransportFilter()
+        => _includeLoRa != _includeMqtt;
+
+    private static bool SetField(ref bool field, bool value)
+    {
+        if (field == value)
+            return false;
+
+        field = value;
+        return true;
     }
 
     private void ConnectedNodeChanged()
@@ -1658,8 +1785,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         if (!_mapReady || MapView.CoreWebView2 is null) return;
 
-        var nodes = MeshVenes.AppState.Nodes
-            .Where(n => !IsHiddenByInactive(n))
+        var nodes = VisibleNodes
             .Select(n => new
             {
                 idHex = n.IdHex,
@@ -2855,8 +2981,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         if (wasHiddenByInactive)
         {
             _hideInactive = false;
-            if (HideInactiveToggle is not null)
-                HideInactiveToggle.IsChecked = false;
+            RefreshSortFilterUi();
         }
 
         if (SearchBox is not null && !string.IsNullOrWhiteSpace(SearchBox.Text))

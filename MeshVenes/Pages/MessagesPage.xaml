@@ -16,10 +16,78 @@
 	        <Grid Grid.Column="0" RowDefinitions="Auto,6,Auto,6,Auto,6,*">
 	            <TextBlock Text="Chats" FontSize="22" FontWeight="SemiBold" />
 
-	            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" Opacity="0.85" VerticalAlignment="Center">
-                <ToggleButton x:Name="HideInactiveToggle" Content="Hide inactive" Click="HideInactiveToggle_Click"/>
-                <ComboBox x:Name="SortCombo" Width="200" SelectionChanged="SortCombo_SelectionChanged"/>
-	            </StackPanel>
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" Opacity="0.85" VerticalAlignment="Center">
+                <Button Content="Sort / Filter">
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedLeft">
+                            <ScrollViewer MaxHeight="420" Width="280">
+                                <StackPanel Padding="12" Spacing="10">
+                                    <TextBlock Text="Sort by" FontWeight="SemiBold"/>
+                                    <RadioButton Content="Alphabetical"
+                                                 GroupName="MessagesSortMode"
+                                                 Tag="Alphabetical"
+                                                 IsChecked="{x:Bind IsSortByAlphabetical, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+                                    <RadioButton Content="Hops away"
+                                                 GroupName="MessagesSortMode"
+                                                 Tag="HopsAway"
+                                                 IsChecked="{x:Bind IsSortByHopsAway, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+                                    <RadioButton Content="Last heard"
+                                                 GroupName="MessagesSortMode"
+                                                 Tag="LastHeard"
+                                                 IsChecked="{x:Bind IsSortByLastHeard, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+                                    <RadioButton Content="Favorites"
+                                                 GroupName="MessagesSortMode"
+                                                 Tag="FavoritesFirst"
+                                                 IsChecked="{x:Bind IsSortByFavorites, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+                                    <RadioButton Content="My Nodes"
+                                                 GroupName="MessagesSortMode"
+                                                 Tag="MyNodes"
+                                                 IsChecked="{x:Bind IsSortByMyNodes, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+
+                                    <TextBlock Text="Order" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                                    <RadioButton Content="Ascending"
+                                                 GroupName="MessagesSortDirection"
+                                                 Tag="Ascending"
+                                                 IsChecked="{x:Bind IsSortAscending, Mode=OneWay}"
+                                                 Checked="SortDirectionRadio_Checked"/>
+                                    <RadioButton Content="Descending"
+                                                 GroupName="MessagesSortDirection"
+                                                 Tag="Descending"
+                                                 IsChecked="{x:Bind IsSortDescending, Mode=OneWay}"
+                                                 Checked="SortDirectionRadio_Checked"/>
+
+                                    <TextBlock Text="Filters" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                                    <CheckBox Content="Hide inactive"
+                                              Tag="HideInactive"
+                                              IsChecked="{x:Bind IsHideInactiveEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <CheckBox Content="My Nodes"
+                                              Tag="MyNodesOnly"
+                                              IsChecked="{x:Bind IsMyNodesFilterEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <CheckBox Content="Favorites"
+                                              Tag="FavoritesOnly"
+                                              IsChecked="{x:Bind IsFavoritesFilterEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <CheckBox Content="Via LoRa"
+                                              Tag="IncludeLoRa"
+                                              IsChecked="{x:Bind IsLoRaFilterEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <CheckBox Content="Via MQTT"
+                                              Tag="IncludeMqtt"
+                                              IsChecked="{x:Bind IsMqttFilterEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+            </StackPanel>
 
 	            <TextBox Grid.Row="4"
 	                     x:Name="ChatSearchBox"

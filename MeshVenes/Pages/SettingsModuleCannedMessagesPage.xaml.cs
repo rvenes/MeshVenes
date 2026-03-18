@@ -41,7 +41,9 @@ public sealed partial class SettingsModuleCannedMessagesPage : Page
             var canned = module.CannedMessage ?? new ModuleConfig.Types.CannedMessageConfig();
             var messages = await AdminConfigClient.Instance.GetCannedMessageModuleMessagesAsync(nodeNum);
 
+            #pragma warning disable CS0612
             EnabledToggle.IsOn = canned.Enabled;
+            #pragma warning restore CS0612
             SendBellToggle.IsOn = canned.SendBell;
             MessagesBox.Text = messages;
             RotaryToggle.IsOn = canned.Rotary1Enabled;
@@ -94,7 +96,9 @@ public sealed partial class SettingsModuleCannedMessagesPage : Page
         {
             var canned = new ModuleConfig.Types.CannedMessageConfig
             {
+                #pragma warning disable CS0612
                 Enabled = EnabledToggle.IsOn,
+                #pragma warning restore CS0612
                 SendBell = SendBellToggle.IsOn,
                 Rotary1Enabled = RotaryToggle.IsOn,
                 Updown1Enabled = UpDownToggle.IsOn,
