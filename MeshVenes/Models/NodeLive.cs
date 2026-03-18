@@ -1,6 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
 using System.Globalization;
+using MeshVenes.Services;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
@@ -386,6 +387,18 @@ public sealed class NodeLive : INotifyPropertyChanged
     public string FavoriteGlyph => IsFavorite ? "★" : "☆";
     public Brush FavoriteBrush => IsFavorite ? FavoriteOnBrush : FavoriteOffBrush;
 
+    private bool _isMyNode;
+    public bool IsMyNode
+    {
+        get => _isMyNode;
+        set
+        {
+            if (_isMyNode == value) return;
+            _isMyNode = value;
+            OnChanged(nameof(IsMyNode));
+        }
+    }
+
     private string _lastHeard = "—";
     public string LastHeard
     {
@@ -556,6 +569,7 @@ public sealed class NodeLive : INotifyPropertyChanged
     {
         IdHex = idHex;
         Sub = "Seen on mesh";
+        IsMyNode = MyNodeStore.Contains(idHex);
         SetFirstHeard(DateTime.UtcNow);
 
         // Update unread indicator when AppState changes.

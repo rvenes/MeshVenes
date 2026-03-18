@@ -75,9 +75,27 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private bool _suppressListEvent;
     private string _chatFilter = "";
     private SortMode _sortMode = SortMode.LastHeard;
+    private bool _sortDescending = true;
     private ObservableCollection<ChatListItemVm> ChatsView { get; }
 
     private bool _hideInactive = true;
+    private bool _filterMyNodesOnly;
+    private bool _filterFavoritesOnly;
+    private bool _includeLoRa = true;
+    private bool _includeMqtt = true;
+
+    public bool IsSortByAlphabetical => _sortMode == SortMode.Alphabetical;
+    public bool IsSortByHopsAway => _sortMode == SortMode.HopsAway;
+    public bool IsSortByLastHeard => _sortMode == SortMode.LastHeard;
+    public bool IsSortByFavorites => _sortMode == SortMode.FavoritesFirst;
+    public bool IsSortByMyNodes => _sortMode == SortMode.MyNodes;
+    public bool IsSortAscending => !_sortDescending;
+    public bool IsSortDescending => _sortDescending;
+    public bool IsHideInactiveEnabled => _hideInactive;
+    public bool IsMyNodesFilterEnabled => _filterMyNodesOnly;
+    public bool IsFavoritesFilterEnabled => _filterFavoritesOnly;
+    public bool IsLoRaFilterEnabled => _includeLoRa;
+    public bool IsMqttFilterEnabled => _includeMqtt;
 
     private readonly ChatListItemVm _primaryChatItem = ChatListItemVm.Primary();
     private readonly Dictionary<string, ChatListItemVm> _chatItemsByPeer = new(StringComparer.OrdinalIgnoreCase);
@@ -114,7 +132,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         Alphabetical,
         HopsAway,
         LastHeard,
-        FavoritesFirst
+        FavoritesFirst,
+        MyNodes
     }
 
     public MessagesPage()
@@ -124,13 +143,6 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         MessagesList.Loaded += MessagesList_Loaded;
         MessagesList.Unloaded += MessagesList_Unloaded;
 
-        SortCombo.Items.Add("Sort: Alphabetical");
-        SortCombo.Items.Add("Sort: Hops away");
-        SortCombo.Items.Add("Sort: Last heard");
-        SortCombo.Items.Add("Sort: Favorites first");
-        SortCombo.SelectedIndex = 2;
-
-        HideInactiveToggle.IsChecked = _hideInactive;
         ChatsView = VisibleChatItems;
         ApplyChatSorting();
 
@@ -552,6 +564,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             or nameof(NodeLive.Name) or nameof(NodeLive.ShortName)
             or nameof(NodeLive.ViaMqtt)
             or nameof(NodeLive.IsFavorite)
+            or nameof(NodeLive.IsMyNode)
             or nameof(NodeLive.HopsAway)
             or nameof(NodeLive.HasLogIndicator)
             or nameof(NodeLive.LastPositionUtc)
@@ -560,15 +573,14 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         {
             UpdateChatItemFromNode(node);
 
-            var shouldRefreshFilter = false;
-            if (e.PropertyName is nameof(NodeLive.RSSI) or nameof(NodeLive.IsFavorite) && _hideInactive)
-            {
-                shouldRefreshFilter = true;
-            }
-            else if (e.PropertyName is nameof(NodeLive.Name) or nameof(NodeLive.ShortName))
-            {
-                shouldRefreshFilter = !string.IsNullOrWhiteSpace(_chatFilter);
-            }
+            var shouldRefreshFilter =
+                HasChatFilters()
+                && e.PropertyName is nameof(NodeLive.RSSI)
+                    or nameof(NodeLive.ViaMqtt)
+                    or nameof(NodeLive.IsFavorite)
+                    or nameof(NodeLive.IsMyNode)
+                    or nameof(NodeLive.Name)
+                    or nameof(NodeLive.ShortName);
 
             if (shouldRefreshFilter)
                 ScheduleChatFilterRefresh();
@@ -615,6 +627,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         if (IsHiddenByInactive(node))
             return false;
 
+        if (!MatchesChatCategoryFilter(node) || !MatchesChatTransportFilter(node))
+            return false;
+
         var q = (_chatFilter ?? "").Trim();
         if (string.IsNullOrWhiteSpace(q))
             return true;
@@ -633,7 +648,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             return;
         }
 
-        if (!_hideInactive && string.IsNullOrWhiteSpace(_chatFilter))
+        if (!HasChatFilters())
             return;
 
         if (_chatFilterRefreshTimer.IsEnabled)
@@ -990,31 +1005,115 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         SyncListToActiveChat();
     }
 
-    private void SortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void SortModeRadio_Checked(object sender, RoutedEventArgs e)
     {
-        _sortMode = SortCombo.SelectedIndex switch
-        {
-            1 => SortMode.HopsAway,
-            2 => SortMode.LastHeard,
-            3 => SortMode.FavoritesFirst,
-            _ => SortMode.Alphabetical
-        };
+        if (sender is not RadioButton radio || radio.Tag is not string tag)
+            return;
 
-        ApplyChatSorting();
+        if (!Enum.TryParse<SortMode>(tag, ignoreCase: true, out var nextMode) || _sortMode == nextMode)
+            return;
+
+        _sortMode = nextMode;
+        RefreshSortFilterUi();
         RebuildVisibleChats();
         SyncListToActiveChat();
     }
 
-    private void HideInactiveToggle_Click(object sender, RoutedEventArgs e)
+    private void SortDirectionRadio_Checked(object sender, RoutedEventArgs e)
     {
-        _hideInactive = HideInactiveToggle.IsChecked == true;
+        if (sender is not RadioButton radio || radio.Tag is not string tag)
+            return;
+
+        var nextDescending = string.Equals(tag, "Descending", StringComparison.OrdinalIgnoreCase);
+        if (_sortDescending == nextDescending)
+            return;
+
+        _sortDescending = nextDescending;
+        RefreshSortFilterUi();
         RebuildVisibleChats();
         SyncListToActiveChat();
+    }
+
+    private void FilterOption_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox checkBox || checkBox.Tag is not string tag)
+            return;
+
+        var isChecked = checkBox.IsChecked == true;
+        var changed = tag switch
+        {
+            "HideInactive" when _hideInactive != isChecked => SetField(ref _hideInactive, isChecked),
+            "MyNodesOnly" when _filterMyNodesOnly != isChecked => SetField(ref _filterMyNodesOnly, isChecked),
+            "FavoritesOnly" when _filterFavoritesOnly != isChecked => SetField(ref _filterFavoritesOnly, isChecked),
+            "IncludeLoRa" when _includeLoRa != isChecked => SetField(ref _includeLoRa, isChecked),
+            "IncludeMqtt" when _includeMqtt != isChecked => SetField(ref _includeMqtt, isChecked),
+            _ => false
+        };
+
+        if (!changed)
+            return;
+
+        RefreshSortFilterUi();
+        RebuildVisibleChats();
+        SyncListToActiveChat();
+    }
+
+    private void RefreshSortFilterUi()
+    {
+        OnChanged(nameof(IsSortByAlphabetical));
+        OnChanged(nameof(IsSortByHopsAway));
+        OnChanged(nameof(IsSortByLastHeard));
+        OnChanged(nameof(IsSortByFavorites));
+        OnChanged(nameof(IsSortByMyNodes));
+        OnChanged(nameof(IsSortAscending));
+        OnChanged(nameof(IsSortDescending));
+        OnChanged(nameof(IsHideInactiveEnabled));
+        OnChanged(nameof(IsMyNodesFilterEnabled));
+        OnChanged(nameof(IsFavoritesFilterEnabled));
+        OnChanged(nameof(IsLoRaFilterEnabled));
+        OnChanged(nameof(IsMqttFilterEnabled));
+    }
+
+    private bool HasChatFilters()
+        => _hideInactive
+            || _filterMyNodesOnly
+            || _filterFavoritesOnly
+            || HasChatTransportFilter()
+            || !string.IsNullOrWhiteSpace(_chatFilter);
+
+    private bool MatchesChatCategoryFilter(NodeLive node)
+    {
+        if (!_filterMyNodesOnly && !_filterFavoritesOnly)
+            return true;
+
+        return (_filterMyNodesOnly && node.IsMyNode)
+            || (_filterFavoritesOnly && node.IsFavorite);
+    }
+
+    private bool MatchesChatTransportFilter(NodeLive node)
+    {
+        if (!HasChatTransportFilter())
+            return true;
+
+        var viaMqtt = node.ViaMqtt == true;
+        return (viaMqtt && _includeMqtt) || (!viaMqtt && _includeLoRa);
+    }
+
+    private bool HasChatTransportFilter()
+        => _includeLoRa != _includeMqtt;
+
+    private static bool SetField(ref bool field, bool value)
+    {
+        if (field == value)
+            return false;
+
+        field = value;
+        return true;
     }
 
     private bool IsHiddenByInactive(NodeLive n)
     {
-        if (!_hideInactive || n.IsFavorite) return false;
+        if (!_hideInactive || n.IsFavorite || n.IsMyNode) return false;
         return !IsOnlineByRssi(n);
     }
 
@@ -1043,45 +1142,19 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private List<ChatListItemVm> SortChatItems(List<ChatListItemVm> items)
     {
-        return _sortMode switch
-        {
-            SortMode.LastHeard => items
-                .OrderByDescending(item => item.PeerIdHex is null)
-                .ThenBy(item => item.IsChannel ? 0 : 1)
-                .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.HopsAway => items
-                .OrderByDescending(item => item.PeerIdHex is null)
-                .ThenBy(item => item.IsChannel ? 0 : 1)
-                .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
-                .ThenBy(item => item.IsChannel ? int.MinValue : item.HopsSortValue)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.FavoritesFirst => items
-                .OrderByDescending(item => item.PeerIdHex is null)
-                .ThenBy(item => item.IsChannel ? 0 : 1)
-                .ThenBy(item => item.IsChannel ? 0 : (item.IsFavorite ? 0 : 1))
-                .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            _ => items
-                .OrderByDescending(item => item.PeerIdHex is null)
-                .ThenBy(item => item.IsChannel ? 0 : 1)
-                .ThenBy(item => item.IsChannel ? item.ChannelIndex : uint.MaxValue)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList()
-        };
+        var primary = items
+            .Where(item => item.PeerIdHex is null)
+            .ToList();
+        var channels = items
+            .Where(item => item.IsChannel && item.PeerIdHex is not null)
+            .OrderBy(item => item.ChannelIndex)
+            .ToList();
+        var directChats = SortDirectChats(items.Where(item => !item.IsChannel).ToList());
+
+        return primary
+            .Concat(channels)
+            .Concat(directChats)
+            .ToList();
     }
 
     private void ApplyChatSorting()
@@ -1089,54 +1162,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         if (VisibleChatItems.Count <= 1)
             return;
 
-        var indexed = VisibleChatItems.Select((item, index) => (item, index));
-        var sorted = _sortMode switch
-        {
-            SortMode.LastHeard => indexed
-                .OrderByDescending(entry => entry.item.PeerIdHex is null)
-                .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
-                .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc)
-                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.index)
-                .Select(entry => entry.item)
-                .ToList(),
-            SortMode.HopsAway => indexed
-                .OrderByDescending(entry => entry.item.PeerIdHex is null)
-                .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
-                .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
-                .ThenBy(entry => entry.item.IsChannel ? int.MinValue : entry.item.HopsSortValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc)
-                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.index)
-                .Select(entry => entry.item)
-                .ToList(),
-            SortMode.FavoritesFirst => indexed
-                .OrderByDescending(entry => entry.item.PeerIdHex is null)
-                .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
-                .ThenBy(entry => entry.item.IsChannel ? 0 : (entry.item.IsFavorite ? 0 : 1))
-                .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(entry => entry.item.LastHeardUtc)
-                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.index)
-                .Select(entry => entry.item)
-                .ToList(),
-            _ => indexed
-                .OrderByDescending(entry => entry.item.PeerIdHex is null)
-                .ThenBy(entry => entry.item.IsChannel ? 0 : 1)
-                .ThenBy(entry => entry.item.IsChannel ? entry.item.ChannelIndex : uint.MaxValue)
-                .ThenBy(entry => entry.item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.index)
-                .Select(entry => entry.item)
-                .ToList()
-        };
+        var sorted = SortChatItems(VisibleChatItems.ToList());
 
         _suppressListEvent = true;
         try
@@ -1147,6 +1173,76 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         {
             _suppressListEvent = false;
         }
+    }
+
+    private List<ChatListItemVm> SortDirectChats(List<ChatListItemVm> items)
+    {
+        return _sortMode switch
+        {
+            SortMode.LastHeard when _sortDescending => items
+                .OrderByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.LastHeard => items
+                .OrderByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenBy(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.HopsAway when _sortDescending => items
+                .OrderBy(item => item.HopsSortValue == int.MaxValue ? 1 : 0)
+                .ThenByDescending(item => item.HopsSortValue)
+                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.HopsAway => items
+                .OrderBy(item => item.HopsSortValue)
+                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.FavoritesFirst when _sortDescending => items
+                .OrderByDescending(item => item.IsFavorite)
+                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.FavoritesFirst => items
+                .OrderBy(item => item.IsFavorite ? 1 : 0)
+                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.MyNodes when _sortDescending => items
+                .OrderByDescending(item => item.IsMyNode)
+                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.MyNodes => items
+                .OrderBy(item => item.IsMyNode ? 1 : 0)
+                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
+                .ThenByDescending(item => item.LastHeardUtc)
+                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            SortMode.Alphabetical when _sortDescending => items
+                .OrderByDescending(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            _ => items
+                .OrderBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
+                .ToList()
+        };
     }
 
     private void RefreshChatSorting()
@@ -2102,6 +2198,18 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
     public string FavoriteGlyph => IsFavorite ? "★" : "☆";
     public Brush FavoriteBrush => IsFavorite ? FavoriteOnBrush : FavoriteOffBrush;
 
+    private bool _isMyNode;
+    public bool IsMyNode
+    {
+        get => _isMyNode;
+        set
+        {
+            if (_isMyNode == value) return;
+            _isMyNode = value;
+            OnChanged(nameof(IsMyNode));
+        }
+    }
+
     private Visibility _favoriteVisibility = Visibility.Collapsed;
     public Visibility FavoriteVisibility
     {
@@ -2259,6 +2367,7 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
             SortNameKey = BuildSortNameKey(n.LongName, n.ShortName, n.IdHex),
             SortIdKey = (n.IdHex ?? "").ToUpperInvariant(),
             IsFavorite = n.IsFavorite,
+            IsMyNode = n.IsMyNode,
             FavoriteVisibility = Visibility.Visible,
             HopsBadgeText = n.HopsBadgeText,
             HopsSortValue = n.HopsAway ?? int.MaxValue,
@@ -2336,6 +2445,7 @@ public sealed class ChatListItemVm : INotifyPropertyChanged
         SortNameKey = BuildSortNameKey(n.LongName, n.ShortName, n.IdHex);
         SortIdKey = (n.IdHex ?? "").ToUpperInvariant();
         IsFavorite = n.IsFavorite;
+        IsMyNode = n.IsMyNode;
         FavoriteVisibility = Visibility.Visible;
         HopsBadgeText = n.HopsBadgeText;
         HopsSortValue = n.HopsAway ?? int.MaxValue;

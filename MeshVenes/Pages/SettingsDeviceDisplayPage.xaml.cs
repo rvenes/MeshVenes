@@ -39,7 +39,9 @@ public sealed partial class SettingsDeviceDisplayPage : Page
             var config = await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.DisplayConfig);
             var display = config.Display ?? new Config.Types.DisplayConfig();
 
+            #pragma warning disable CS0612
             AlwaysNorthToggle.IsOn = display.CompassNorthTop;
+            #pragma warning restore CS0612
             Clock12Toggle.IsOn = display.Use12HClock;
             BoldHeadingToggle.IsOn = display.HeadingBold;
             UnitsCombo.SelectedItem = display.Units;
@@ -90,7 +92,9 @@ public sealed partial class SettingsDeviceDisplayPage : Page
         {
             var display = new Config.Types.DisplayConfig
             {
+                #pragma warning disable CS0612
                 CompassNorthTop = AlwaysNorthToggle.IsOn,
+                #pragma warning restore CS0612
                 Use12HClock = Clock12Toggle.IsOn,
                 HeadingBold = BoldHeadingToggle.IsOn,
                 Units = units,
