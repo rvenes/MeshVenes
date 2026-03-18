@@ -50,12 +50,15 @@ If a build/test cannot be run in the current environment, state exactly what cou
 
 ## Version bump rule (required)
 
-When the user asks for a version bump, update all relevant version sources so About and packaged builds show the same new version:
+Before commit/push for changes that are intended to go to GitHub and trigger GitHub Actions artifacts/releases, bump the app version.
+
+When the user asks for a version bump, or when preparing changes for GitHub push/release flow, update all relevant version sources so About and packaged builds show the same new version:
 
 - `MeshVenes.csproj`: `Version`, `AssemblyVersion`, `FileVersion`, `AssemblyInformationalVersion`
 - `MeshVenes/Package.appxmanifest`: `<Identity Version="...">`
 
 Never bump only one location.
+Default bump level: patch version, unless the user explicitly requests a different version.
 
 ## Git operations (automation)
 
@@ -75,9 +78,9 @@ Codex should handle the full Git workflow so the user can simply review a PR lin
 - git switch main
 - git pull
 
-2. Create a feature branch:
+2. Create a branch with the required Codex prefix:
 
-- git switch -c feature/<name>
+- git switch -c codex/<name>
 
 3. Implement changes + validate build/tests (see section above).
 
@@ -88,7 +91,7 @@ Codex should handle the full Git workflow so the user can simply review a PR lin
 
 5. Push and provide a PR link:
 
-- git push -u origin feature/<name>
+- git push -u origin codex/<name>
 
 Then provide the GitHub URL to open a PR (or use `gh pr create` only if GitHub CLI is installed and authenticated).
 
@@ -96,7 +99,7 @@ Then provide the GitHub URL to open a PR (or use `gh pr create` only if GitHub C
    - After the PR is merged, suggest cleanup commands, but do not run them unless asked:
      - git switch main
      - git pull
-     - git branch -d feature/<name>
+     - git branch -d codex/<name>
 
 ### Post-merge reset workflow (required)
 
@@ -106,7 +109,7 @@ When the user confirms the PR is merged and asks to prepare for new work:
 2. `git pull`
 3. Verify clean state (`git status`)
 4. Create a fresh feature branch for the next task only when the user is ready to start coding:
-   - `git switch -c feature/<next-name>`
+   - `git switch -c codex/<next-name>`
 
 ## Manual approval before commit & push (mandatory)
 
@@ -136,14 +139,20 @@ Then execute the standard Git workflow:
 
 - git switch main
 - git pull
-- git switch -c feature/<name>
+- git switch -c codex/<name>
 - git add -A
 - git commit -m "<English technical message>"
-- git push -u origin feature/<name>
+- git push -u origin codex/<name>
 
 Then provide the GitHub PR link.
 
 Never push automatically without explicit approval.
+
+## Branch hygiene (required)
+
+- If continuing work for an open PR, stay on that PR branch and keep working there until the user asks to reset after merge.
+- If starting a new task and the previous PR is already merged, switch to `main`, pull, verify a clean working tree, then create a fresh `codex/<name>` branch before editing.
+- Do not keep coding on an outdated branch if the intended work should land through a different active PR branch.
 
 ## Environment assumptions
 
