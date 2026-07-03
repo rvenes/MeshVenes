@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using MeshVenes.Models;
 using MeshVenes.Protocol;
 using MeshVenes.Services;
@@ -528,6 +529,66 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         Unloaded += NodesPage_Unloaded;
     }
 
+    // The page is cached (NavigationCacheMode Required) and unhooks AppState
+    // events while unloaded, so everything that changed on other tabs must be
+    // re-subscribed and mirrored again every time the page is shown.
+    private void ResyncAppStateSubscriptions()
+    {
+        MeshVenes.AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
+        MeshVenes.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
+        MeshVenes.AppState.Waypoints.CollectionChanged -= Waypoints_CollectionChanged;
+        MeshVenes.AppState.Waypoints.CollectionChanged += Waypoints_CollectionChanged;
+        AppState.ConnectedNodeChanged -= ConnectedNodeChanged;
+        AppState.ConnectedNodeChanged += ConnectedNodeChanged;
+        AppState.SettingsChanged -= AppState_SettingsChanged;
+        AppState.SettingsChanged += AppState_SettingsChanged;
+
+        foreach (var n in MeshVenes.AppState.Nodes)
+        {
+            n.PropertyChanged -= Node_PropertyChanged;
+            n.PropertyChanged += Node_PropertyChanged;
+            if (!_allNodes.Contains(n))
+                _allNodes.Add(n);
+        }
+
+        for (var i = _allNodes.Count - 1; i >= 0; i--)
+        {
+            if (!MeshVenes.AppState.Nodes.Contains(_allNodes[i]))
+                _allNodes.RemoveAt(i);
+        }
+
+        foreach (var waypoint in MeshVenes.AppState.Waypoints)
+        {
+            waypoint.PropertyChanged -= Waypoint_PropertyChanged;
+            waypoint.PropertyChanged += Waypoint_PropertyChanged;
+        }
+
+        RebuildVisibleNodes();
+    }
+
+    // "Open node" on the Messages page stores the requested node id and then
+    // navigates here. The page is cached, so the stored value must be applied on
+    // every Loaded, not just in the constructor.
+    private void RestoreRequestedNodeSelection()
+    {
+        var requested = LoadLastSelectedNodeIdHex();
+        if (string.IsNullOrWhiteSpace(requested))
+            return;
+
+        _lastSelectedNodeIdHex = requested;
+
+        if (Selected is not null && string.Equals(Selected.IdHex, requested, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var node = _allNodes.FirstOrDefault(n => string.Equals(n.IdHex, requested, StringComparison.OrdinalIgnoreCase));
+        if (node is null)
+            return;
+
+        NodesList.SelectedItem = node;
+        Selected = node;
+        NodesList.ScrollIntoView(node);
+    }
+
     private void NodesPage_Unloaded(object sender, RoutedEventArgs e)
     {
         MeshVenes.AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
@@ -598,6 +659,9 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private async void NodesPage_Loaded(object sender, RoutedEventArgs e)
     {
         _pendingAutoFitOnLoad = true;
+        ResyncAppStateSubscriptions();
+        RestoreRequestedNodeSelection();
+        DisableDetailsTabContentAnimation();
         EnsureSelectedTabVisible();
         UpdateTabHeaderColors();
         await EnsureMapAsync();
@@ -3618,6 +3682,43 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         var path = GetLogFilePath(nodeId, kind);
         return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+    }
+
+    private void DisableDetailsTabContentAnimation()
+    {
+        // The TabView template plays a ContentThemeTransition (slide in from the
+        // bottom) on its content presenter when the selected tab changes; clear
+        // it so switching sub-tabs shows the content instantly.
+        var presenter = FindDescendantByName<ContentPresenter>(DetailsTabs, "TabContentPresenter");
+        if (presenter is not null)
+            presenter.ContentTransitions = new TransitionCollection();
+
+        // The tab strip itself is an internal TabViewListView whose item
+        // containers play the default entrance animation, making the row of tab
+        // headers fly in from the bottom. It is a ListView subclass, so the
+        // app-wide implicit ListView style does not reach it; clear it directly.
+        var tabStrip = FindDescendantByName<ListView>(DetailsTabs, "TabListView");
+        if (tabStrip is not null)
+        {
+            tabStrip.ItemContainerTransitions = new TransitionCollection();
+            tabStrip.Transitions = new TransitionCollection();
+        }
+    }
+
+    private static T? FindDescendantByName<T>(DependencyObject root, string name) where T : FrameworkElement
+    {
+        if (root is T match && match.Name == name)
+            return match;
+
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var result = FindDescendantByName<T>(VisualTreeHelper.GetChild(root, i), name);
+            if (result is not null)
+                return result;
+        }
+
+        return null;
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)

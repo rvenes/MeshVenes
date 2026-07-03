@@ -739,18 +739,70 @@ public static class FromRadioRouter
         if (requestId == 0)
             return;
 
+        var error = ParseRoutingError(decodedObj);
+
         for (int idx = 0; idx < MeshVenes.AppState.Messages.Count; idx++)
         {
             var m = MeshVenes.AppState.Messages[idx];
             if (!m.IsMine) continue;
             if (m.PacketId != requestId) continue;
 
-            MeshVenes.AppState.Messages[idx] = m.WithAckFrom(ackFromNodeNum);
+            var updated = error == Routing.Types.Error.None
+                ? m.WithAckFrom(ackFromNodeNum)
+                : m.WithDeliveryFailure(DescribeRoutingError(error));
+
+            if (!ReferenceEquals(updated, m))
+            {
+                MeshVenes.AppState.Messages[idx] = updated;
+                MessageArchive.AppendStatus(updated);
+            }
+
+            if (error != Routing.Types.Error.None)
+                logToUi($"Delivery failed for 0x{requestId:x8}: {DescribeRoutingError(error)}");
             return;
         }
 
         logToUi($"ACK (unknown request_id=0x{requestId:x8})");
     }
+
+    private static Routing.Types.Error ParseRoutingError(object decodedObj)
+    {
+        // A plain ACK carries a Routing payload with error_reason NONE (or an
+        // empty payload); anything else is a NAK for the referenced packet.
+        try
+        {
+            var payloadBytes = TryGetPayloadBytes(decodedObj);
+            if (payloadBytes is null || payloadBytes.Length == 0)
+                return Routing.Types.Error.None;
+
+            var routing = Routing.Parser.ParseFrom(payloadBytes);
+            return routing.VariantCase == Routing.VariantOneofCase.ErrorReason
+                ? routing.ErrorReason
+                : Routing.Types.Error.None;
+        }
+        catch
+        {
+            return Routing.Types.Error.None;
+        }
+    }
+
+    private static string DescribeRoutingError(Routing.Types.Error error) => error switch
+    {
+        Routing.Types.Error.NoRoute => "No route to destination",
+        Routing.Types.Error.GotNak => "Destination rejected the message",
+        Routing.Types.Error.Timeout => "Timed out",
+        Routing.Types.Error.NoInterface => "No radio interface available",
+        Routing.Types.Error.MaxRetransmit => "No response after maximum retransmissions",
+        Routing.Types.Error.NoChannel => "Destination does not have this channel",
+        Routing.Types.Error.TooLarge => "Message too large",
+        Routing.Types.Error.NoResponse => "No response from destination",
+        Routing.Types.Error.DutyCycleLimit => "Duty cycle limit reached",
+        Routing.Types.Error.BadRequest => "Bad request",
+        Routing.Types.Error.NotAuthorized => "Not authorized (channel or key mismatch)",
+        Routing.Types.Error.PkiFailed => "Encryption (PKI) failure",
+        Routing.Types.Error.PkiUnknownPubkey => "Destination has no matching public key",
+        _ => error.ToString()
+    };
 
     // GPS from packet.Payload (protobuf Position)
     private static bool TryHandlePositionFromPayload(object decodedObj, uint fromNodeNum, string source, Action<string> logToUi, out string summary)

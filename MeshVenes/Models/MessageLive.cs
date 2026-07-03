@@ -26,6 +26,10 @@ public sealed class MessageLive
     public bool IsHeard { get; init; }        // At least one ACK from any node
     public bool IsDelivered { get; init; }    // ACK from DM recipient (DM only)
 
+    // Routing NAK (or ack timeout): the mesh reported the message as undeliverable.
+    public bool DeliveryFailed { get; init; }
+    public string FailureReason { get; init; } = "";
+
     // Tracks the DM recipient (nodeNum)
     public uint DmTargetNodeNum { get; init; } // 0 when not DM
 
@@ -113,26 +117,40 @@ public sealed class MessageLive
 
     public MessageLive WithAckFrom(uint ackFromNodeNum)
     {
+        // A real ACK clears an earlier failure (e.g. late delivery after a
+        // retransmit NAK or a local timeout).
         // Broadcast: heard only
         if (!IsDirect || DmTargetNodeNum == 0)
         {
-            if (IsHeard) return this;
-            return Clone(heard: true, delivered: false);
+            if (IsHeard && !DeliveryFailed) return this;
+            return Clone(heard: true, delivered: false, failed: false, failureReason: "");
         }
 
         // DM:
         // - heard: ACK from any node
         // - delivered: ACK from DM recipient
         bool deliveredNow = (ackFromNodeNum == DmTargetNodeNum);
-        bool heardNow = true;
 
-        if (IsHeard && (IsDelivered || !deliveredNow))
+        if (IsHeard && !DeliveryFailed && (IsDelivered || !deliveredNow))
             return this;
 
-        return Clone(heard: heardNow || IsHeard, delivered: IsDelivered || deliveredNow);
+        return Clone(
+            heard: true,
+            delivered: IsDelivered || deliveredNow,
+            failed: DeliveryFailed && !deliveredNow,
+            failureReason: DeliveryFailed && !deliveredNow ? FailureReason : "");
     }
 
-    private MessageLive Clone(bool heard, bool delivered)
+    public MessageLive WithDeliveryFailure(string reason)
+    {
+        // A confirmed delivery outranks any later error report.
+        if (IsDelivered)
+            return this;
+
+        return Clone(heard: IsHeard, delivered: false, failed: true, failureReason: reason ?? "");
+    }
+
+    private MessageLive Clone(bool heard, bool delivered, bool failed, string failureReason)
         => new()
         {
             FromIdHex = FromIdHex,
@@ -146,6 +164,8 @@ public sealed class MessageLive
             PacketId = PacketId,
             IsHeard = heard,
             IsDelivered = delivered,
+            DeliveryFailed = failed,
+            FailureReason = failureReason,
             DmTargetNodeNum = DmTargetNodeNum,
             ChannelIndex = ChannelIndex,
             ChannelName = ChannelName

@@ -20,6 +20,10 @@ public sealed class AdminConfigClient
 
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(6);
 
+    // Spacing between staged writes in a batch so the firmware's admin queue
+    // is not flooded; queue control in RadioClient adds further throttling.
+    private static readonly TimeSpan InterBatchWriteDelay = TimeSpan.FromMilliseconds(150);
+
     private AdminConfigClient() { }
 
     public void PublishIncomingAdminMessage(uint fromNodeNum, AdminMessage admin)
@@ -91,7 +95,7 @@ public sealed class AdminConfigClient
         return response.GetChannelResponse?.Clone() ?? new Channel { Index = channelIndex, Role = Channel.Types.Role.Disabled };
     }
 
-    public async Task<IReadOnlyList<Channel>> GetChannelsAsync(uint nodeNum, int maxChannels = 8, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Channel>> GetChannelsAsync(uint nodeNum, int maxChannels = 8, bool treatTimeoutAsDisabled = true, CancellationToken ct = default)
     {
         var channels = new List<Channel>(Math.Max(1, maxChannels));
 
@@ -102,7 +106,7 @@ public sealed class AdminConfigClient
             {
                 channels.Add(await GetChannelAsync(nodeNum, i, ct).ConfigureAwait(false));
             }
-            catch (TimeoutException)
+            catch (TimeoutException) when (treatTimeoutAsDisabled)
             {
                 channels.Add(new Channel { Index = i, Role = Channel.Types.Role.Disabled });
             }
@@ -407,6 +411,78 @@ public sealed class AdminConfigClient
         await SendWithoutResponseAsync(nodeNum, req, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Applies all writes in <paramref name="batch"/> inside a single
+    /// begin_edit_settings / commit_edit_settings transaction. Nothing is persisted
+    /// to the node's flash until the final commit, so a failure part-way leaves the
+    /// stored configuration untouched (a reboot restores the previous state).
+    /// </summary>
+    public async Task ApplyBatchAsync(uint nodeNum, SettingsWriteBatch batch, Action<int, int, string>? progress = null, CancellationToken ct = default)
+    {
+        if (batch is null)
+            throw new ArgumentNullException(nameof(batch));
+        if (batch.Count == 0)
+            return;
+
+        // A stale passkey (older than ~300 s or from before a reboot) makes the
+        // firmware silently ignore writes, so always fetch a fresh one first.
+        await RefreshSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);
+
+        await BeginEditSettingsAsync(nodeNum, ct).ConfigureAwait(false);
+
+        var index = 0;
+        foreach (var (label, message) in batch.Writes)
+        {
+            ct.ThrowIfCancellationRequested();
+            index++;
+            progress?.Invoke(index, batch.Count, label);
+            await SendWithoutResponseAsync(nodeNum, message, ct).ConfigureAwait(false);
+            await Task.Delay(InterBatchWriteDelay, ct).ConfigureAwait(false);
+        }
+
+        await CommitEditSettingsAsync(nodeNum, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Asks the node (firmware 2.6+) to store a backup of its preferences in
+    /// internal flash. Older firmware ignores the message.
+    /// </summary>
+    public async Task BackupPreferencesToFlashAsync(uint nodeNum, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage
+        {
+            BackupPreferences = AdminMessage.Types.BackupLocation.Flash
+        };
+
+        await SendWithoutResponseAsync(nodeNum, req, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Asks the node (firmware 2.6+) to restore preferences from the backup in
+    /// internal flash. The node reboots after a successful restore.
+    /// </summary>
+    public async Task RestorePreferencesFromFlashAsync(uint nodeNum, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage
+        {
+            RestorePreferences = AdminMessage.Types.BackupLocation.Flash
+        };
+
+        await SendWithoutResponseAsync(nodeNum, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task RefreshSessionPasskeyAsync(uint nodeNum, CancellationToken ct = default)
+    {
+        lock (_lock)
+            _sessionPasskeysByNode.Remove(nodeNum);
+
+        _ = await GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.DeviceConfig, ct).ConfigureAwait(false);
+    }
+
     private async Task EnsureSessionPasskeyAsync(uint nodeNum, CancellationToken ct)
     {
         lock (_lock)
@@ -505,4 +581,37 @@ public sealed class AdminConfigClient
     }
 
     private readonly record struct AdminEnvelope(uint FromNodeNum, AdminMessage Message);
+}
+
+/// <summary>
+/// An ordered set of settings writes that will be applied to a node as one
+/// begin/commit_edit_settings transaction via <see cref="AdminConfigClient.ApplyBatchAsync"/>.
+/// Callers control the order; reboot-triggering sections (device, network, LoRa)
+/// should be added last.
+/// </summary>
+public sealed class SettingsWriteBatch
+{
+    private readonly List<(string Label, AdminMessage Message)> _writes = new();
+
+    public int Count => _writes.Count;
+
+    internal IReadOnlyList<(string Label, AdminMessage Message)> Writes => _writes;
+
+    public void AddConfig(string label, Config config)
+        => _writes.Add((label, new AdminMessage { SetConfig = config.Clone() }));
+
+    public void AddModuleConfig(string label, ModuleConfig moduleConfig)
+        => _writes.Add((label, new AdminMessage { SetModuleConfig = moduleConfig.Clone() }));
+
+    public void AddChannel(string label, Channel channel)
+        => _writes.Add((label, new AdminMessage { SetChannel = channel.Clone() }));
+
+    public void AddOwner(string label, User owner)
+        => _writes.Add((label, new AdminMessage { SetOwner = owner.Clone() }));
+
+    public void AddCannedMessages(string label, string messages)
+        => _writes.Add((label, new AdminMessage { SetCannedMessageModuleMessages = messages ?? string.Empty }));
+
+    public void AddRingtone(string label, string ringtone)
+        => _writes.Add((label, new AdminMessage { SetRingtoneMessage = ringtone ?? string.Empty }));
 }

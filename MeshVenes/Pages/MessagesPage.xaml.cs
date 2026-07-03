@@ -15,6 +15,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.IO;
 using Microsoft.UI;
 using Microsoft.UI.Xaml.Media;
@@ -148,7 +149,18 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         _messageLogRetentionDays = LoadMessageRetentionDays();
 
-        Loaded += (_, __) => HookAppStateEvents();
+        // The page is cached (NavigationCacheMode Required) and unhooks AppState
+        // events while unloaded, so nodes/messages that arrive on other tabs must
+        // be backfilled every time the page is shown again.
+        Loaded += (_, __) =>
+        {
+            HookAppStateEvents();
+            SyncChatsFromAppState();
+            // Channel chat items and the active-chat selection are driven by
+            // events this page misses while unloaded (connect, "Send DM").
+            _ = RefreshChannelDisplayNamesAsync(force: false);
+            ActiveChatChanged();
+        };
         Unloaded += (_, __) => UnhookAppStateEvents();
         HookAppStateEvents();
 
@@ -624,6 +636,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private bool ShouldShowChatItem(NodeLive node)
     {
+        // Sending a DM to the radio this app is connected to makes no sense.
+        if (IsConnectedNode(node))
+            return false;
+
         if (IsHiddenByInactive(node))
             return false;
 
@@ -638,6 +654,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             || (node.IdHex?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
             || (node.ShortId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false);
     }
+
+    private static bool IsConnectedNode(NodeLive node)
+        => !string.IsNullOrWhiteSpace(MeshVenes.AppState.ConnectedNodeIdHex) &&
+           string.Equals(node.IdHex, MeshVenes.AppState.ConnectedNodeIdHex, StringComparison.OrdinalIgnoreCase);
 
     private void ScheduleChatFilterRefresh()
     {
@@ -879,6 +899,39 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         RequestInitialScrollPosition(force: true);
     }
 
+    private void MessageHeader_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not MessageVm vm)
+            return;
+
+        if (vm.IsMine)
+            return;
+
+        var peer = vm.FromIdHex;
+        if (string.IsNullOrWhiteSpace(peer))
+            peer = ExtractNodeIdFromHeader(vm.Header);
+        if (string.IsNullOrWhiteSpace(peer))
+            return;
+
+        if (!_chatItemsByPeer.TryGetValue(peer, out var chat))
+            return;
+
+        // Make sure the chat survives the visibility filters, then select it so
+        // ChatList_SelectionChanged runs the normal selection bookkeeping.
+        MeshVenes.AppState.SetActiveChatPeer(peer);
+        RebuildVisibleChats();
+        ChatList.SelectedItem = chat;
+    }
+
+    private static string? ExtractNodeIdFromHeader(string? header)
+    {
+        if (string.IsNullOrWhiteSpace(header))
+            return null;
+
+        var match = Regex.Match(header, "0x[0-9a-fA-F]{8}");
+        return match.Success ? match.Value : null;
+    }
+
     private void OpenNodeFromDm_Click(object sender, RoutedEventArgs e)
     {
         if (!TryGetActiveDmPeerIdHex(out var peerIdHex) || string.IsNullOrWhiteSpace(peerIdHex))
@@ -967,16 +1020,22 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         foreach (var msg in orderedArchive)
         {
             var local = msg.When.ToLocalTime();
+            var isMine = string.Equals(msg.Header, "Me", StringComparison.OrdinalIgnoreCase);
+            var archivedFromIdHex = isMine ? "" : (ExtractNodeIdFromHeader(msg.Header) ?? "");
             var candidate = new MessageVm
             {
                 Header = msg.Header ?? "",
                 Text = msg.Text ?? "",
                 WhenUtc = msg.When.UtcDateTime,
                 When = local.ToString("yyyy-MM-dd HH:mm:ss"),
-                IsMine = string.Equals(msg.Header, "Me", StringComparison.OrdinalIgnoreCase),
-                PacketId = 0,
-                HeardVisible = Visibility.Collapsed,
-                DeliveredVisible = Visibility.Collapsed
+                IsMine = isMine,
+                PacketId = msg.PacketId,
+                HeardVisible = (isMine && msg.Heard) ? Visibility.Visible : Visibility.Collapsed,
+                DeliveredVisible = (isMine && msg.Delivered) ? Visibility.Visible : Visibility.Collapsed,
+                FailedVisible = (isMine && msg.Failed) ? Visibility.Visible : Visibility.Collapsed,
+                FailureReason = msg.FailureReason ?? "",
+                FromIdHex = archivedFromIdHex,
+                HeaderToolTip = MessageVm.BuildHeaderToolTip(isMine, archivedFromIdHex)
             };
 
             var dedupeKey = BuildMessageDedupKey(candidate.Header, candidate.Text, candidate.WhenUtc);
@@ -1302,6 +1361,31 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         foreach (var message in MeshVenes.AppState.Messages.OrderBy(m => m.WhenUtc))
             AddMessageToChat(message);
+    }
+
+    private void SyncChatsFromAppState()
+    {
+        foreach (var node in MeshVenes.AppState.Nodes)
+        {
+            // Idempotent re-subscribe: nodes added while this page was unloaded
+            // have no handler yet, already known nodes must not get a second one.
+            node.PropertyChanged -= Node_PropertyChanged;
+            node.PropertyChanged += Node_PropertyChanged;
+
+            if (string.IsNullOrWhiteSpace(node.IdHex))
+                continue;
+
+            if (_chatItemsByPeer.TryGetValue(node.IdHex, out var item))
+                item.UpdateFromNode(node);
+            else
+                AddChatItemForNode(node);
+        }
+
+        // AddMessageToChat dedupes, so replaying the live list only adds missed ones.
+        foreach (var message in MeshVenes.AppState.Messages.OrderBy(m => m.WhenUtc))
+            AddMessageToChat(message);
+
+        RebuildVisibleChats();
     }
 
     private static string NormalizePeerKey(string? peerIdHex)
@@ -1857,6 +1941,40 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             MessageArchive.Append(local, channelName: channelName);
         else
             MessageArchive.Append(local, dmPeerIdHex: peer);
+
+        if (dmTargetNodeNum != 0 && packetId != 0)
+            ScheduleDmAckTimeout(packetId);
+    }
+
+    // Mesh retransmits can take a while over multiple hops; only after this
+    // window without a delivery ACK is a DM marked as failed. A late ACK still
+    // clears the failure.
+    private static readonly TimeSpan DmAckTimeout = TimeSpan.FromSeconds(120);
+
+    private void ScheduleDmAckTimeout(uint packetId)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(DmAckTimeout).ConfigureAwait(false);
+
+            _ = DispatcherQueue.TryEnqueue(() =>
+            {
+                for (var idx = 0; idx < MeshVenes.AppState.Messages.Count; idx++)
+                {
+                    var m = MeshVenes.AppState.Messages[idx];
+                    if (!m.IsMine || m.PacketId != packetId)
+                        continue;
+
+                    if (m.IsDelivered || m.DeliveryFailed)
+                        return;
+
+                    var updated = m.WithDeliveryFailure("No delivery confirmation received");
+                    MeshVenes.AppState.Messages[idx] = updated;
+                    MessageArchive.AppendStatus(updated);
+                    return;
+                }
+            });
+        });
     }
 
     private void EnforceMessageByteLimit()
@@ -2609,6 +2727,29 @@ public sealed class MessageVm : INotifyPropertyChanged
         set { if (_deliveredVisible != value) { _deliveredVisible = value; OnChanged(nameof(DeliveredVisible)); } }
     }
 
+    private Visibility _failedVisible = Visibility.Collapsed;
+    public Visibility FailedVisible
+    {
+        get => _failedVisible;
+        set { if (_failedVisible != value) { _failedVisible = value; OnChanged(nameof(FailedVisible)); } }
+    }
+
+    private string _failureReason = "";
+    public string FailureReason
+    {
+        get => _failureReason;
+        set { if (_failureReason != value) { _failureReason = value; OnChanged(nameof(FailureReason)); } }
+    }
+
+    public string FromIdHex { get; set; } = "";
+
+    private string? _headerToolTip;
+    public string? HeaderToolTip
+    {
+        get => _headerToolTip;
+        set { if (_headerToolTip != value) { _headerToolTip = value; OnChanged(nameof(HeaderToolTip)); } }
+    }
+
     private bool _isVisible = true;
     public bool IsVisible
     {
@@ -2651,8 +2792,12 @@ public sealed class MessageVm : INotifyPropertyChanged
             When = m.When ?? "",
             HeardVisible = (m.IsMine && m.IsHeard) ? Visibility.Visible : Visibility.Collapsed,
             DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed,
+            FailedVisible = (m.IsMine && m.DeliveryFailed) ? Visibility.Visible : Visibility.Collapsed,
+            FailureReason = m.FailureReason ?? "",
             PacketId = m.PacketId,
-            IsMine = m.IsMine
+            IsMine = m.IsMine,
+            FromIdHex = m.FromIdHex ?? "",
+            HeaderToolTip = BuildHeaderToolTip(m.IsMine, m.FromIdHex)
         };
 
     public void UpdateFrom(MessageLive m)
@@ -2663,9 +2808,18 @@ public sealed class MessageVm : INotifyPropertyChanged
         When = m.When ?? "";
         HeardVisible = (m.IsMine && m.IsHeard) ? Visibility.Visible : Visibility.Collapsed;
         DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed;
+        FailedVisible = (m.IsMine && m.DeliveryFailed) ? Visibility.Visible : Visibility.Collapsed;
+        FailureReason = m.FailureReason ?? "";
         PacketId = m.PacketId;
         IsMine = m.IsMine;
+        FromIdHex = m.FromIdHex ?? "";
+        HeaderToolTip = BuildHeaderToolTip(m.IsMine, m.FromIdHex);
     }
+
+    public static string? BuildHeaderToolTip(bool isMine, string? fromIdHex)
+        => !isMine && !string.IsNullOrWhiteSpace(fromIdHex)
+            ? "Click to open a direct message with this node"
+            : null;
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }

@@ -4,6 +4,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -39,6 +40,83 @@ public sealed partial class MainWindow : Window
         EnqueueConnectionStatusUpdate();
         ApplyAppThemeFromSettings();
         NavigateTo("connect");
+        RootGrid.Loaded += (_, __) => _ = RunStartupUpdateCheckAsync();
+    }
+
+    private static bool s_startupUpdateCheckDone;
+
+    private async System.Threading.Tasks.Task RunStartupUpdateCheckAsync()
+    {
+        if (s_startupUpdateCheckDone)
+            return;
+        s_startupUpdateCheckDone = true;
+
+        if (Packaging.IsPackaged())
+            return;
+
+        try
+        {
+            // Let the app finish starting before touching the network.
+            await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(3));
+
+            var result = await UpdateService.CheckForUpdateAsync();
+            if (result.Status != UpdateStatus.UpdateAvailable || result.Update is not { } update)
+                return;
+
+            var body = $"MeshVenes {update.VersionText} is available (you have {UpdateService.CurrentVersionText}).";
+            if (!string.IsNullOrWhiteSpace(update.Notes))
+                body += $"\n\n{update.Notes}";
+
+            var progressBar = new ProgressBar { Minimum = 0, Maximum = 1, Margin = new Thickness(0, 12, 0, 0), Visibility = Visibility.Collapsed };
+            var bodyText = new TextBlock { Text = body, TextWrapping = TextWrapping.Wrap };
+            var content = new StackPanel();
+            content.Children.Add(bodyText);
+            content.Children.Add(progressBar);
+
+            var dialog = new ContentDialog
+            {
+                Title = "Update available",
+                Content = content,
+                PrimaryButtonText = "Update now",
+                CloseButtonText = "Later",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = RootGrid.XamlRoot
+            };
+
+            dialog.PrimaryButtonClick += async (d, args) =>
+            {
+                var deferral = args.GetDeferral();
+                try
+                {
+                    d.IsPrimaryButtonEnabled = false;
+                    d.CloseButtonText = "";
+                    bodyText.Text = $"Downloading MeshVenes {update.VersionText}...";
+                    progressBar.Visibility = Visibility.Visible;
+
+                    var progress = new Progress<double>(value => progressBar.Value = value);
+                    await UpdateService.DownloadAndInstallAsync(update, progress);
+                    // On success the app exits and the updater script restarts it.
+                }
+                catch (Exception ex)
+                {
+                    args.Cancel = true;
+                    bodyText.Text = $"Update failed: {ex.Message}\n\nYou can update manually from the About page or GitHub.";
+                    progressBar.Visibility = Visibility.Collapsed;
+                    d.IsPrimaryButtonEnabled = true;
+                    d.CloseButtonText = "Close";
+                }
+                finally
+                {
+                    deferral.Complete();
+                }
+            };
+
+            _ = await dialog.ShowAsync();
+        }
+        catch
+        {
+            // Startup update check must never disturb normal use.
+        }
     }
 
     public void NavigateTo(string tag)
@@ -120,19 +198,19 @@ public sealed partial class MainWindow : Window
         switch (item.Tag?.ToString())
         {
             case "messages":
-                ContentFrame.Navigate(typeof(Pages.MessagesPage));
+                ContentFrame.Navigate(typeof(Pages.MessagesPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "connect":
-                ContentFrame.Navigate(typeof(Pages.ConnectPage));
+                ContentFrame.Navigate(typeof(Pages.ConnectPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "nodes":
-                ContentFrame.Navigate(typeof(Pages.NodesPage));
+                ContentFrame.Navigate(typeof(Pages.NodesPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "settings":
-                ContentFrame.Navigate(typeof(Pages.SettingsPage));
+                ContentFrame.Navigate(typeof(Pages.SettingsPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "about":
-                ContentFrame.Navigate(typeof(Pages.AboutPage));
+                ContentFrame.Navigate(typeof(Pages.AboutPage), null, new SuppressNavigationTransitionInfo());
                 break;
         }
     }

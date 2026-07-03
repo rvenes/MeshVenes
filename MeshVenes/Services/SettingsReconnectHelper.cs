@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -43,11 +44,24 @@ public static class SettingsReconnectHelper
 
             Exception? lastError = null;
             const int maxRounds = 10;
-            var retryDelay = TimeSpan.FromSeconds(20);
+            var retryDelay = TimeSpan.FromSeconds(10);
 
-            setStatus?.Invoke("Connecting in 20s...");
-            Log("Settings reconnect: waiting 20s before first attempt.");
-            await Task.Delay(retryDelay, ct).ConfigureAwait(false);
+            // Wait for the saved endpoint to actually come back (COM port visible /
+            // TCP port accepting) instead of a fixed delay; BLE cannot be probed
+            // cheaply, so it falls back to a grace delay.
+            setStatus?.Invoke("Waiting for the node to come back...");
+            Log("Settings reconnect: waiting for saved endpoint to become available.");
+            var endpointReady = await WaitForSavedEndpointAsync(TimeSpan.FromSeconds(60), setStatus, ct).ConfigureAwait(false);
+            if (endpointReady)
+            {
+                Log("Settings reconnect: endpoint available, settling before connect.");
+                await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+            }
+            else
+            {
+                Log("Settings reconnect: endpoint not probeable or not seen, using grace delay.");
+                await Task.Delay(TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
+            }
 
             for (var round = 1; round <= maxRounds; round++)
             {
@@ -94,8 +108,8 @@ public static class SettingsReconnectHelper
 
                 if (round < maxRounds)
                 {
-                    setStatus?.Invoke($"Reconnect retry in 20s... ({round}/{maxRounds})");
-                    Log($"Settings reconnect: retry in 20s ({round}/{maxRounds}).");
+                    setStatus?.Invoke($"Reconnect retry in 10s... ({round}/{maxRounds})");
+                    Log($"Settings reconnect: retry in 10s ({round}/{maxRounds}).");
                     await Task.Delay(retryDelay, ct).ConfigureAwait(false);
                 }
             }
@@ -114,6 +128,47 @@ public static class SettingsReconnectHelper
             Log("Settings reconnect: finished.");
             ReconnectGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Tries each saved endpoint (preferred connection type first) exactly once,
+    /// without the reboot-oriented waiting used by the post-save reconnect flow.
+    /// </summary>
+    public static async Task<bool> TryConnectToSavedEndpointOnceAsync(CancellationToken ct = default)
+    {
+        if (RadioClient.Instance.IsConnected)
+            return true;
+
+        foreach (var candidate in BuildCandidates())
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                await candidate(ct).ConfigureAwait(false);
+                if (RadioClient.Instance.IsConnected)
+                    return true;
+            }
+            catch (Exception ex)
+            {
+                Log("Connect to saved endpoint failed: " + ex.Message);
+                try { await RadioClient.Instance.DisconnectAsync().ConfigureAwait(false); } catch { }
+            }
+        }
+
+        return RadioClient.Instance.IsConnected;
+    }
+
+    private static Action<Action> BuildRunOnUi()
+    {
+        var dispatcher = MeshVenes.App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher is null)
+            return action => action();
+
+        return action =>
+        {
+            if (!dispatcher.TryEnqueue(() => action()))
+                action();
+        };
     }
 
     public static void StartPostSaveReconnectWatchdog(Action<string>? setStatus = null)
@@ -152,6 +207,75 @@ public static class SettingsReconnectHelper
         });
     }
 
+    private static async Task<bool> WaitForSavedEndpointAsync(TimeSpan maxWait, Action<string>? setStatus, CancellationToken ct)
+    {
+        var serialPort = SettingsStore.GetString(SettingsStore.LastSerialPortKey)?.Trim();
+        var tcpHost = SettingsStore.GetString(SettingsStore.LastTcpHostKey)?.Trim();
+        var tcpPortText = SettingsStore.GetString(SettingsStore.LastTcpPortKey)?.Trim();
+        var preferred = (SettingsStore.GetString(SettingsStore.LastConnectionTypeKey) ?? string.Empty).Trim().ToLowerInvariant();
+
+        var hasSerial = !string.IsNullOrWhiteSpace(serialPort);
+        var hasTcp = !string.IsNullOrWhiteSpace(tcpHost) &&
+                     int.TryParse(tcpPortText, out var tcpPort) &&
+                     tcpPort is >= 1 and <= 65535;
+
+        var probeSerial = hasSerial && preferred is "serial" or "";
+        var probeTcp = !probeSerial && hasTcp && preferred is "tcp" or "";
+        if (!probeSerial && !probeTcp && preferred == "")
+        {
+            probeSerial = hasSerial;
+            probeTcp = !probeSerial && hasTcp;
+        }
+
+        if (!probeSerial && !probeTcp)
+            return false;
+
+        // Give the node a moment to actually drop the endpoint first, so a stale
+        // still-enumerated COM port is not mistaken for "already back".
+        await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+
+        var deadlineUtc = DateTime.UtcNow + maxWait;
+        while (DateTime.UtcNow < deadlineUtc)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (probeSerial)
+            {
+                try
+                {
+                    if (System.IO.Ports.SerialPort.GetPortNames()
+                        .Any(p => string.Equals(p?.Trim(), serialPort, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                }
+            }
+            else if (probeTcp)
+            {
+                try
+                {
+                    _ = int.TryParse(tcpPortText, out var port);
+                    using var client = new System.Net.Sockets.TcpClient();
+                    var connectTask = client.ConnectAsync(tcpHost!, port);
+                    var completed = await Task.WhenAny(connectTask, Task.Delay(1500, ct)).ConfigureAwait(false);
+                    if (completed == connectTask && client.Connected)
+                        return true;
+                }
+                catch
+                {
+                }
+            }
+
+            setStatus?.Invoke("Waiting for the node to come back...");
+            await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
     private static List<Func<CancellationToken, Task>> BuildCandidates()
     {
         var list = new List<Func<CancellationToken, Task>>();
@@ -164,21 +288,27 @@ public static class SettingsReconnectHelper
 
         var entries = new List<(string kind, Func<CancellationToken, Task> connect)>();
 
+        // Incoming FromRadio processing updates UI-bound collections and must be
+        // marshalled to the dispatcher thread; running it inline on the RX pump
+        // thread makes the connection die right after it is established.
+        var runOnUi = BuildRunOnUi();
+        Action<string> logToUi = message => RadioClient.Instance.AddSystemLog(message);
+
         if (!string.IsNullOrWhiteSpace(serialPort))
         {
-            entries.Add(("serial", ct => RadioClient.Instance.ConnectAsync(serialPort, a => a(), _ => { })));
+            entries.Add(("serial", ct => RadioClient.Instance.ConnectAsync(serialPort, runOnUi, logToUi)));
         }
 
         if (!string.IsNullOrWhiteSpace(tcpHost) &&
             int.TryParse(tcpPortText, out var tcpPort) &&
             tcpPort is >= 1 and <= 65535)
         {
-            entries.Add(("tcp", ct => RadioClient.Instance.ConnectTcpAsync(tcpHost, tcpPort, a => a(), _ => { })));
+            entries.Add(("tcp", ct => RadioClient.Instance.ConnectTcpAsync(tcpHost, tcpPort, runOnUi, logToUi)));
         }
 
         if (!string.IsNullOrWhiteSpace(bleId))
         {
-            entries.Add(("ble", ct => RadioClient.Instance.ConnectBluetoothAsync(bleId, "saved device", a => a(), _ => { })));
+            entries.Add(("ble", ct => RadioClient.Instance.ConnectBluetoothAsync(bleId, "saved device", runOnUi, logToUi)));
         }
 
         if (!string.IsNullOrWhiteSpace(preferred))

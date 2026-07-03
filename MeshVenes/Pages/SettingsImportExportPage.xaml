@@ -75,6 +75,22 @@
                 <Button Content="Import from file to selected sections" Click="ImportSelected_Click"/>
             </StackPanel>
 
+            <TextBlock Text="On-node backup" FontWeight="SemiBold"/>
+            <TextBlock Opacity="0.85" TextWrapping="Wrap"
+                       Text="Stores or restores a full copy of the node's settings in its internal flash (requires firmware 2.6 or newer). A backup is also created automatically before every import."/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="BackupToFlashButton" Content="Backup settings to node flash" Click="BackupToFlash_Click"/>
+                <Button x:Name="RestoreFromFlashButton" Content="Restore settings from node flash" Click="RestoreFromFlash_Click"/>
+            </StackPanel>
+
+            <TextBlock Text="Device profile (.cfg)" FontWeight="SemiBold"/>
+            <TextBlock Opacity="0.85" TextWrapping="Wrap"
+                       Text="Exchange a complete device profile with the official Meshtastic apps and CLI. The file contains owner names, channel URL, and all device and module configuration. Importing replaces all 8 channel slots."/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="ExportProfileButton" Content="Export device profile (.cfg)" Click="ExportDeviceProfile_Click"/>
+                <Button x:Name="ImportProfileButton" Content="Import device profile (.cfg)" Click="ImportDeviceProfile_Click"/>
+            </StackPanel>
+
             <Grid ColumnDefinitions="180,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="6">
                 <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="LoRa frequency preset"/>
                 <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">

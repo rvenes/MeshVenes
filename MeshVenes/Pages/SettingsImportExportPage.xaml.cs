@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Windows.Storage.Pickers;
@@ -70,7 +71,10 @@ public sealed partial class SettingsImportExportPage : Page
             StatusText.Text = $"Exporting settings from node 0x{nodeNum:x8} (this can take time on remote nodes)...";
             SetEnabled(false);
 
-            var backup = await BuildBackupAsync(nodeNum, selection);
+            var backup = await BuildBackupAsync(
+                nodeNum,
+                selection,
+                text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
             backup.Notes = NotesBox.Text?.Trim();
 
             var picker = new FileSavePicker
@@ -149,6 +153,12 @@ public sealed partial class SettingsImportExportPage : Page
                 return;
             }
 
+            if (selected.IncludeSecurity && !await ConfirmCrossNodeSecurityImportAsync(nodeNum, backup))
+            {
+                StatusText.Text = "Import cancelled.";
+                return;
+            }
+
             StatusText.Text = $"Applying selected sections to node 0x{nodeNum:x8} (this can take time on remote nodes)...";
             SetEnabled(false);
             await ApplyBackupAsync(nodeNum, backup, selected);
@@ -164,7 +174,233 @@ public sealed partial class SettingsImportExportPage : Page
                 return;
             }
 
-            StatusText.Text = "Import failed: " + ex.Message;
+            StatusText.Text = "Import failed: " + ex.Message +
+                " No changes were committed to the node's flash; reboot the node to be sure it runs its previous configuration.";
+        }
+        finally
+        {
+            SetEnabled(true);
+        }
+    }
+
+    private async Task<bool> ConfirmCrossNodeSecurityImportAsync(uint nodeNum, SettingsBackupFile backup)
+    {
+        var targetIdHex = $"0x{nodeNum:x8}";
+        if (string.IsNullOrWhiteSpace(backup.SourceNodeIdHex) ||
+            string.Equals(backup.SourceNodeIdHex, targetIdHex, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "Security config from a different node",
+            Content = $"This backup was exported from node {backup.SourceNodeIdHex}, but you are importing to node {targetIdHex}.\n\n" +
+                      "Importing the security section copies the source node's private/public keys and admin keys. " +
+                      "Two nodes sharing the same keys breaks direct-message encryption, and wrong admin keys can lock you out of remote administration.\n\n" +
+                      "Import the security section anyway?",
+            PrimaryButtonText = "Import security config",
+            CloseButtonText = "Cancel import",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+    }
+
+    private async void ExportDeviceProfile_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTargetNode(out var nodeNum))
+            return;
+
+        if (!TryGetMainWindowHandle(out var hwnd))
+        {
+            StatusText.Text = "Window not available for file picker.";
+            return;
+        }
+
+        try
+        {
+            SetEnabled(false);
+            StatusText.Text = $"Building device profile from node 0x{nodeNum:x8}...";
+
+            var profile = await DeviceProfileService.BuildAsync(
+                nodeNum,
+                label => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = $"Reading {label}..."));
+
+            var picker = new FileSavePicker
+            {
+                SuggestedFileName = $"meshtastic-profile-{nodeNum:x8}-{DateTime.UtcNow:yyyyMMdd-HHmmss}",
+                DefaultFileExtension = ".cfg"
+            };
+            picker.FileTypeChoices.Add("Meshtastic device profile", new List<string> { ".cfg" });
+            InitializeWithWindow.Initialize(picker, hwnd);
+
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                StatusText.Text = "Export cancelled.";
+                return;
+            }
+
+            await Windows.Storage.FileIO.WriteBytesAsync(file, profile.ToByteArray());
+            StatusText.Text = $"Device profile exported: {file.Name}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Device profile export failed: " + ex.Message;
+        }
+        finally
+        {
+            SetEnabled(true);
+        }
+    }
+
+    private async void ImportDeviceProfile_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTargetNode(out var nodeNum))
+            return;
+
+        if (!TryGetMainWindowHandle(out var hwnd))
+        {
+            StatusText.Text = "Window not available for file picker.";
+            return;
+        }
+
+        try
+        {
+            var picker = new FileOpenPicker();
+            picker.FileTypeFilter.Add(".cfg");
+            InitializeWithWindow.Initialize(picker, hwnd);
+            var file = await picker.PickSingleFileAsync();
+            if (file is null)
+                return;
+
+            var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
+            var profile = DeviceProfile.Parser.ParseFrom(buffer.ToArray());
+            var batch = DeviceProfileService.BuildApplyBatch(profile);
+            if (batch.Count == 0)
+            {
+                StatusText.Text = "Device profile file contains no settings.";
+                return;
+            }
+
+            var securityWarning = profile.Config?.Security is not null
+                ? "\n\nWarning: this profile includes security keys. Applying them to a node other than the one the profile was exported from breaks encryption and can lock you out of remote administration."
+                : string.Empty;
+
+            var dialog = new ContentDialog
+            {
+                Title = "Import device profile",
+                Content = $"Apply this profile to node 0x{nodeNum:x8}?\n\n{DeviceProfileService.DescribeProfile(profile)}\n\nImporting replaces all 8 channel slots.{securityWarning}",
+                PrimaryButtonText = "Apply profile",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot
+            };
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                StatusText.Text = "Import cancelled.";
+                return;
+            }
+
+            SetEnabled(false);
+            StatusText.Text = "Creating on-node backup before import...";
+            await AdminConfigClient.Instance.BackupPreferencesToFlashAsync(nodeNum);
+
+            await AdminConfigClient.Instance.ApplyBatchAsync(
+                nodeNum,
+                batch,
+                (index, total, label) => _ = DispatcherQueue.TryEnqueue(
+                    () => StatusText.Text = $"Applying {label} ({index}/{total})..."));
+
+            StatusText.Text = "Device profile applied and saved.";
+            SettingsReconnectHelper.StartPostSaveReconnectWatchdog(
+                text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+        }
+        catch (Exception ex)
+        {
+            if (SettingsReconnectHelper.IsNotConnectedException(ex))
+            {
+                StatusText.Text = "Node reboot detected. Connecting...";
+                var ok = await SettingsReconnectHelper.TryReconnectAfterSaveAsync(
+                    text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+                StatusText.Text = ok ? "Device profile applied. Reconnected." : "Profile may be applied, but reconnect failed.";
+                return;
+            }
+
+            StatusText.Text = "Device profile import failed: " + ex.Message +
+                " No changes were committed to the node's flash; reboot the node to be sure it runs its previous configuration.";
+        }
+        finally
+        {
+            SetEnabled(true);
+        }
+    }
+
+    private async void BackupToFlash_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTargetNode(out var nodeNum))
+            return;
+
+        try
+        {
+            SetEnabled(false);
+            StatusText.Text = $"Requesting on-node backup on node 0x{nodeNum:x8}...";
+            await AdminConfigClient.Instance.BackupPreferencesToFlashAsync(nodeNum);
+            StatusText.Text = "On-node backup requested. Requires firmware 2.6 or newer.";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "On-node backup failed: " + ex.Message;
+        }
+        finally
+        {
+            SetEnabled(true);
+        }
+    }
+
+    private async void RestoreFromFlash_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTargetNode(out var nodeNum))
+            return;
+
+        var dialog = new ContentDialog
+        {
+            Title = "Restore settings from node flash",
+            Content = "This replaces the node's current settings with the backup stored in its internal flash and reboots the node. Continue?",
+            PrimaryButtonText = "Restore and reboot",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            return;
+
+        try
+        {
+            SetEnabled(false);
+            StatusText.Text = $"Requesting restore from on-node backup on node 0x{nodeNum:x8}...";
+            await AdminConfigClient.Instance.RestorePreferencesFromFlashAsync(nodeNum);
+            StatusText.Text = "Restore requested. The node reboots if a backup was found.";
+
+            SettingsReconnectHelper.StartPostSaveReconnectWatchdog(
+                text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+        }
+        catch (Exception ex)
+        {
+            if (SettingsReconnectHelper.IsNotConnectedException(ex))
+            {
+                StatusText.Text = "Node reboot detected. Connecting...";
+                var ok = await SettingsReconnectHelper.TryReconnectAfterSaveAsync(
+                    text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+                StatusText.Text = ok ? "Restore requested. Reconnected." : "Restore may be applied, but reconnect failed.";
+                return;
+            }
+
+            StatusText.Text = "Restore from on-node backup failed: " + ex.Message;
         }
         finally
         {
@@ -400,17 +636,21 @@ public sealed partial class SettingsImportExportPage : Page
         actionRow.Children.Add(selectAllButton);
         actionRow.Children.Add(selectNoneButton);
 
+        // Size to the actual window so the dialog stays usable on small screens.
+        var rootSize = XamlRoot?.Size ?? new Windows.Foundation.Size(1100, 800);
+        var dialogWidth = Math.Max(380d, Math.Min(1020d, rootSize.Width - 100));
+        var dialogHeight = Math.Max(280d, Math.Min(560d, rootSize.Height - 280));
+
         var optionsScroll = new ScrollViewer
         {
             Content = columns,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MaxHeight = 560,
-            MinHeight = 420,
-            Width = 1000
+            MaxHeight = dialogHeight,
+            MaxWidth = dialogWidth
         };
 
-        var container = new StackPanel { Spacing = 8, Width = 1020, MinHeight = 620 };
+        var container = new StackPanel { Spacing = 8, MaxWidth = dialogWidth };
         container.Children.Add(new TextBlock
         {
             Text = "Select exactly which sections to restore from this file.",
@@ -428,8 +668,8 @@ public sealed partial class SettingsImportExportPage : Page
             XamlRoot = XamlRoot,
             Content = container
         };
-        dialog.Resources["ContentDialogMinWidth"] = 1020d;
-        dialog.Resources["ContentDialogMaxWidth"] = 1240d;
+        dialog.Resources["ContentDialogMinWidth"] = Math.Min(680d, dialogWidth);
+        dialog.Resources["ContentDialogMaxWidth"] = dialogWidth + 60;
 
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary)
@@ -551,7 +791,7 @@ public sealed partial class SettingsImportExportPage : Page
         StatusText.Text = "All sections cleared.";
     }
 
-    private async Task<SettingsBackupFile> BuildBackupAsync(uint nodeNum, BackupSelection selection)
+    private async Task<SettingsBackupFile> BuildBackupAsync(uint nodeNum, BackupSelection selection, Action<string>? progress = null)
     {
         var file = new SettingsBackupFile
         {
@@ -561,102 +801,226 @@ public sealed partial class SettingsImportExportPage : Page
             SourceNodeName = ResolveTargetNodeName()
         };
 
+        var total = CountSelectedSections(selection);
+        var done = 0;
+        void Report(string label) => progress?.Invoke($"Reading {label} ({++done}/{total})...");
+
         if (selection.IncludeLora)
+        {
+            Report("LoRa config");
             file.LoraConfig = ToJsonElement(await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.LoraConfig));
+        }
         if (selection.IncludeChannels)
-            file.Channels = (await AdminConfigClient.Instance.GetChannelsAsync(nodeNum, 8)).Select(ToJsonElement).ToList();
+        {
+            Report("channels");
+            // Fail the export on a channel read timeout instead of silently writing
+            // a Disabled placeholder that would wipe a real channel on import.
+            file.Channels = (await AdminConfigClient.Instance.GetChannelsAsync(nodeNum, 8, treatTimeoutAsDisabled: false)).Select(ToJsonElement).ToList();
+        }
         if (selection.IncludeSecurity)
+        {
+            Report("security config");
             file.SecurityConfig = ToJsonElement(await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.SecurityConfig));
+        }
 
         if (selection.IncludeOwner)
+        {
+            Report("user / owner");
             file.Owner = ToJsonElement(await AdminConfigClient.Instance.GetOwnerAsync(nodeNum));
+        }
         if (selection.IncludeBluetooth)
+        {
+            Report("bluetooth config");
             file.BluetoothConfig = ToJsonElement(await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.BluetoothConfig));
+        }
         if (selection.IncludeDevice)
+        {
+            Report("device config");
             file.DeviceConfig = ToJsonElement(await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.DeviceConfig));
+        }
         if (selection.IncludeDisplay)
+        {
+            Report("display config");
             file.DisplayConfig = ToJsonElement(await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.DisplayConfig));
+        }
         if (selection.IncludeNetwork)
+        {
+            Report("network config");
             file.NetworkConfig = ToJsonElement(await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.NetworkConfig));
+        }
         if (selection.IncludePosition)
+        {
+            Report("position config");
             file.PositionConfig = ToJsonElement(await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.PositionConfig));
+        }
         if (selection.IncludePower)
+        {
+            Report("power config");
             file.PowerConfig = ToJsonElement(await AdminConfigClient.Instance.GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.PowerConfig));
+        }
 
         if (selection.IncludeCannedModule)
+        {
+            Report("canned messages config");
             file.ModuleCanned = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.CannedmsgConfig));
+        }
         if (selection.IncludeCannedMessagesText)
+        {
+            Report("canned messages text");
             file.CannedMessagesText = await AdminConfigClient.Instance.GetCannedMessageModuleMessagesAsync(nodeNum);
+        }
         if (selection.IncludeDetectionSensor)
+        {
+            Report("detection sensor config");
             file.ModuleDetection = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.DetectionsensorConfig));
+        }
         if (selection.IncludeExternalNotification)
+        {
+            Report("external notification config");
             file.ModuleExternalNotification = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.ExtnotifConfig));
+        }
         if (selection.IncludeMqtt)
+        {
+            Report("MQTT config");
             file.ModuleMqtt = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.MqttConfig));
+        }
         if (selection.IncludeRangeTest)
+        {
+            Report("range test config");
             file.ModuleRangeTest = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.RangetestConfig));
+        }
         if (selection.IncludePaxCounter)
+        {
+            Report("PAX counter config");
             file.ModulePaxCounter = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.PaxcounterConfig));
+        }
         if (selection.IncludeRingtoneText)
+        {
+            Report("ringtone text");
             file.RingtoneText = await AdminConfigClient.Instance.GetRingtoneAsync(nodeNum);
+        }
         if (selection.IncludeSerial)
+        {
+            Report("serial config");
             file.ModuleSerial = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.SerialConfig));
+        }
         if (selection.IncludeStoreForward)
+        {
+            Report("store & forward config");
             file.ModuleStoreForward = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.StoreforwardConfig));
+        }
         if (selection.IncludeTelemetry)
+        {
+            Report("telemetry config");
             file.ModuleTelemetry = ToJsonElement(await AdminConfigClient.Instance.GetModuleConfigAsync(nodeNum, AdminMessage.Types.ModuleConfigType.TelemetryConfig));
+        }
 
         return file;
     }
 
+    private static int CountSelectedSections(BackupSelection selection)
+    {
+        var flags = new[]
+        {
+            selection.IncludeLora, selection.IncludeChannels, selection.IncludeSecurity,
+            selection.IncludeOwner, selection.IncludeBluetooth, selection.IncludeDevice,
+            selection.IncludeDisplay, selection.IncludeNetwork, selection.IncludePosition,
+            selection.IncludePower, selection.IncludeCannedModule, selection.IncludeCannedMessagesText,
+            selection.IncludeDetectionSensor, selection.IncludeExternalNotification, selection.IncludeMqtt,
+            selection.IncludeRangeTest, selection.IncludePaxCounter, selection.IncludeRingtoneText,
+            selection.IncludeSerial, selection.IncludeStoreForward, selection.IncludeTelemetry
+        };
+        return flags.Count(x => x);
+    }
+
     private async Task ApplyBackupAsync(uint nodeNum, SettingsBackupFile backup, BackupSelection selection)
     {
-        if (selection.IncludeLora && HasJson(backup.LoraConfig))
-            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, ParseConfig(backup.LoraConfig));
-        if (selection.IncludeChannels && backup.Channels?.Count > 0)
-            await AdminConfigClient.Instance.SaveChannelsAsync(nodeNum, backup.Channels.Select(ParseChannel));
-        if (selection.IncludeSecurity && HasJson(backup.SecurityConfig))
-            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, ParseConfig(backup.SecurityConfig));
+        // Parse and stage every selected section BEFORE touching the node, so a
+        // malformed file aborts the import without any partial writes. Sections
+        // whose commit makes the firmware reboot (device, network, LoRa) go last.
+        var batch = new SettingsWriteBatch();
 
         if (selection.IncludeOwner && HasJson(backup.Owner))
-            await AdminConfigClient.Instance.SaveOwnerAsync(nodeNum, ParseOwner(backup.Owner));
-        if (selection.IncludeBluetooth && HasJson(backup.BluetoothConfig))
-            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, ParseConfig(backup.BluetoothConfig));
-        if (selection.IncludeDevice && HasJson(backup.DeviceConfig))
-            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, ParseConfig(backup.DeviceConfig));
-        if (selection.IncludeDisplay && HasJson(backup.DisplayConfig))
-            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, ParseConfig(backup.DisplayConfig));
-        if (selection.IncludeNetwork && HasJson(backup.NetworkConfig))
-            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, ParseConfig(backup.NetworkConfig));
-        if (selection.IncludePosition && HasJson(backup.PositionConfig))
-            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, ParseConfig(backup.PositionConfig));
-        if (selection.IncludePower && HasJson(backup.PowerConfig))
-            await AdminConfigClient.Instance.SaveConfigAsync(nodeNum, ParseConfig(backup.PowerConfig));
+            batch.AddOwner("User / owner", SanitizeOwnerForImport(ParseOwner(backup.Owner)));
 
         if (selection.IncludeCannedModule && HasJson(backup.ModuleCanned))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModuleCanned));
+            batch.AddModuleConfig("Canned messages config", ParseModuleConfig(backup.ModuleCanned));
         if (selection.IncludeCannedMessagesText && backup.CannedMessagesText is not null)
-            await AdminConfigClient.Instance.SaveCannedMessageModuleMessagesAsync(nodeNum, backup.CannedMessagesText);
+            batch.AddCannedMessages("Canned messages text", backup.CannedMessagesText);
         if (selection.IncludeDetectionSensor && HasJson(backup.ModuleDetection))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModuleDetection));
+            batch.AddModuleConfig("Detection sensor config", ParseModuleConfig(backup.ModuleDetection));
         if (selection.IncludeExternalNotification && HasJson(backup.ModuleExternalNotification))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModuleExternalNotification));
+            batch.AddModuleConfig("External notification config", ParseModuleConfig(backup.ModuleExternalNotification));
         if (selection.IncludeMqtt && HasJson(backup.ModuleMqtt))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModuleMqtt));
+            batch.AddModuleConfig("MQTT config", ParseModuleConfig(backup.ModuleMqtt));
         if (selection.IncludeRangeTest && HasJson(backup.ModuleRangeTest))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModuleRangeTest));
+            batch.AddModuleConfig("Range test config", ParseModuleConfig(backup.ModuleRangeTest));
         if (selection.IncludePaxCounter && HasJson(backup.ModulePaxCounter))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModulePaxCounter));
+            batch.AddModuleConfig("PAX counter config", ParseModuleConfig(backup.ModulePaxCounter));
         if (selection.IncludeRingtoneText && backup.RingtoneText is not null)
-            await AdminConfigClient.Instance.SaveRingtoneAsync(nodeNum, backup.RingtoneText);
+            batch.AddRingtone("Ringtone text", backup.RingtoneText);
         if (selection.IncludeSerial && HasJson(backup.ModuleSerial))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModuleSerial));
+            batch.AddModuleConfig("Serial config", ParseModuleConfig(backup.ModuleSerial));
         if (selection.IncludeStoreForward && HasJson(backup.ModuleStoreForward))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModuleStoreForward));
+            batch.AddModuleConfig("Store & forward config", ParseModuleConfig(backup.ModuleStoreForward));
         if (selection.IncludeTelemetry && HasJson(backup.ModuleTelemetry))
-            await AdminConfigClient.Instance.SaveModuleConfigAsync(nodeNum, ParseModuleConfig(backup.ModuleTelemetry));
+            batch.AddModuleConfig("Telemetry config", ParseModuleConfig(backup.ModuleTelemetry));
+
+        if (selection.IncludeDisplay && HasJson(backup.DisplayConfig))
+            batch.AddConfig("Display config", ParseConfig(backup.DisplayConfig));
+        if (selection.IncludePosition && HasJson(backup.PositionConfig))
+            batch.AddConfig("Position config", ParseConfig(backup.PositionConfig));
+        if (selection.IncludePower && HasJson(backup.PowerConfig))
+            batch.AddConfig("Power config", ParseConfig(backup.PowerConfig));
+
+        if (selection.IncludeChannels && backup.Channels?.Count > 0)
+        {
+            foreach (var channelJson in backup.Channels)
+            {
+                var channel = ParseChannel(channelJson);
+                batch.AddChannel($"Channel {channel.Index}", channel);
+            }
+        }
+
+        if (selection.IncludeSecurity && HasJson(backup.SecurityConfig))
+            batch.AddConfig("Security config", ParseConfig(backup.SecurityConfig));
+        if (selection.IncludeBluetooth && HasJson(backup.BluetoothConfig))
+            batch.AddConfig("Bluetooth config", ParseConfig(backup.BluetoothConfig));
+        if (selection.IncludeNetwork && HasJson(backup.NetworkConfig))
+            batch.AddConfig("Network config", ParseConfig(backup.NetworkConfig));
+        if (selection.IncludeDevice && HasJson(backup.DeviceConfig))
+            batch.AddConfig("Device config", ParseConfig(backup.DeviceConfig));
+        if (selection.IncludeLora && HasJson(backup.LoraConfig))
+            batch.AddConfig("LoRa config", ParseConfig(backup.LoraConfig));
+
+        if (batch.Count == 0)
+            return;
+
+        // Safety net: ask firmware 2.6+ to keep a copy of the current preferences
+        // in flash so the node can be restored even if the import goes wrong.
+        _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = "Creating on-node backup before import...");
+        await AdminConfigClient.Instance.BackupPreferencesToFlashAsync(nodeNum);
+
+        await AdminConfigClient.Instance.ApplyBatchAsync(
+            nodeNum,
+            batch,
+            (index, total, label) => _ = DispatcherQueue.TryEnqueue(
+                () => StatusText.Text = $"Applying {label} ({index}/{total})..."));
 
         SettingsReconnectHelper.StartPostSaveReconnectWatchdog(text => _ = DispatcherQueue.TryEnqueue(() => StatusText.Text = text));
+    }
+
+    private static User SanitizeOwnerForImport(User owner)
+    {
+        // Only the display names are safe to restore. Id, MAC address, hardware
+        // model and public key describe the source node's identity and must never
+        // be written to a (potentially different) target node.
+        return new User
+        {
+            LongName = owner.LongName,
+            ShortName = owner.ShortName,
+            IsLicensed = owner.IsLicensed
+        };
     }
 
     private bool TryGetTargetNode(out uint nodeNum)
@@ -763,6 +1127,10 @@ public sealed partial class SettingsImportExportPage : Page
     {
         LoraFrequencyPresetCombo.IsEnabled = enabled;
         ApplyLoraFrequencyPresetButton.IsEnabled = enabled;
+        BackupToFlashButton.IsEnabled = enabled;
+        RestoreFromFlashButton.IsEnabled = enabled;
+        ExportProfileButton.IsEnabled = enabled;
+        ImportProfileButton.IsEnabled = enabled;
         SelectionPresetCombo.IsEnabled = enabled;
         CustomPresetNameBox.IsEnabled = enabled;
         NotesBox.IsEnabled = enabled;
@@ -1048,17 +1416,22 @@ public sealed partial class SettingsImportExportPage : Page
         return char.ToUpperInvariant(text[0]) + text[1..];
     }
 
+    // Ignore unknown fields so backups written by a newer app/firmware version
+    // still import instead of failing part-way through.
+    private static readonly JsonParser TolerantJsonParser =
+        new(JsonParser.Settings.Default.WithIgnoreUnknownFields(true));
+
     private static Config ParseConfig(JsonElement? value)
-        => Config.Parser.ParseJson(ToJsonText(value));
+        => TolerantJsonParser.Parse<Config>(ToJsonText(value));
 
     private static ModuleConfig ParseModuleConfig(JsonElement? value)
-        => ModuleConfig.Parser.ParseJson(ToJsonText(value));
+        => TolerantJsonParser.Parse<ModuleConfig>(ToJsonText(value));
 
     private static Channel ParseChannel(JsonElement value)
-        => Channel.Parser.ParseJson(ToJsonText(value));
+        => TolerantJsonParser.Parse<Channel>(ToJsonText(value));
 
     private static User ParseOwner(JsonElement? value)
-        => User.Parser.ParseJson(ToJsonText(value));
+        => TolerantJsonParser.Parse<User>(ToJsonText(value));
 
     private static string ToJsonText(JsonElement? value)
     {

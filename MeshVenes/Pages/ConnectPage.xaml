@@ -1,11 +1,13 @@
 <Page
     x:Class="MeshVenes.Pages.ConnectPage"
+    NavigationCacheMode="Required"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:MeshVenes.Pages">
 
     <Grid Padding="16">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
@@ -70,6 +72,14 @@
                     x:Name="TcpConnectButton"
                     Content="Connect"
                     Click="TcpConnect_Click" />
+            <CheckBox Grid.Row="1"
+                      Grid.Column="7"
+                      x:Name="AutoConnectCheck"
+                      Content="Auto connect last"
+                      HorizontalAlignment="Right"
+                      ToolTipService.ToolTip="Connect automatically to the last used node 5 seconds after the app starts"
+                      Checked="AutoConnectCheck_Checked"
+                      Unchecked="AutoConnectCheck_Unchecked"/>
 
             <TextBlock Grid.Row="2" Grid.Column="0" Text="Bluetooth:" VerticalAlignment="Center" />
             <ProgressRing Grid.Row="2"
@@ -111,10 +121,29 @@
                     Click="Disconnect_Click" />
         </Grid>
 
+        <!-- Log options -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="16" Margin="0,12,0,0" VerticalAlignment="Center">
+            <TextBlock Text="Log:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+            <CheckBox x:Name="HideTxCheck"
+                      Content="Hide TX frames"
+                      ToolTipService.ToolTip="Hide low-level 'TX n bytes' lines (heartbeats and raw frame sends)"
+                      Checked="LogViewOption_Changed"
+                      Unchecked="LogViewOption_Changed"/>
+            <CheckBox x:Name="ExtendedInfoCheck"
+                      Content="Extended info"
+                      ToolTipService.ToolTip="Rewrite known log lines (telemetry, GPS, ACK) into readable text with node names"
+                      Checked="LogViewOption_Changed"
+                      Unchecked="LogViewOption_Changed"/>
+            <TextBlock Text="Double-click a line to open that node in the Nodes tab"
+                       Opacity="0.6"
+                       VerticalAlignment="Center"/>
+        </StackPanel>
+
         <!-- Log -->
         <ListView x:Name="LogList"
-                  Grid.Row="1"
-                  Margin="0,12,0,0"
+                  Grid.Row="2"
+                  Margin="0,8,0,0"
+                  DoubleTapped="LogList_DoubleTapped"
                   RightTapped="LogList_RightTapped">
             <ListView.ContextFlyout>
                 <MenuFlyout Opening="LogListFlyout_Opening">

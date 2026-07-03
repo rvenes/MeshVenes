@@ -1,5 +1,6 @@
 ﻿<Page
     x:Class="MeshVenes.Pages.MessagesPage"
+    NavigationCacheMode="Required"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:MeshVenes.Pages"
@@ -107,22 +108,26 @@
                                          Height="8"
                                          Fill="LimeGreen"
                                          VerticalAlignment="Center"
+                                         ToolTipService.ToolTip="New log activity in this chat"
                                          Visibility="{x:Bind LogIndicatorVisible}"/>
                                 <Ellipse Width="8"
                                          Height="8"
                                          Fill="LimeGreen"
                                          VerticalAlignment="Center"
+                                         ToolTipService.ToolTip="Unread messages in this chat"
                                          Visibility="{x:Bind UnreadVisible}"/>
                             </StackPanel>
 
                             <TextBlock Grid.Column="1" Text="{x:Bind Title}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Text="{x:Bind ShortId}" Opacity="0.7" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind ShortId}" Opacity="0.7" VerticalAlignment="Center"
+                                       ToolTipService.ToolTip="Short node id"/>
 
                             <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8" Opacity="0.8" Margin="0,2,0,0">
-                                <TextBlock Text="{x:Bind LastHeard}" />
+                                <TextBlock Text="{x:Bind LastHeard}" ToolTipService.ToolTip="When this node was last heard"/>
                                 <TextBlock Text="Link:"/>
-                                <TextBlock Text="{x:Bind Transport}" Foreground="{x:Bind TransportForeground}" FontWeight="SemiBold"/>
-                                <TextBlock Text="{x:Bind HopsBadgeText}" />
+                                <TextBlock Text="{x:Bind Transport}" Foreground="{x:Bind TransportForeground}" FontWeight="SemiBold"
+                                           ToolTipService.ToolTip="How this node was last heard (RF = LoRa radio, MQTT = internet gateway)"/>
+                                <TextBlock Text="{x:Bind HopsBadgeText}" ToolTipService.ToolTip="Number of hops between you and this node"/>
                             </StackPanel>
 
                             <Button Grid.Row="1"
@@ -139,12 +144,14 @@
                                     ToolTipService.ToolTip="Favorite node (stored on connected node)"/>
 
                             <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8" Opacity="0.75" Margin="0,2,0,0">
-                                <TextBlock Text="🗒"/>
-                                <TextBlock Text="📍" Visibility="{x:Bind PositionIconVisibility}"/>
+                                <TextBlock Text="🗒" ToolTipService.ToolTip="Message log is stored for this chat"/>
+                                <TextBlock Text="📍" Visibility="{x:Bind PositionIconVisibility}"
+                                           ToolTipService.ToolTip="Position received from this node"/>
                                 <TextBlock Text="{x:Bind BatteryBadgeText}"
                                            Foreground="{x:Bind BatteryBadgeForeground}"
                                            Visibility="{x:Bind BatteryBadgeVisibility}"
-                                           FontWeight="SemiBold"/>
+                                           FontWeight="SemiBold"
+                                           ToolTipService.ToolTip="Battery / power status"/>
                             </StackPanel>
                         </Grid>
                     </DataTemplate>
@@ -220,26 +227,36 @@
                                 <StackPanel Spacing="4"
                                             Visibility="{x:Bind MessageVisibility}">
 	                                    <StackPanel Orientation="Horizontal" Spacing="12">
-	                                        <TextBlock Text="{x:Bind Header}" FontWeight="SemiBold"/>
+	                                        <TextBlock Text="{x:Bind Header}" FontWeight="SemiBold"
+	                                                   Tapped="MessageHeader_Tapped"
+	                                                   ToolTipService.ToolTip="{x:Bind HeaderToolTip, Mode=OneWay}"/>
 	                                        <TextBlock Text="{x:Bind When}" Opacity="0.7"/>
 	                                    </StackPanel>
 
-	                                    <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="6">
+	                                    <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="6">
 	                                        <!-- ✓ (heard) -->
 	                                        <FontIcon Glyph="&#xE73E;"
 	                                                  Foreground="Green"
 	                                                  FontFamily="Segoe MDL2 Assets"
-	                                                  Visibility="{x:Bind HeardVisible}" />
+	                                                  Visibility="{x:Bind HeardVisible, Mode=OneWay}" />
 
 	                                        <!-- ✓✓ (delivered) -->
 	                                        <FontIcon Glyph="&#xE73E;"
                                                       Grid.Column="1"
 	                                                  Foreground="Green"
 	                                                  FontFamily="Segoe MDL2 Assets"
-	                                                  Visibility="{x:Bind DeliveredVisible}" />
+	                                                  Visibility="{x:Bind DeliveredVisible, Mode=OneWay}" />
+
+	                                        <!-- ✗ (delivery failed) -->
+	                                        <FontIcon Glyph="&#xE711;"
+                                                      Grid.Column="2"
+	                                                  Foreground="OrangeRed"
+	                                                  FontFamily="Segoe MDL2 Assets"
+	                                                  ToolTipService.ToolTip="{x:Bind FailureReason, Mode=OneWay}"
+	                                                  Visibility="{x:Bind FailedVisible, Mode=OneWay}" />
 
                                             <RichTextBlock IsTextSelectionEnabled="True"
-                                                           Grid.Column="2"
+                                                           Grid.Column="3"
                                                            TextWrapping="Wrap"
                                                            DataContextChanged="MessageText_DataContextChanged"
                                                            Tag="{x:Bind Text, Mode=OneWay}">

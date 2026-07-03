@@ -1,6 +1,7 @@
 ﻿<Page
     x:Class="MeshVenes.Pages.NodesPage"
     x:Name="Root"
+    NavigationCacheMode="Required"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:MeshVenes.Models"
@@ -129,21 +130,25 @@
                                 <Ellipse Width="8" Height="8"
                                          Fill="LimeGreen"
                                          VerticalAlignment="Center"
+                                         ToolTipService.ToolTip="New log activity from this node"
                                          Visibility="{x:Bind LogIndicatorVisible}"/>
                                 <Ellipse Width="8" Height="8"
                                          Fill="LimeGreen"
                                          VerticalAlignment="Center"
+                                         ToolTipService.ToolTip="Unread messages from this node"
                                          Visibility="{x:Bind UnreadVisible}"/>
                             </StackPanel>
 
                             <TextBlock Grid.Column="1" Text="{x:Bind Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Text="{x:Bind ShortId}" Opacity="0.7" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="{x:Bind ShortId}" Opacity="0.7" VerticalAlignment="Center"
+                                       ToolTipService.ToolTip="Short node id"/>
 
                             <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8" Opacity="0.8" Margin="0,2,0,0">
-                                <TextBlock Text="{x:Bind LastHeard}" />
+                                <TextBlock Text="{x:Bind LastHeard}" ToolTipService.ToolTip="When this node was last heard"/>
                                 <TextBlock Text="Link:"/>
-                                <TextBlock Text="{x:Bind TransportBadgeText}" Foreground="{x:Bind TransportBrush}" FontWeight="SemiBold"/>
-                                <TextBlock Text="{x:Bind HopsBadgeText}" />
+                                <TextBlock Text="{x:Bind TransportBadgeText}" Foreground="{x:Bind TransportBrush}" FontWeight="SemiBold"
+                                           ToolTipService.ToolTip="How this node was last heard (RF = LoRa radio, MQTT = internet gateway)"/>
+                                <TextBlock Text="{x:Bind HopsBadgeText}" ToolTipService.ToolTip="Number of hops between you and this node"/>
                             </StackPanel>
 
                             <Button Grid.Row="1"
@@ -159,17 +164,20 @@
                                     ToolTipService.ToolTip="Favorite node (stored on connected node)"/>
 
                             <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8" Opacity="0.75" Margin="0,2,0,0">
-                                <TextBlock Text="🗒"/>
-                                <TextBlock Text="📍" Visibility="{x:Bind PositionIconVisibility}"/>
+                                <TextBlock Text="🗒" ToolTipService.ToolTip="Logs are stored for this node"/>
+                                <TextBlock Text="📍" Visibility="{x:Bind PositionIconVisibility}"
+                                           ToolTipService.ToolTip="Position received from this node"/>
                                 <TextBlock Text="⛔"
                                            Visibility="{x:Bind UnmonitoredVisibility}"
                                            Foreground="{x:Bind UnmonitoredBrush}"
                                            ToolTipService.ToolTip="Unmonitored node"/>
-                                <TextBlock Text="{x:Bind DistanceDirectionText}" Visibility="{x:Bind DistanceDirectionVisibility}" Foreground="#FF7CB8FF"/>
+                                <TextBlock Text="{x:Bind DistanceDirectionText}" Visibility="{x:Bind DistanceDirectionVisibility}" Foreground="#FF7CB8FF"
+                                           ToolTipService.ToolTip="Distance and bearing from your position"/>
                                 <TextBlock Text="{x:Bind BatteryBadgeText}"
                                            Foreground="{x:Bind BatteryBadgeBrush}"
                                            Visibility="{x:Bind BatteryBadgeVisibility}"
-                                           FontWeight="SemiBold"/>
+                                           FontWeight="SemiBold"
+                                           ToolTipService.ToolTip="Battery / power status"/>
                             </StackPanel>
                         </Grid>
                     </DataTemplate>
