@@ -54,6 +54,10 @@ jobs:
         shell: pwsh
         run: dotnet build "${{ steps.target.outputs.build_target }}" -c $env:CONFIGURATION -p:Platform=x64 --no-restore
 
+      - name: Test
+        shell: pwsh
+        run: dotnet test MeshVenes.Tests/MeshVenes.Tests.csproj -c $env:CONFIGURATION -p:Platform=x64 --no-restore
+
       - name: Publish self-contained win-x64
         shell: pwsh
         run: |

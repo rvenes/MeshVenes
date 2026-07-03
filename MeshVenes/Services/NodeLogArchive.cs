@@ -12,7 +12,8 @@ public enum NodeLogType
     EnvironmentMetrics,
     PowerMetrics,
     TraceRoute,
-    DetectionSensor
+    DetectionSensor,
+    MeshApps
 }
 
 public static class NodeLogArchive
@@ -27,7 +28,8 @@ public static class NodeLogArchive
         [NodeLogType.EnvironmentMetrics] = "environment_metrics",
         [NodeLogType.PowerMetrics] = "power_metrics",
         [NodeLogType.TraceRoute] = "traceroute",
-        [NodeLogType.DetectionSensor] = "detection_sensor"
+        [NodeLogType.DetectionSensor] = "detection_sensor",
+        [NodeLogType.MeshApps] = "mesh_apps"
     };
 
     public static void EnsureBaseFolders()
