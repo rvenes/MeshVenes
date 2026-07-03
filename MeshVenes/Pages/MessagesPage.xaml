@@ -225,22 +225,30 @@
 	                                        <TextBlock Text="{x:Bind When}" Opacity="0.7"/>
 	                                    </StackPanel>
 
-	                                    <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="6">
+	                                    <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="6">
 	                                        <!-- ✓ (heard) -->
 	                                        <FontIcon Glyph="&#xE73E;"
 	                                                  Foreground="Green"
 	                                                  FontFamily="Segoe MDL2 Assets"
-	                                                  Visibility="{x:Bind HeardVisible}" />
+	                                                  Visibility="{x:Bind HeardVisible, Mode=OneWay}" />
 
 	                                        <!-- ✓✓ (delivered) -->
 	                                        <FontIcon Glyph="&#xE73E;"
                                                       Grid.Column="1"
 	                                                  Foreground="Green"
 	                                                  FontFamily="Segoe MDL2 Assets"
-	                                                  Visibility="{x:Bind DeliveredVisible}" />
+	                                                  Visibility="{x:Bind DeliveredVisible, Mode=OneWay}" />
+
+	                                        <!-- ✗ (delivery failed) -->
+	                                        <FontIcon Glyph="&#xE711;"
+                                                      Grid.Column="2"
+	                                                  Foreground="OrangeRed"
+	                                                  FontFamily="Segoe MDL2 Assets"
+	                                                  ToolTipService.ToolTip="{x:Bind FailureReason, Mode=OneWay}"
+	                                                  Visibility="{x:Bind FailedVisible, Mode=OneWay}" />
 
                                             <RichTextBlock IsTextSelectionEnabled="True"
-                                                           Grid.Column="2"
+                                                           Grid.Column="3"
                                                            TextWrapping="Wrap"
                                                            DataContextChanged="MessageText_DataContextChanged"
                                                            Tag="{x:Bind Text, Mode=OneWay}">

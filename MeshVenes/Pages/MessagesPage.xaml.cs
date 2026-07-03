@@ -15,6 +15,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.IO;
 using Microsoft.UI;
 using Microsoft.UI.Xaml.Media;
@@ -967,16 +968,19 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         foreach (var msg in orderedArchive)
         {
             var local = msg.When.ToLocalTime();
+            var isMine = string.Equals(msg.Header, "Me", StringComparison.OrdinalIgnoreCase);
             var candidate = new MessageVm
             {
                 Header = msg.Header ?? "",
                 Text = msg.Text ?? "",
                 WhenUtc = msg.When.UtcDateTime,
                 When = local.ToString("yyyy-MM-dd HH:mm:ss"),
-                IsMine = string.Equals(msg.Header, "Me", StringComparison.OrdinalIgnoreCase),
-                PacketId = 0,
-                HeardVisible = Visibility.Collapsed,
-                DeliveredVisible = Visibility.Collapsed
+                IsMine = isMine,
+                PacketId = msg.PacketId,
+                HeardVisible = (isMine && msg.Heard) ? Visibility.Visible : Visibility.Collapsed,
+                DeliveredVisible = (isMine && msg.Delivered) ? Visibility.Visible : Visibility.Collapsed,
+                FailedVisible = (isMine && msg.Failed) ? Visibility.Visible : Visibility.Collapsed,
+                FailureReason = msg.FailureReason ?? ""
             };
 
             var dedupeKey = BuildMessageDedupKey(candidate.Header, candidate.Text, candidate.WhenUtc);
@@ -1857,6 +1861,40 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             MessageArchive.Append(local, channelName: channelName);
         else
             MessageArchive.Append(local, dmPeerIdHex: peer);
+
+        if (dmTargetNodeNum != 0 && packetId != 0)
+            ScheduleDmAckTimeout(packetId);
+    }
+
+    // Mesh retransmits can take a while over multiple hops; only after this
+    // window without a delivery ACK is a DM marked as failed. A late ACK still
+    // clears the failure.
+    private static readonly TimeSpan DmAckTimeout = TimeSpan.FromSeconds(120);
+
+    private void ScheduleDmAckTimeout(uint packetId)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(DmAckTimeout).ConfigureAwait(false);
+
+            _ = DispatcherQueue.TryEnqueue(() =>
+            {
+                for (var idx = 0; idx < MeshVenes.AppState.Messages.Count; idx++)
+                {
+                    var m = MeshVenes.AppState.Messages[idx];
+                    if (!m.IsMine || m.PacketId != packetId)
+                        continue;
+
+                    if (m.IsDelivered || m.DeliveryFailed)
+                        return;
+
+                    var updated = m.WithDeliveryFailure("No delivery confirmation received");
+                    MeshVenes.AppState.Messages[idx] = updated;
+                    MessageArchive.AppendStatus(updated);
+                    return;
+                }
+            });
+        });
     }
 
     private void EnforceMessageByteLimit()
@@ -2609,6 +2647,20 @@ public sealed class MessageVm : INotifyPropertyChanged
         set { if (_deliveredVisible != value) { _deliveredVisible = value; OnChanged(nameof(DeliveredVisible)); } }
     }
 
+    private Visibility _failedVisible = Visibility.Collapsed;
+    public Visibility FailedVisible
+    {
+        get => _failedVisible;
+        set { if (_failedVisible != value) { _failedVisible = value; OnChanged(nameof(FailedVisible)); } }
+    }
+
+    private string _failureReason = "";
+    public string FailureReason
+    {
+        get => _failureReason;
+        set { if (_failureReason != value) { _failureReason = value; OnChanged(nameof(FailureReason)); } }
+    }
+
     private bool _isVisible = true;
     public bool IsVisible
     {
@@ -2651,6 +2703,8 @@ public sealed class MessageVm : INotifyPropertyChanged
             When = m.When ?? "",
             HeardVisible = (m.IsMine && m.IsHeard) ? Visibility.Visible : Visibility.Collapsed,
             DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed,
+            FailedVisible = (m.IsMine && m.DeliveryFailed) ? Visibility.Visible : Visibility.Collapsed,
+            FailureReason = m.FailureReason ?? "",
             PacketId = m.PacketId,
             IsMine = m.IsMine
         };
@@ -2663,6 +2717,8 @@ public sealed class MessageVm : INotifyPropertyChanged
         When = m.When ?? "";
         HeardVisible = (m.IsMine && m.IsHeard) ? Visibility.Visible : Visibility.Collapsed;
         DeliveredVisible = (m.IsMine && m.IsDelivered) ? Visibility.Visible : Visibility.Collapsed;
+        FailedVisible = (m.IsMine && m.DeliveryFailed) ? Visibility.Visible : Visibility.Collapsed;
+        FailureReason = m.FailureReason ?? "";
         PacketId = m.PacketId;
         IsMine = m.IsMine;
     }
