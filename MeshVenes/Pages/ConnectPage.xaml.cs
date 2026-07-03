@@ -54,6 +54,8 @@ public sealed partial class ConnectPage : Page
         CancelAutoConnect("Auto connect cancelled.");
     }
 
+    private string? _autoConnectTarget;
+
     private void StartAutoConnectCountdown()
     {
         if (s_autoConnectHandled)
@@ -64,11 +66,36 @@ public sealed partial class ConnectPage : Page
         if (AutoConnectCheck.IsChecked != true || RadioClient.Instance.IsConnected)
             return;
 
+        _autoConnectTarget = DescribeSavedEndpoint();
+        if (_autoConnectTarget is null)
+            return;
+
         _autoConnectSecondsLeft = AutoConnectDelaySeconds;
         _autoConnectTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _autoConnectTimer.Tick += AutoConnectTimer_Tick;
         _autoConnectTimer.Start();
-        StatusText.Text = $"Auto connecting in {_autoConnectSecondsLeft}s...";
+        StatusText.Text = $"Auto connect to {_autoConnectTarget} in {_autoConnectSecondsLeft}s...";
+    }
+
+    private static string? DescribeSavedEndpoint()
+    {
+        var preferred = (SettingsStore.GetString(SettingsStore.LastConnectionTypeKey) ?? "").Trim().ToLowerInvariant();
+        var serialPort = SettingsStore.GetString(SettingsStore.LastSerialPortKey)?.Trim();
+        var tcpHost = SettingsStore.GetString(SettingsStore.LastTcpHostKey)?.Trim();
+        var tcpPort = SettingsStore.GetString(SettingsStore.LastTcpPortKey)?.Trim();
+        var bleId = SettingsStore.GetString(SettingsStore.LastBluetoothDeviceIdKey)?.Trim();
+
+        var tcpTarget = string.IsNullOrWhiteSpace(tcpHost) ? null : $"{tcpHost}:{tcpPort}";
+
+        return preferred switch
+        {
+            "serial" when !string.IsNullOrWhiteSpace(serialPort) => serialPort,
+            "tcp" when tcpTarget is not null => tcpTarget,
+            "ble" when !string.IsNullOrWhiteSpace(bleId) => "Bluetooth device",
+            _ => !string.IsNullOrWhiteSpace(serialPort)
+                ? serialPort
+                : tcpTarget ?? (string.IsNullOrWhiteSpace(bleId) ? null : "Bluetooth device")
+        };
     }
 
     private async void AutoConnectTimer_Tick(object? sender, object e)
@@ -82,13 +109,13 @@ public sealed partial class ConnectPage : Page
         _autoConnectSecondsLeft--;
         if (_autoConnectSecondsLeft > 0)
         {
-            StatusText.Text = $"Auto connecting in {_autoConnectSecondsLeft}s...";
+            StatusText.Text = $"Auto connect to {_autoConnectTarget} in {_autoConnectSecondsLeft}s...";
             return;
         }
 
         CancelAutoConnect(null);
-        StatusText.Text = "Auto connecting to last used node...";
-        AddLogLineUi("Auto connect: trying last used connection.");
+        StatusText.Text = $"Auto connecting to {_autoConnectTarget}...";
+        AddLogLineUi($"Auto connect: trying last used connection ({_autoConnectTarget}).");
 
         try
         {

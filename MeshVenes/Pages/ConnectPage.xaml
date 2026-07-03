@@ -72,10 +72,10 @@
                     Content="Connect"
                     Click="TcpConnect_Click" />
             <CheckBox Grid.Row="1"
-                      Grid.Column="3"
-                      Grid.ColumnSpan="3"
+                      Grid.Column="7"
                       x:Name="AutoConnectCheck"
                       Content="Auto connect last"
+                      HorizontalAlignment="Right"
                       ToolTipService.ToolTip="Connect automatically to the last used node 5 seconds after the app starts"
                       Checked="AutoConnectCheck_Checked"
                       Unchecked="AutoConnectCheck_Unchecked"/>
