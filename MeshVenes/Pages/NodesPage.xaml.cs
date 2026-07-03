@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using MeshVenes.Models;
 using MeshVenes.Protocol;
 using MeshVenes.Services;
@@ -598,6 +599,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private async void NodesPage_Loaded(object sender, RoutedEventArgs e)
     {
         _pendingAutoFitOnLoad = true;
+        DisableDetailsTabContentAnimation();
         EnsureSelectedTabVisible();
         UpdateTabHeaderColors();
         await EnsureMapAsync();
@@ -3618,6 +3620,32 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         var path = GetLogFilePath(nodeId, kind);
         return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+    }
+
+    private void DisableDetailsTabContentAnimation()
+    {
+        // The TabView template plays a ContentThemeTransition (slide in from the
+        // bottom) on its content presenter when the selected tab changes; clear
+        // it so switching sub-tabs shows the content instantly.
+        var presenter = FindContentPresenterByName(DetailsTabs, "TabContentPresenter");
+        if (presenter is not null)
+            presenter.ContentTransitions = new TransitionCollection();
+    }
+
+    private static ContentPresenter? FindContentPresenterByName(DependencyObject root, string name)
+    {
+        if (root is ContentPresenter presenter && presenter.Name == name)
+            return presenter;
+
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var result = FindContentPresenterByName(VisualTreeHelper.GetChild(root, i), name);
+            if (result is not null)
+                return result;
+        }
+
+        return null;
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)
