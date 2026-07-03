@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Animation;
 
 namespace MeshVenes.Pages;
 
@@ -149,88 +150,88 @@ public sealed partial class SettingsPage : Page
         switch (tag)
         {
             case "lora":
-                SettingsContentFrame.Navigate(typeof(SettingsRadioLoRaPage));
+                SettingsContentFrame.Navigate(typeof(SettingsRadioLoRaPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "channels":
-                SettingsContentFrame.Navigate(typeof(SettingsRadioChannelsPage));
+                SettingsContentFrame.Navigate(typeof(SettingsRadioChannelsPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "security":
-                SettingsContentFrame.Navigate(typeof(SettingsRadioSecurityPage));
+                SettingsContentFrame.Navigate(typeof(SettingsRadioSecurityPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "shareqr":
-                SettingsContentFrame.Navigate(typeof(SettingsRadioShareQrPage));
+                SettingsContentFrame.Navigate(typeof(SettingsRadioShareQrPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "logging":
-                SettingsContentFrame.Navigate(typeof(SettingsLoggingPage));
+                SettingsContentFrame.Navigate(typeof(SettingsLoggingPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "logging-app":
-                SettingsContentFrame.Navigate(typeof(SettingsLoggingPage));
+                SettingsContentFrame.Navigate(typeof(SettingsLoggingPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "firmware":
-                SettingsContentFrame.Navigate(typeof(SettingsFirmwarePage));
+                SettingsContentFrame.Navigate(typeof(SettingsFirmwarePage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "firmware-remote-admin":
-                SettingsContentFrame.Navigate(typeof(SettingsRemoteAdminPage));
+                SettingsContentFrame.Navigate(typeof(SettingsRemoteAdminPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "firmware-import-export":
-                SettingsContentFrame.Navigate(typeof(SettingsImportExportPage));
+                SettingsContentFrame.Navigate(typeof(SettingsImportExportPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "device-user":
-                SettingsContentFrame.Navigate(typeof(SettingsDeviceUserPage));
+                SettingsContentFrame.Navigate(typeof(SettingsDeviceUserPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "device-bluetooth":
-                SettingsContentFrame.Navigate(typeof(SettingsDeviceBluetoothPage));
+                SettingsContentFrame.Navigate(typeof(SettingsDeviceBluetoothPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "device-device":
-                SettingsContentFrame.Navigate(typeof(SettingsDeviceDevicePage));
+                SettingsContentFrame.Navigate(typeof(SettingsDeviceDevicePage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "device-display":
-                SettingsContentFrame.Navigate(typeof(SettingsDeviceDisplayPage));
+                SettingsContentFrame.Navigate(typeof(SettingsDeviceDisplayPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "device-network":
-                SettingsContentFrame.Navigate(typeof(SettingsDeviceNetworkPage));
+                SettingsContentFrame.Navigate(typeof(SettingsDeviceNetworkPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "device-position":
-                SettingsContentFrame.Navigate(typeof(SettingsDevicePositionPage));
+                SettingsContentFrame.Navigate(typeof(SettingsDevicePositionPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "device-power":
-                SettingsContentFrame.Navigate(typeof(SettingsDevicePowerPage));
+                SettingsContentFrame.Navigate(typeof(SettingsDevicePowerPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-canned":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleCannedMessagesPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleCannedMessagesPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-detection":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleDetectionSensorPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleDetectionSensorPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-external-notification":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleExternalNotificationPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleExternalNotificationPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-mqtt":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleMqttPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleMqttPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-range-test":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleRangeTestPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleRangeTestPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-pax":
-                SettingsContentFrame.Navigate(typeof(SettingsModulePaxCounterPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModulePaxCounterPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-ringtone":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleRingtonePage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleRingtonePage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-serial":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleSerialPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleSerialPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-store-forward":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleStoreForwardPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleStoreForwardPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "module-telemetry":
-                SettingsContentFrame.Navigate(typeof(SettingsModuleTelemetryPage));
+                SettingsContentFrame.Navigate(typeof(SettingsModuleTelemetryPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "appearance-theme":
-                SettingsContentFrame.Navigate(typeof(SettingsAppearancePage));
+                SettingsContentFrame.Navigate(typeof(SettingsAppearancePage), null, new SuppressNavigationTransitionInfo());
                 break;
             default:
-                SettingsContentFrame.Navigate(typeof(SettingsComingSoonPage), tag);
+                SettingsContentFrame.Navigate(typeof(SettingsComingSoonPage), tag, new SuppressNavigationTransitionInfo());
                 break;
         }
     }

@@ -4,6 +4,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -120,19 +121,19 @@ public sealed partial class MainWindow : Window
         switch (item.Tag?.ToString())
         {
             case "messages":
-                ContentFrame.Navigate(typeof(Pages.MessagesPage));
+                ContentFrame.Navigate(typeof(Pages.MessagesPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "connect":
-                ContentFrame.Navigate(typeof(Pages.ConnectPage));
+                ContentFrame.Navigate(typeof(Pages.ConnectPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "nodes":
-                ContentFrame.Navigate(typeof(Pages.NodesPage));
+                ContentFrame.Navigate(typeof(Pages.NodesPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "settings":
-                ContentFrame.Navigate(typeof(Pages.SettingsPage));
+                ContentFrame.Navigate(typeof(Pages.SettingsPage), null, new SuppressNavigationTransitionInfo());
                 break;
             case "about":
-                ContentFrame.Navigate(typeof(Pages.AboutPage));
+                ContentFrame.Navigate(typeof(Pages.AboutPage), null, new SuppressNavigationTransitionInfo());
                 break;
         }
     }
