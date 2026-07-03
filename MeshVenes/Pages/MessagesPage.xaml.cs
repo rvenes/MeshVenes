@@ -149,7 +149,14 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         _messageLogRetentionDays = LoadMessageRetentionDays();
 
-        Loaded += (_, __) => HookAppStateEvents();
+        // The page is cached (NavigationCacheMode Required) and unhooks AppState
+        // events while unloaded, so nodes/messages that arrive on other tabs must
+        // be backfilled every time the page is shown again.
+        Loaded += (_, __) =>
+        {
+            HookAppStateEvents();
+            SyncChatsFromAppState();
+        };
         Unloaded += (_, __) => UnhookAppStateEvents();
         HookAppStateEvents();
 
@@ -1306,6 +1313,31 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         foreach (var message in MeshVenes.AppState.Messages.OrderBy(m => m.WhenUtc))
             AddMessageToChat(message);
+    }
+
+    private void SyncChatsFromAppState()
+    {
+        foreach (var node in MeshVenes.AppState.Nodes)
+        {
+            // Idempotent re-subscribe: nodes added while this page was unloaded
+            // have no handler yet, already known nodes must not get a second one.
+            node.PropertyChanged -= Node_PropertyChanged;
+            node.PropertyChanged += Node_PropertyChanged;
+
+            if (string.IsNullOrWhiteSpace(node.IdHex))
+                continue;
+
+            if (_chatItemsByPeer.TryGetValue(node.IdHex, out var item))
+                item.UpdateFromNode(node);
+            else
+                AddChatItemForNode(node);
+        }
+
+        // AddMessageToChat dedupes, so replaying the live list only adds missed ones.
+        foreach (var message in MeshVenes.AppState.Messages.OrderBy(m => m.WhenUtc))
+            AddMessageToChat(message);
+
+        RebuildVisibleChats();
     }
 
     private static string NormalizePeerKey(string? peerIdHex)

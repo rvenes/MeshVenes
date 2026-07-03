@@ -529,6 +529,43 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         Unloaded += NodesPage_Unloaded;
     }
 
+    // The page is cached (NavigationCacheMode Required) and unhooks AppState
+    // events while unloaded, so everything that changed on other tabs must be
+    // re-subscribed and mirrored again every time the page is shown.
+    private void ResyncAppStateSubscriptions()
+    {
+        MeshVenes.AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
+        MeshVenes.AppState.Nodes.CollectionChanged += Nodes_CollectionChanged;
+        MeshVenes.AppState.Waypoints.CollectionChanged -= Waypoints_CollectionChanged;
+        MeshVenes.AppState.Waypoints.CollectionChanged += Waypoints_CollectionChanged;
+        AppState.ConnectedNodeChanged -= ConnectedNodeChanged;
+        AppState.ConnectedNodeChanged += ConnectedNodeChanged;
+        AppState.SettingsChanged -= AppState_SettingsChanged;
+        AppState.SettingsChanged += AppState_SettingsChanged;
+
+        foreach (var n in MeshVenes.AppState.Nodes)
+        {
+            n.PropertyChanged -= Node_PropertyChanged;
+            n.PropertyChanged += Node_PropertyChanged;
+            if (!_allNodes.Contains(n))
+                _allNodes.Add(n);
+        }
+
+        for (var i = _allNodes.Count - 1; i >= 0; i--)
+        {
+            if (!MeshVenes.AppState.Nodes.Contains(_allNodes[i]))
+                _allNodes.RemoveAt(i);
+        }
+
+        foreach (var waypoint in MeshVenes.AppState.Waypoints)
+        {
+            waypoint.PropertyChanged -= Waypoint_PropertyChanged;
+            waypoint.PropertyChanged += Waypoint_PropertyChanged;
+        }
+
+        RebuildVisibleNodes();
+    }
+
     private void NodesPage_Unloaded(object sender, RoutedEventArgs e)
     {
         MeshVenes.AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
@@ -599,6 +636,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private async void NodesPage_Loaded(object sender, RoutedEventArgs e)
     {
         _pendingAutoFitOnLoad = true;
+        ResyncAppStateSubscriptions();
         DisableDetailsTabContentAnimation();
         EnsureSelectedTabVisible();
         UpdateTabHeaderColors();
