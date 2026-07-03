@@ -3627,20 +3627,31 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         // The TabView template plays a ContentThemeTransition (slide in from the
         // bottom) on its content presenter when the selected tab changes; clear
         // it so switching sub-tabs shows the content instantly.
-        var presenter = FindContentPresenterByName(DetailsTabs, "TabContentPresenter");
+        var presenter = FindDescendantByName<ContentPresenter>(DetailsTabs, "TabContentPresenter");
         if (presenter is not null)
             presenter.ContentTransitions = new TransitionCollection();
+
+        // The tab strip itself is an internal TabViewListView whose item
+        // containers play the default entrance animation, making the row of tab
+        // headers fly in from the bottom. It is a ListView subclass, so the
+        // app-wide implicit ListView style does not reach it; clear it directly.
+        var tabStrip = FindDescendantByName<ListView>(DetailsTabs, "TabListView");
+        if (tabStrip is not null)
+        {
+            tabStrip.ItemContainerTransitions = new TransitionCollection();
+            tabStrip.Transitions = new TransitionCollection();
+        }
     }
 
-    private static ContentPresenter? FindContentPresenterByName(DependencyObject root, string name)
+    private static T? FindDescendantByName<T>(DependencyObject root, string name) where T : FrameworkElement
     {
-        if (root is ContentPresenter presenter && presenter.Name == name)
-            return presenter;
+        if (root is T match && match.Name == name)
+            return match;
 
         var count = VisualTreeHelper.GetChildrenCount(root);
         for (var i = 0; i < count; i++)
         {
-            var result = FindContentPresenterByName(VisualTreeHelper.GetChild(root, i), name);
+            var result = FindDescendantByName<T>(VisualTreeHelper.GetChild(root, i), name);
             if (result is not null)
                 return result;
         }
