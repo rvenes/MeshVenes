@@ -291,11 +291,12 @@ public sealed class RadioClient
 
     public void AddLogFromUiThread(string line)
     {
-        LogLines.Insert(0, line);
+        var stamped = $"{DateTime.Now:HH:mm:ss} {line}";
+        LogLines.Insert(0, stamped);
         while (LogLines.Count > MaxLogLines)
             LogLines.RemoveAt(LogLines.Count - 1);
 
-        AppendToLiveDebugLog(line);
+        AppendToLiveDebugLog(stamped);
     }
 
     public void AddSystemLog(string line)

@@ -5,9 +5,14 @@ using Microsoft.UI.Xaml.Input;
 using MeshVenes.Services;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.Globalization;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Devices.Bluetooth;
@@ -30,17 +35,24 @@ public sealed partial class ConnectPage : Page
     private DispatcherTimer? _autoConnectTimer;
     private int _autoConnectSecondsLeft;
 
+    private readonly ObservableCollection<string> _logView = new();
+    private bool _logOptionsReady;
+
     public ConnectPage()
     {
         InitializeComponent();
 
-        LogList.ItemsSource = RadioClient.Instance.LogLines;
+        LogList.ItemsSource = _logView;
 
         TcpHostBox.Text = SettingsStore.GetString(SettingsStore.LastTcpHostKey) ?? "127.0.0.1";
         TcpPortBox.Text = SettingsStore.GetString(SettingsStore.LastTcpPortKey) ?? "4403";
         AutoConnectCheck.IsChecked = SettingsStore.GetString(SettingsStore.AutoConnectLastKey) == "1";
+        HideTxCheck.IsChecked = (SettingsStore.GetString(SettingsStore.ConnectLogHideTxKey) ?? "1") == "1";
+        ExtendedInfoCheck.IsChecked = SettingsStore.GetString(SettingsStore.ConnectLogExtendedKey) == "1";
+        _logOptionsReady = true;
 
         HookClientEvents();
+        RebuildLogView();
         UpdateUiFromClient();
         StartAutoConnectCountdown();
     }
@@ -149,6 +161,7 @@ public sealed partial class ConnectPage : Page
 
         _handlersHooked = true;
         RadioClient.Instance.ConnectionChanged += OnConnectionChanged;
+        RadioClient.Instance.LogLines.CollectionChanged += LogLines_CollectionChanged;
     }
 
     private void UnhookClientEvents()
@@ -158,6 +171,7 @@ public sealed partial class ConnectPage : Page
 
         _handlersHooked = false;
         RadioClient.Instance.ConnectionChanged -= OnConnectionChanged;
+        RadioClient.Instance.LogLines.CollectionChanged -= LogLines_CollectionChanged;
     }
 
     protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -169,6 +183,7 @@ public sealed partial class ConnectPage : Page
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         HookClientEvents();
+        RebuildLogView();
         RefreshPorts();
         _ = RefreshBluetoothDevicesAsync();
         UpdateUiFromClient();
@@ -622,6 +637,209 @@ public sealed partial class ConnectPage : Page
         {
             AddLogLineUi($"Failed to save debug log: {ex.Message}");
         }
+    }
+
+    private void LogViewOption_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_logOptionsReady)
+            return;
+
+        SettingsStore.SetString(SettingsStore.ConnectLogHideTxKey, HideTxCheck.IsChecked == true ? "1" : "0");
+        SettingsStore.SetString(SettingsStore.ConnectLogExtendedKey, ExtendedInfoCheck.IsChecked == true ? "1" : "0");
+        RebuildLogView();
+    }
+
+    private void LogLines_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == NotifyCollectionChangedAction.Add && e.NewStartingIndex == 0 && e.NewItems is not null)
+        {
+            for (var i = e.NewItems.Count - 1; i >= 0; i--)
+            {
+                if (e.NewItems[i] is string raw && TryPresentLogLine(raw, out var line))
+                {
+                    _logView.Insert(0, line);
+                    while (_logView.Count > 500)
+                        _logView.RemoveAt(_logView.Count - 1);
+                }
+            }
+            return;
+        }
+
+        // The source only removes tail lines to enforce its cap; the view keeps
+        // its own cap, so only structural changes need a full rebuild.
+        if (e.Action == NotifyCollectionChangedAction.Remove)
+            return;
+
+        RebuildLogView();
+    }
+
+    private void RebuildLogView()
+    {
+        _logView.Clear();
+        foreach (var raw in RadioClient.Instance.LogLines)
+        {
+            if (TryPresentLogLine(raw, out var line))
+                _logView.Add(line);
+        }
+    }
+
+    private bool TryPresentLogLine(string raw, out string presented)
+    {
+        presented = raw;
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        // Lines are timestamped at the source ("20:25:01 ..."); older lines may
+        // not be, so treat the stamp as optional.
+        var stampMatch = Regex.Match(raw, @"^(\d{2}:\d{2}:\d{2}) (.*)$", RegexOptions.Singleline);
+        var stamp = stampMatch.Success ? stampMatch.Groups[1].Value : null;
+        var body = stampMatch.Success ? stampMatch.Groups[2].Value : raw;
+
+        if (HideTxCheck.IsChecked == true && Regex.IsMatch(body, @"^TX \d+ bytes$"))
+            return false;
+
+        var text = ExtendedInfoCheck.IsChecked == true ? RewriteExtended(body) : HumanizeUptimeInline(body);
+        presented = stamp is null ? text : $"{stamp} {text}";
+        return true;
+    }
+
+    private static string RewriteExtended(string body)
+    {
+        var telemetry = Regex.Match(body, @"^Telemetry: (\w+): (\{.*\})$");
+        if (telemetry.Success)
+            return FormatTelemetry(telemetry.Groups[1].Value, telemetry.Groups[2].Value) ?? HumanizeUptimeInline(body);
+
+        var gps = Regex.Match(body, @"^GPS: ([0-9A-Fa-f]{4}) (-?[\d.]+),(-?[\d.]+) \((.*)\) src=(\S+)$");
+        if (gps.Success)
+        {
+            var shortId = gps.Groups[1].Value;
+            var node = ResolveNodeByShortId(shortId);
+            var who = string.IsNullOrWhiteSpace(node?.Name) ? shortId : $"{node!.Name} ({shortId})";
+            var lat = gps.Groups[2].Value;
+            var lon = gps.Groups[3].Value;
+            var position = lat.StartsWith("0.000000") && lon.StartsWith("0.000000") ? "no fix" : $"{lat}, {lon}";
+            return $"Position from {who}: {position} at {gps.Groups[4].Value} (source: {gps.Groups[5].Value})";
+        }
+
+        var ack = Regex.Match(body, @"^ACK \(unknown request_id=(0x[0-9a-fA-F]+)\)$");
+        if (ack.Success)
+            return $"ACK heard for a packet not sent by this app (id {ack.Groups[1].Value})";
+
+        if (body.StartsWith("TXT: ", StringComparison.Ordinal))
+            return "Device log: " + body[5..];
+
+        return HumanizeUptimeInline(body);
+    }
+
+    private static string? FormatTelemetry(string kind, string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var parts = new List<string>();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+                parts.Add(FormatTelemetryValue(prop));
+
+            return parts.Count == 0 ? null : $"Telemetry ({kind}): {string.Join(", ", parts)}";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatTelemetryValue(JsonProperty prop)
+    {
+        var value = prop.Value.ValueKind == JsonValueKind.Number ? prop.Value.GetDouble() : double.NaN;
+        return prop.Name switch
+        {
+            // Firmware reports > 100 when running on external power.
+            "batteryLevel" => value > 100 ? "external power" : $"battery {value:0} %",
+            "voltage" => string.Create(CultureInfo.InvariantCulture, $"{value:0.00} V"),
+            "channelUtilization" => string.Create(CultureInfo.InvariantCulture, $"channel util {value:0.0} %"),
+            "airUtilTx" => string.Create(CultureInfo.InvariantCulture, $"air TX {value:0.00} %"),
+            "uptimeSeconds" => $"uptime {HumanizeSeconds((long)value)}",
+            "temperature" => string.Create(CultureInfo.InvariantCulture, $"temperature {value:0.0} °C"),
+            "relativeHumidity" => string.Create(CultureInfo.InvariantCulture, $"humidity {value:0} %"),
+            "barometricPressure" => string.Create(CultureInfo.InvariantCulture, $"pressure {value:0} hPa"),
+            _ => prop.Value.ValueKind == JsonValueKind.Number
+                ? string.Create(CultureInfo.InvariantCulture, $"{HumanizeCamelCase(prop.Name)} {value:0.##}")
+                : $"{HumanizeCamelCase(prop.Name)} {prop.Value}"
+        };
+    }
+
+    private static string HumanizeCamelCase(string name)
+    {
+        var text = Regex.Replace(name, "(?<=[a-z0-9])(?=[A-Z])", " ");
+        return text.ToLowerInvariant();
+    }
+
+    private static string HumanizeUptimeInline(string body)
+        => Regex.Replace(body, "\"uptimeSeconds\": (\\d+)", m =>
+            $"\"uptimeSeconds\": {m.Groups[1].Value} ({HumanizeSeconds(long.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture))})");
+
+    private static string HumanizeSeconds(long seconds)
+    {
+        if (seconds < 0)
+            return $"{seconds} s";
+
+        var ts = TimeSpan.FromSeconds(seconds);
+        if (ts.TotalDays >= 1) return $"{(int)ts.TotalDays}d {ts.Hours}h";
+        if (ts.TotalHours >= 1) return $"{(int)ts.TotalHours}h {ts.Minutes}m";
+        if (ts.TotalMinutes >= 1) return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+        return $"{seconds} s";
+    }
+
+    private static MeshVenes.Models.NodeLive? ResolveNodeByShortId(string shortId)
+        => MeshVenes.AppState.Nodes.FirstOrDefault(n =>
+            !string.IsNullOrWhiteSpace(n.IdHex) &&
+            n.IdHex.EndsWith(shortId, StringComparison.OrdinalIgnoreCase));
+
+    private void LogList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if ((e.OriginalSource as FrameworkElement)?.DataContext is not string line)
+            return;
+
+        var node = ResolveNodeFromLogLine(line);
+        if (node is null || string.IsNullOrWhiteSpace(node.IdHex))
+            return;
+
+        // Same mechanism as "Open node" on the Messages page.
+        SettingsStore.SetString("NodesLastSelectedNodeIdHex", node.IdHex);
+        App.MainWindowInstance?.NavigateTo("nodes");
+    }
+
+    private static MeshVenes.Models.NodeLive? ResolveNodeFromLogLine(string line)
+    {
+        var full = Regex.Match(line, @"0x[0-9a-fA-F]{8}");
+        if (full.Success)
+        {
+            var byFullId = MeshVenes.AppState.Nodes.FirstOrDefault(n =>
+                string.Equals(n.IdHex, full.Value, StringComparison.OrdinalIgnoreCase));
+            if (byFullId is not null)
+                return byFullId;
+        }
+
+        foreach (Match m in Regex.Matches(line, @"\b[0-9a-fA-F]{4}\b"))
+        {
+            // Timestamps/uptime values are digit-only tokens too, so prefer
+            // tokens containing hex letters and only then fall back to digits.
+            if (!m.Value.Any(char.IsLetter))
+                continue;
+
+            var node = ResolveNodeByShortId(m.Value);
+            if (node is not null)
+                return node;
+        }
+
+        foreach (Match m in Regex.Matches(line, @"\b[0-9]{4}\b"))
+        {
+            var node = ResolveNodeByShortId(m.Value);
+            if (node is not null)
+                return node;
+        }
+
+        return null;
     }
 
     private void LogList_RightTapped(object sender, RightTappedRoutedEventArgs e)

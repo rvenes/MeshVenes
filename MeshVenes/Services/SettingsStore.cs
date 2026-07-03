@@ -14,6 +14,8 @@ public static class SettingsStore
     public const string LastBluetoothDeviceIdKey = "LastBluetoothDeviceId";
     public const string LastConnectionTypeKey = "LastConnectionType";
     public const string AutoConnectLastKey = "AutoConnectLast";
+    public const string ConnectLogHideTxKey = "ConnectLogHideTx";
+    public const string ConnectLogExtendedKey = "ConnectLogExtended";
 
     private static readonly object _lock = new();
     private static Dictionary<string, string>? _fallback;
