@@ -111,6 +111,8 @@ When the user confirms the PR is merged and asks to prepare for new work:
 4. Create a fresh feature branch for the next task only when the user is ready to start coding:
    - `git switch -c codex/<next-name>`
 
+When the user confirms the PR is already merged on GitHub, Codex should perform steps 1-3 automatically before doing any further repo work, as long as the working tree is clean or the state can be advanced safely without discarding changes.
+
 ## Manual approval before commit & push (mandatory)
 
 After implementing changes and successfully validating the build/tests:
@@ -153,6 +155,8 @@ Never push automatically without explicit approval.
 - If continuing work for an open PR, stay on that PR branch and keep working there until the user asks to reset after merge.
 - If starting a new task and the previous PR is already merged, switch to `main`, pull, verify a clean working tree, then create a fresh `codex/<name>` branch before editing.
 - Do not keep coding on an outdated branch if the intended work should land through a different active PR branch.
+- During post-merge cleanup, never discard uncommitted work. If cleanup would overwrite local changes, stop and preserve them safely before advancing branches.
+- Do not delete merged local branches automatically during cleanup. Only delete them if the user explicitly asks.
 
 ## Environment assumptions
 

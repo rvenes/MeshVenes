@@ -14,14 +14,21 @@ namespace MeshVenes.Protocol;
 public static class FromRadioRouter
 {
     private const int TextMessagePortNum = 1; // TEXT_MESSAGE_APP
+    private const int RemoteHardwarePortNum = 2; // REMOTE_HARDWARE_APP
     private const int TextMessageCompressedPortNum = 7; // TEXT_MESSAGE_COMPRESSED_APP
     private const int PositionPortNum = 3;    // POSITION_APP
     private const int RoutingAppPortNum = 5;  // ROUTING_APP
     private const int AdminAppPortNum = 6; // ADMIN_APP
     private const int WaypointPortNum = 8; // WAYPOINT_APP
     private const int DetectionSensorPortNum = 10; // DETECTION_SENSOR_APP
+    private const int PaxCounterPortNum = 34; // PAXCOUNTER_APP
+    private const int StoreForwardPlusPlusPortNum = 35; // STORE_FORWARD_PLUSPLUS_APP
+    private const int StoreForwardPortNum = 65; // STORE_FORWARD_APP
+    private const int RangeTestPortNum = 66; // RANGE_TEST_APP
     private const int TelemetryAppPortNum = 67; // TELEMETRY_APP
     private const int TraceRoutePortNum = 70; // TRACEROUTE_APP
+    private const int NeighborInfoPortNum = 71; // NEIGHBORINFO_APP
+    private const int MapReportPortNum = 73; // MAP_REPORT_APP
     private const int MaxMessages = 500;
     private static readonly DateTime MinTelemetryTimestampUtc = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     private static readonly Dictionary<string, string> HardwareModelFriendlyNames = new(StringComparer.OrdinalIgnoreCase)
@@ -207,6 +214,12 @@ public static class FromRadioRouter
         {
             if (TryHandleDetectionSensorFromPayload(decodedObj, fromNodeNum, logToUi, out var s))
                 logToUi("Detection: " + s);
+            return;
+        }
+
+        if (TryHandleMeshAppFromPayload(portNum, decodedObj, fromNodeNum, out var meshAppSummary))
+        {
+            logToUi(meshAppSummary);
             return;
         }
 
@@ -1211,6 +1224,138 @@ public static class FromRadioRouter
         summary = text;
         return true;
     }
+
+    private static bool TryHandleMeshAppFromPayload(int portNum, object decodedObj, uint fromNodeNum, out string summary)
+    {
+        summary = "";
+        var payloadBytes = TryGetPayloadBytes(decodedObj);
+        if (payloadBytes is null || payloadBytes.Length == 0)
+            return false;
+
+        try
+        {
+            summary = portNum switch
+            {
+                RemoteHardwarePortNum => FormatRemoteHardware(HardwareMessage.Parser.ParseFrom(payloadBytes)),
+                PaxCounterPortNum => FormatPaxCounter(Paxcount.Parser.ParseFrom(payloadBytes)),
+                StoreForwardPortNum or StoreForwardPlusPlusPortNum => FormatStoreForward(StoreAndForward.Parser.ParseFrom(payloadBytes)),
+                RangeTestPortNum => FormatRangeTest(payloadBytes),
+                NeighborInfoPortNum => FormatNeighborInfo(NeighborInfo.Parser.ParseFrom(payloadBytes)),
+                MapReportPortNum => FormatMapReport(MapReport.Parser.ParseFrom(payloadBytes)),
+                _ => ""
+            };
+        }
+        catch (Exception ex)
+        {
+            summary = $"App port {portNum}: parse failed ({ex.GetType().Name})";
+        }
+
+        if (string.IsNullOrWhiteSpace(summary))
+            return false;
+
+        var fromIdHex = $"0x{fromNodeNum:x8}";
+        NodeLogArchive.Append(NodeLogType.MeshApps, fromIdHex, DateTime.UtcNow, summary);
+        return true;
+    }
+
+    private static string FormatRemoteHardware(HardwareMessage message)
+        => $"Remote hardware: type={message.Type} gpio_mask=0x{message.GpioMask:x} gpio_value=0x{message.GpioValue:x}";
+
+    private static string FormatPaxCounter(Paxcount pax)
+        => $"PAX counter: wifi={pax.Wifi} ble={pax.Ble} uptime={FormatDuration(pax.Uptime)}";
+
+    private static string FormatStoreForward(StoreAndForward store)
+    {
+        var prefix = $"Store & Forward: {store.Rr}";
+        return store.VariantCase switch
+        {
+            StoreAndForward.VariantOneofCase.Stats => $"{prefix} total={store.Stats.MessagesTotal} saved={store.Stats.MessagesSaved}/{store.Stats.MessagesMax} requests={store.Stats.Requests} history={store.Stats.RequestsHistory} uptime={FormatDuration(store.Stats.UpTime)} heartbeat={(store.Stats.Heartbeat ? "on" : "off")} return_max={store.Stats.ReturnMax} window={store.Stats.ReturnWindow}m",
+            StoreAndForward.VariantOneofCase.History => $"{prefix} history_messages={store.History.HistoryMessages} window={store.History.Window}m last_request={store.History.LastRequest}",
+            StoreAndForward.VariantOneofCase.Heartbeat => $"{prefix} heartbeat_period={store.Heartbeat.Period}s secondary={store.Heartbeat.Secondary}",
+            StoreAndForward.VariantOneofCase.Text => $"{prefix} text=\"{DecodeUtf8Preview(store.Text.ToByteArray())}\"",
+            _ => prefix
+        };
+    }
+
+    private static string FormatRangeTest(byte[] payloadBytes)
+        => $"Range test: {DecodeUtf8Preview(payloadBytes)}";
+
+    private static string FormatNeighborInfo(NeighborInfo info)
+    {
+        var sender = info.NodeId != 0 ? $"0x{info.NodeId:x8}" : "unknown";
+        var neighbors = info.Neighbors
+            .Select(n => $"0x{n.NodeId:x8} snr={n.Snr:0.0} last={FormatUnixSeconds(n.LastRxTime)} interval={n.NodeBroadcastIntervalSecs}s")
+            .ToList();
+        var neighborText = neighbors.Count == 0 ? "none" : string.Join("; ", neighbors);
+        return $"Neighbor info: node={sender} neighbors={neighbors.Count} broadcast_interval={info.NodeBroadcastIntervalSecs}s last_sent_by=0x{info.LastSentById:x8} [{neighborText}]";
+    }
+
+    private static string FormatMapReport(MapReport report)
+    {
+        var name = string.IsNullOrWhiteSpace(report.LongName) ? report.ShortName : report.LongName;
+        if (string.IsNullOrWhiteSpace(name))
+            name = "unknown";
+
+        var parts = new List<string>
+        {
+            $"Map report: {name}",
+            $"role={report.Role}",
+            $"hw={ResolveHardwareModelText(report.HwModel)}",
+            $"fw={BlankAsDash(report.FirmwareVersion)}",
+            $"region={report.Region}",
+            $"preset={report.ModemPreset}",
+            $"online_local={report.NumOnlineLocalNodes}",
+            $"default_channel={(report.HasDefaultChannel ? "yes" : "no")}",
+            $"location_opt_in={(report.HasOptedReportLocation ? "yes" : "no")}"
+        };
+
+        if (report.LatitudeI != 0 || report.LongitudeI != 0)
+        {
+            var lat = report.LatitudeI / 1e7;
+            var lon = report.LongitudeI / 1e7;
+            parts.Add($"pos={lat:0.0000000},{lon:0.0000000}");
+            parts.Add($"alt={report.Altitude}m");
+            parts.Add($"precision={report.PositionPrecision}");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static string DecodeUtf8Preview(byte[] payloadBytes)
+    {
+        var text = Encoding.UTF8.GetString(payloadBytes).Trim('\0', '\r', '\n');
+        if (string.IsNullOrWhiteSpace(text))
+            return $"binary {payloadBytes.Length} bytes";
+
+        text = text.Replace("\r", " ").Replace("\n", " ").Trim();
+        return text.Length <= 180 ? text : text[..180] + "...";
+    }
+
+    private static string FormatDuration(uint seconds)
+    {
+        var value = TimeSpan.FromSeconds(seconds);
+        return value.TotalDays >= 1
+            ? $"{(int)value.TotalDays}d {value.Hours:00}:{value.Minutes:00}:{value.Seconds:00}"
+            : $"{value.Hours:00}:{value.Minutes:00}:{value.Seconds:00}";
+    }
+
+    private static string FormatUnixSeconds(uint seconds)
+    {
+        if (seconds == 0)
+            return "unknown";
+
+        try
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(seconds).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return seconds.ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
+    private static string BlankAsDash(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "—" : value.Trim();
 
     private static bool TryHandleWaypointFromPayload(object decodedObj, uint fromNodeNum, uint? channelIndex, Action<string> logToUi, out string summary)
     {

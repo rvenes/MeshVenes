@@ -104,11 +104,20 @@
                                               Tag="IncludeMqtt"
                                               IsChecked="{x:Bind IsMqttFilterEnabled, Mode=OneWay}"
                                               Click="FilterOption_Click"/>
+                                    <Button Content="Clear filters"
+                                            HorizontalAlignment="Left"
+                                            Margin="0,6,0,0"
+                                            Visibility="{x:Bind ActiveNodeFiltersVisibility, Mode=OneWay}"
+                                            Click="ClearFilters_Click"/>
                                 </StackPanel>
                             </ScrollViewer>
                         </Flyout>
                     </Button.Flyout>
                 </Button>
+                <TextBlock Text="{x:Bind ActiveNodeFiltersText, Mode=OneWay}"
+                           Visibility="{x:Bind ActiveNodeFiltersVisibility, Mode=OneWay}"
+                           TextTrimming="CharacterEllipsis"
+                           MaxWidth="145"/>
             </StackPanel>
 
             <TextBox Grid.Row="4"
@@ -992,6 +1001,48 @@
                             </StackPanel>
                             <TextBox Grid.Row="1"
                                      Text="{x:Bind DetectionSensorLogText, Mode=OneWay}"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     AcceptsReturn="True"
+                                     FontFamily="Consolas"
+                                     Padding="8"
+                                     Margin="0,8,0,0"/>
+                        </Grid>
+                    </controls:TabViewItem>
+
+                    <controls:TabViewItem x:Name="MeshAppsTabItem" IsClosable="False">
+                        <controls:TabViewItem.Header>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock x:Name="MeshAppsTabHeaderText" Text="Mesh Apps Log"/>
+                                <Ellipse Width="8" Height="8" Fill="LimeGreen" VerticalAlignment="Center"
+                                         Visibility="{x:Bind MeshAppsTabIndicatorVisibility, Mode=OneWay}"/>
+                            </StackPanel>
+                        </controls:TabViewItem.Header>
+                        <Grid RowDefinitions="Auto,*" Padding="12">
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Button Content="Show folder"
+                                        Tag="MeshApps"
+                                        Click="ShowLogFolder_Click"
+                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                <TextBlock Text="Delete older than (days):" VerticalAlignment="Center"/>
+                                <controls:NumberBox Width="96"
+                                                    Value="{x:Bind PositionLogRetentionDaysValue, Mode=TwoWay}"
+                                                    Minimum="1"
+                                                    SpinButtonPlacementMode="Inline"/>
+                                <Button Content="Delete"
+                                        Tag="MeshApps"
+                                        Click="DeleteLogOlder_Click"
+                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                <Button Content="Delete all"
+                                        Tag="MeshApps"
+                                        Click="DeleteLogAll_Click"
+                                        IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                                <TextBlock Text="Neighbor Info, Store &amp; Forward, Range Test, Map Report, Remote Hardware and PAX packets"
+                                           VerticalAlignment="Center"
+                                           Opacity="0.75"/>
+                            </StackPanel>
+                            <TextBox Grid.Row="1"
+                                     Text="{x:Bind MeshAppsLogText, Mode=OneWay}"
                                      IsReadOnly="True"
                                      TextWrapping="Wrap"
                                      AcceptsReturn="True"

@@ -32,6 +32,7 @@ using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
 using MapGeoPoint = MeshVenes.Models.GeoPoint;
+using SortMode = MeshVenes.Services.ListSortMode;
 
 namespace MeshVenes.Pages;
 
@@ -89,10 +90,12 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private bool _environmentMetricsTabIndicator;
     private bool _powerMetricsTabIndicator;
     private bool _detectionSensorTabIndicator;
+    private bool _meshAppsTabIndicator;
 
     private string _environmentMetricsLogText = "No log entries yet.";
     private string _powerMetricsLogText = "No log entries yet.";
     private string _detectionSensorLogText = "No log entries yet.";
+    private string _meshAppsLogText = "No log entries yet.";
 
     internal ObservableCollection<PositionLogEntry> PositionLogEntries { get; } = new();
     private PositionLogEntry? _selectedPositionEntry;
@@ -209,6 +212,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     public bool IsFavoritesFilterEnabled => _filterFavoritesOnly;
     public bool IsLoRaFilterEnabled => _includeLoRa;
     public bool IsMqttFilterEnabled => _includeMqtt;
+    public string ActiveNodeFiltersText => BuildNodeFiltersText();
+    public Visibility ActiveNodeFiltersVisibility => HasNodeFilters() ? Visibility.Visible : Visibility.Collapsed;
 
     public string SelectedTitle => Selected?.Name ?? "Select a node";
     public string SelectedIdHex => Selected?.IdHex ?? "—";
@@ -412,6 +417,17 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         }
     }
 
+    public string MeshAppsLogText
+    {
+        get => _meshAppsLogText;
+        private set
+        {
+            if (_meshAppsLogText == value) return;
+            _meshAppsLogText = value;
+            OnChanged(nameof(MeshAppsLogText));
+        }
+    }
+
     public bool HasPositionSelection => _selectedPositionEntry is not null;
 
     public Visibility DeviceMetricsTabIndicatorVisibility => _deviceMetricsTabIndicator ? Visibility.Visible : Visibility.Collapsed;
@@ -420,6 +436,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     public Visibility EnvironmentMetricsTabIndicatorVisibility => _environmentMetricsTabIndicator ? Visibility.Visible : Visibility.Collapsed;
     public Visibility PowerMetricsTabIndicatorVisibility => _powerMetricsTabIndicator ? Visibility.Visible : Visibility.Collapsed;
     public Visibility DetectionSensorTabIndicatorVisibility => _detectionSensorTabIndicator ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility MeshAppsTabIndicatorVisibility => _meshAppsTabIndicator ? Visibility.Visible : Visibility.Collapsed;
     public Visibility PowerMetricsTabVisibility => AppState.ShowPowerMetricsTab ? Visibility.Visible : Visibility.Collapsed;
     public Visibility DetectionSensorTabVisibility => AppState.ShowDetectionSensorLogTab ? Visibility.Visible : Visibility.Collapsed;
     public Visibility TraceRouteEmptyVisibility => TraceRouteLogEntries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -453,15 +470,6 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     public ObservableCollection<NodeLive> VisibleNodes { get; } = new();
     private readonly ObservableCollection<NodeLive> _allNodes = new();
     private readonly DispatcherTimer _nodeSortRefreshTimer = new();
-
-    private enum SortMode
-    {
-        Alphabetical,
-        HopsAway,
-        LastHeard,
-        FavoritesFirst,
-        MyNodes
-    }
 
     public NodesPage()
     {
@@ -649,6 +657,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         SetTabHeaderBrush(EnvironmentMetricsTabHeaderText, selected == EnvironmentMetricsTabItem);
         SetTabHeaderBrush(PowerMetricsTabHeaderText, selected == PowerMetricsTabItem);
         SetTabHeaderBrush(DetectionSensorTabHeaderText, selected == DetectionSensorTabItem);
+        SetTabHeaderBrush(MeshAppsTabHeaderText, selected == MeshAppsTabItem);
     }
 
     private void SetTabHeaderBrush(TextBlock headerText, bool isActive)
@@ -1205,18 +1214,20 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             OnChanged(nameof(IsSelectedMyNode));
         }
 
-        if (e.PropertyName is nameof(NodeLive.LastHeardUtc) or nameof(NodeLive.LastHeard)
-            or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude) or nameof(NodeLive.LastPositionUtc)
-            or nameof(NodeLive.RSSI) or nameof(NodeLive.SNR) or nameof(NodeLive.ViaMqtt)
-            or nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey)
-            or nameof(NodeLive.IsFavorite) or nameof(NodeLive.IsMyNode) or nameof(NodeLive.NodeNum) or nameof(NodeLive.IsIgnored)
-            or nameof(NodeLive.HopsAway))
+        if (sender is NodeLive changedNode && ShouldRefreshNodeFilter(e.PropertyName, changedNode))
         {
             OnChanged(nameof(NodeCountsText));
             ScheduleFilterApply();
             TriggerMapUpdate();
-            RefreshNodeSorting();
         }
+        else if (e.PropertyName is nameof(NodeLive.RSSI) or nameof(NodeLive.SNR) or nameof(NodeLive.ViaMqtt))
+        {
+            OnChanged(nameof(NodeCountsText));
+            TriggerMapUpdate();
+        }
+
+        if (ShouldRefreshNodeSorting(e.PropertyName))
+            RefreshNodeSorting();
 
         if (sender is NodeLive updatedNode
             && (e.PropertyName is nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude) or nameof(NodeLive.LastPositionUtc)))
@@ -1224,6 +1235,42 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             RefreshNodeDistanceAndDirection();
             TryAppendTrackPoint(updatedNode);
         }
+    }
+
+    private bool ShouldRefreshNodeFilter(string? propertyName, NodeLive node)
+    {
+        if (propertyName is nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey)
+            or nameof(NodeLive.IsFavorite) or nameof(NodeLive.IsMyNode) or nameof(NodeLive.NodeNum) or nameof(NodeLive.IsIgnored)
+            or nameof(NodeLive.Latitude) or nameof(NodeLive.Longitude) or nameof(NodeLive.LastPositionUtc))
+        {
+            return true;
+        }
+
+        if (propertyName is nameof(NodeLive.RSSI) or nameof(NodeLive.ViaMqtt))
+            return HasNodeFilters() || !VisibleNodes.Contains(node);
+
+        if (propertyName is nameof(NodeLive.LastHeardUtc) or nameof(NodeLive.LastHeard))
+            return _hideInactive && !VisibleNodes.Contains(node);
+
+        return false;
+    }
+
+    private bool ShouldRefreshNodeSorting(string? propertyName)
+    {
+        return propertyName switch
+        {
+            nameof(NodeLive.Name) or nameof(NodeLive.ShortName) or nameof(NodeLive.SortNameKey)
+                => _sortMode == SortMode.Alphabetical,
+            nameof(NodeLive.LastHeardUtc) or nameof(NodeLive.LastHeard)
+                => _sortMode == SortMode.LastHeard,
+            nameof(NodeLive.HopsAway)
+                => _sortMode == SortMode.HopsAway,
+            nameof(NodeLive.IsFavorite)
+                => _sortMode == SortMode.FavoritesFirst,
+            nameof(NodeLive.IsMyNode)
+                => _sortMode == SortMode.MyNodes,
+            _ => false
+        };
     }
 
     private void TogglePublicKeyVisibility_Click(object sender, RoutedEventArgs e)
@@ -1486,7 +1533,6 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         EnsureSelectionVisible();
         OnChanged(nameof(NodeCountsText));
-        RefreshNodeSorting();
 #if DEBUG
         Debug.WriteLine($"Nodes filter: all={_allNodes.Count} visible={VisibleNodes.Count} hideInactive={_hideInactive} filter=\"{_filter}\"");
 #endif
@@ -1548,6 +1594,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _filter = SearchBox.Text ?? "";
+        RefreshSortFilterUi();
         RebuildVisibleNodes();
         TriggerMapUpdate();
     }
@@ -1605,6 +1652,21 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         TriggerMapUpdate();
     }
 
+    private void ClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _hideInactive = false;
+        _filterMyNodesOnly = false;
+        _filterFavoritesOnly = false;
+        _includeLoRa = true;
+        _includeMqtt = true;
+        _filter = "";
+        SearchBox.Text = "";
+
+        RefreshSortFilterUi();
+        RebuildVisibleNodes();
+        TriggerMapUpdate();
+    }
+
     private void RefreshSortFilterUi()
     {
         OnChanged(nameof(IsSortByAlphabetical));
@@ -1619,6 +1681,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         OnChanged(nameof(IsFavoritesFilterEnabled));
         OnChanged(nameof(IsLoRaFilterEnabled));
         OnChanged(nameof(IsMqttFilterEnabled));
+        OnChanged(nameof(ActiveNodeFiltersText));
+        OnChanged(nameof(ActiveNodeFiltersVisibility));
     }
 
     private void ApplyNodeSorting()
@@ -1688,72 +1752,16 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private List<NodeLive> SortNodes(List<NodeLive> nodes)
     {
-        return _sortMode switch
-        {
-            SortMode.LastHeard when _sortDescending => nodes
-                .OrderByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(n => n.LastHeardUtc)
-                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.LastHeard => nodes
-                .OrderByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenBy(n => n.LastHeardUtc)
-                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.HopsAway when _sortDescending => nodes
-                .OrderBy(n => n.HopsAway.HasValue ? 0 : 1)
-                .ThenByDescending(n => n.HopsAway ?? int.MinValue)
-                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(n => n.LastHeardUtc)
-                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.HopsAway => nodes
-                .OrderBy(n => n.HopsAway ?? int.MaxValue)
-                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(n => n.LastHeardUtc)
-                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.FavoritesFirst when _sortDescending => nodes
-                .OrderByDescending(n => n.IsFavorite)
-                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(n => n.LastHeardUtc)
-                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.FavoritesFirst => nodes
-                .OrderBy(n => n.IsFavorite ? 1 : 0)
-                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(n => n.LastHeardUtc)
-                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.MyNodes when _sortDescending => nodes
-                .OrderByDescending(n => n.IsMyNode)
-                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(n => n.LastHeardUtc)
-                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.MyNodes => nodes
-                .OrderBy(n => n.IsMyNode ? 1 : 0)
-                .ThenByDescending(n => n.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(n => n.LastHeardUtc)
-                .ThenBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.Alphabetical when _sortDescending => nodes
-                .OrderByDescending(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            _ => nodes
-                .OrderBy(n => n.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(n => n.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList()
-        };
+        return ListSorter.Sort(
+            nodes,
+            _sortMode,
+            _sortDescending,
+            n => n.LastHeardUtc,
+            n => n.HopsAway,
+            n => n.IsFavorite,
+            n => n.IsMyNode,
+            n => n.SortNameKey,
+            n => n.SortIdKey);
     }
 
     private bool HasNodeFilters()
@@ -1783,6 +1791,23 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private bool HasNodeTransportFilter()
         => _includeLoRa != _includeMqtt;
+
+    private string BuildNodeFiltersText()
+    {
+        var filters = new List<string>();
+        if (_hideInactive)
+            filters.Add("Hide inactive");
+        if (_filterMyNodesOnly)
+            filters.Add("My Nodes");
+        if (_filterFavoritesOnly)
+            filters.Add("Favorites");
+        if (HasNodeTransportFilter())
+            filters.Add(_includeMqtt ? "Via MQTT" : "Via LoRa");
+        if (!string.IsNullOrWhiteSpace(_filter))
+            filters.Add($"Search: {_filter.Trim()}");
+
+        return filters.Count == 0 ? "" : $"Filters: {string.Join(", ", filters)}";
+    }
 
     private static bool SetField(ref bool field, bool value)
     {
@@ -2678,6 +2703,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         RefreshEnvironmentMetricsSamples();
         PowerMetricsLogText = ReadLogText(LogKind.PowerMetrics);
         DetectionSensorLogText = ReadLogText(LogKind.DetectionSensor);
+        MeshAppsLogText = ReadLogText(LogKind.MeshApps);
 
         RefreshPositionEntries();
 
@@ -2775,6 +2801,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         SetTabIndicator(LogKind.EnvironmentMetrics, false);
         SetTabIndicator(LogKind.PowerMetrics, false);
         SetTabIndicator(LogKind.DetectionSensor, false);
+        SetTabIndicator(LogKind.MeshApps, false);
     }
 
     private void SetTabIndicator(LogKind kind, bool value)
@@ -2810,6 +2837,11 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 if (_detectionSensorTabIndicator == value) return;
                 _detectionSensorTabIndicator = value;
                 OnChanged(nameof(DetectionSensorTabIndicatorVisibility));
+                break;
+            case LogKind.MeshApps:
+                if (_meshAppsTabIndicator == value) return;
+                _meshAppsTabIndicator = value;
+                OnChanged(nameof(MeshAppsTabIndicatorVisibility));
                 break;
         }
     }
@@ -3824,6 +3856,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             4 => LogKind.EnvironmentMetrics,
             5 => LogKind.PowerMetrics,
             6 => LogKind.DetectionSensor,
+            7 => LogKind.MeshApps,
             _ => null
         };
 
@@ -5006,6 +5039,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             LogKind.EnvironmentMetrics => Path.Combine(baseDir, "environment_metrics"),
             LogKind.PowerMetrics => Path.Combine(baseDir, "power_metrics"),
             LogKind.DetectionSensor => Path.Combine(baseDir, "detection_sensor"),
+            LogKind.MeshApps => Path.Combine(baseDir, "mesh_apps"),
             LogKind.Position => AppDataPaths.GpsPath,
             _ => baseDir
         };
@@ -5025,6 +5059,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             case LogKind.EnvironmentMetrics:
             case LogKind.PowerMetrics:
             case LogKind.DetectionSensor:
+            case LogKind.MeshApps:
                 await DeleteTextLogOlderAsync(kind);
                 break;
         }
@@ -5044,6 +5079,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             case LogKind.EnvironmentMetrics:
             case LogKind.PowerMetrics:
             case LogKind.DetectionSensor:
+            case LogKind.MeshApps:
                 DeleteTextLogAll(kind);
                 break;
         }
@@ -5258,7 +5294,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         TraceRoute,
         EnvironmentMetrics,
         PowerMetrics,
-        DetectionSensor
+        DetectionSensor,
+        MeshApps
     }
 
     private static readonly LogKind[] AllLogKinds =
@@ -5268,7 +5305,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         LogKind.TraceRoute,
         LogKind.EnvironmentMetrics,
         LogKind.PowerMetrics,
-        LogKind.DetectionSensor
+        LogKind.DetectionSensor,
+        LogKind.MeshApps
     ];
 
     private static NodeLogType ToArchiveType(LogKind kind)
@@ -5279,6 +5317,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             LogKind.EnvironmentMetrics => NodeLogType.EnvironmentMetrics,
             LogKind.PowerMetrics => NodeLogType.PowerMetrics,
             LogKind.DetectionSensor => NodeLogType.DetectionSensor,
+            LogKind.MeshApps => NodeLogType.MeshApps,
             _ => NodeLogType.DeviceMetrics
         };
 

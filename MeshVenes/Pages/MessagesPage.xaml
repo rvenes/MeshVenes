@@ -83,11 +83,20 @@
                                               Tag="IncludeMqtt"
                                               IsChecked="{x:Bind IsMqttFilterEnabled, Mode=OneWay}"
                                               Click="FilterOption_Click"/>
+                                    <Button Content="Clear filters"
+                                            HorizontalAlignment="Left"
+                                            Margin="0,6,0,0"
+                                            Visibility="{x:Bind ActiveChatFiltersVisibility, Mode=OneWay}"
+                                            Click="ClearFilters_Click"/>
                                 </StackPanel>
                             </ScrollViewer>
                         </Flyout>
                     </Button.Flyout>
                 </Button>
+                <TextBlock Text="{x:Bind ActiveChatFiltersText, Mode=OneWay}"
+                           Visibility="{x:Bind ActiveChatFiltersVisibility, Mode=OneWay}"
+                           TextTrimming="CharacterEllipsis"
+                           MaxWidth="220"/>
             </StackPanel>
 
 	            <TextBox Grid.Row="4"
