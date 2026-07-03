@@ -227,7 +227,9 @@
                                 <StackPanel Spacing="4"
                                             Visibility="{x:Bind MessageVisibility}">
 	                                    <StackPanel Orientation="Horizontal" Spacing="12">
-	                                        <TextBlock Text="{x:Bind Header}" FontWeight="SemiBold"/>
+	                                        <TextBlock Text="{x:Bind Header}" FontWeight="SemiBold"
+	                                                   Tapped="MessageHeader_Tapped"
+	                                                   ToolTipService.ToolTip="{x:Bind HeaderToolTip, Mode=OneWay}"/>
 	                                        <TextBlock Text="{x:Bind When}" Opacity="0.7"/>
 	                                    </StackPanel>
 

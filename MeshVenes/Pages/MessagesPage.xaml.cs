@@ -899,6 +899,39 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         RequestInitialScrollPosition(force: true);
     }
 
+    private void MessageHeader_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not MessageVm vm)
+            return;
+
+        if (vm.IsMine)
+            return;
+
+        var peer = vm.FromIdHex;
+        if (string.IsNullOrWhiteSpace(peer))
+            peer = ExtractNodeIdFromHeader(vm.Header);
+        if (string.IsNullOrWhiteSpace(peer))
+            return;
+
+        if (!_chatItemsByPeer.TryGetValue(peer, out var chat))
+            return;
+
+        // Make sure the chat survives the visibility filters, then select it so
+        // ChatList_SelectionChanged runs the normal selection bookkeeping.
+        MeshVenes.AppState.SetActiveChatPeer(peer);
+        RebuildVisibleChats();
+        ChatList.SelectedItem = chat;
+    }
+
+    private static string? ExtractNodeIdFromHeader(string? header)
+    {
+        if (string.IsNullOrWhiteSpace(header))
+            return null;
+
+        var match = Regex.Match(header, "0x[0-9a-fA-F]{8}");
+        return match.Success ? match.Value : null;
+    }
+
     private void OpenNodeFromDm_Click(object sender, RoutedEventArgs e)
     {
         if (!TryGetActiveDmPeerIdHex(out var peerIdHex) || string.IsNullOrWhiteSpace(peerIdHex))
@@ -988,6 +1021,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         {
             var local = msg.When.ToLocalTime();
             var isMine = string.Equals(msg.Header, "Me", StringComparison.OrdinalIgnoreCase);
+            var archivedFromIdHex = isMine ? "" : (ExtractNodeIdFromHeader(msg.Header) ?? "");
             var candidate = new MessageVm
             {
                 Header = msg.Header ?? "",
@@ -999,7 +1033,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                 HeardVisible = (isMine && msg.Heard) ? Visibility.Visible : Visibility.Collapsed,
                 DeliveredVisible = (isMine && msg.Delivered) ? Visibility.Visible : Visibility.Collapsed,
                 FailedVisible = (isMine && msg.Failed) ? Visibility.Visible : Visibility.Collapsed,
-                FailureReason = msg.FailureReason ?? ""
+                FailureReason = msg.FailureReason ?? "",
+                FromIdHex = archivedFromIdHex,
+                HeaderToolTip = MessageVm.BuildHeaderToolTip(isMine, archivedFromIdHex)
             };
 
             var dedupeKey = BuildMessageDedupKey(candidate.Header, candidate.Text, candidate.WhenUtc);
@@ -2705,6 +2741,15 @@ public sealed class MessageVm : INotifyPropertyChanged
         set { if (_failureReason != value) { _failureReason = value; OnChanged(nameof(FailureReason)); } }
     }
 
+    public string FromIdHex { get; set; } = "";
+
+    private string? _headerToolTip;
+    public string? HeaderToolTip
+    {
+        get => _headerToolTip;
+        set { if (_headerToolTip != value) { _headerToolTip = value; OnChanged(nameof(HeaderToolTip)); } }
+    }
+
     private bool _isVisible = true;
     public bool IsVisible
     {
@@ -2750,7 +2795,9 @@ public sealed class MessageVm : INotifyPropertyChanged
             FailedVisible = (m.IsMine && m.DeliveryFailed) ? Visibility.Visible : Visibility.Collapsed,
             FailureReason = m.FailureReason ?? "",
             PacketId = m.PacketId,
-            IsMine = m.IsMine
+            IsMine = m.IsMine,
+            FromIdHex = m.FromIdHex ?? "",
+            HeaderToolTip = BuildHeaderToolTip(m.IsMine, m.FromIdHex)
         };
 
     public void UpdateFrom(MessageLive m)
@@ -2765,7 +2812,14 @@ public sealed class MessageVm : INotifyPropertyChanged
         FailureReason = m.FailureReason ?? "";
         PacketId = m.PacketId;
         IsMine = m.IsMine;
+        FromIdHex = m.FromIdHex ?? "";
+        HeaderToolTip = BuildHeaderToolTip(m.IsMine, m.FromIdHex);
     }
+
+    public static string? BuildHeaderToolTip(bool isMine, string? fromIdHex)
+        => !isMine && !string.IsNullOrWhiteSpace(fromIdHex)
+            ? "Click to open a direct message with this node"
+            : null;
 
     private void OnChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
