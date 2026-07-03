@@ -206,6 +206,9 @@ public sealed partial class MainWindow : Window
             case "nodes":
                 ContentFrame.Navigate(typeof(Pages.NodesPage), null, new SuppressNavigationTransitionInfo());
                 break;
+            case "maps":
+                ContentFrame.Navigate(typeof(Pages.MapsPage), null, new SuppressNavigationTransitionInfo());
+                break;
             case "settings":
                 ContentFrame.Navigate(typeof(Pages.SettingsPage), null, new SuppressNavigationTransitionInfo());
                 break;
