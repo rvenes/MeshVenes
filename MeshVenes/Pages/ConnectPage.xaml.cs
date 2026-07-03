@@ -18,10 +18,17 @@ namespace MeshVenes.Pages;
 
 public sealed partial class ConnectPage : Page
 {
+    private const int AutoConnectDelaySeconds = 5;
+
+    // Auto connect runs once per app start, not on every navigation to this page.
+    private static bool s_autoConnectHandled;
+
     private bool _handlersHooked;
     private bool _hasPorts;
     private bool _hasBluetoothDevices;
     private bool _isBluetoothScanning;
+    private DispatcherTimer? _autoConnectTimer;
+    private int _autoConnectSecondsLeft;
 
     public ConnectPage()
     {
@@ -31,9 +38,81 @@ public sealed partial class ConnectPage : Page
 
         TcpHostBox.Text = SettingsStore.GetString(SettingsStore.LastTcpHostKey) ?? "127.0.0.1";
         TcpPortBox.Text = SettingsStore.GetString(SettingsStore.LastTcpPortKey) ?? "4403";
+        AutoConnectCheck.IsChecked = SettingsStore.GetString(SettingsStore.AutoConnectLastKey) == "1";
 
         HookClientEvents();
         UpdateUiFromClient();
+        StartAutoConnectCountdown();
+    }
+
+    private void AutoConnectCheck_Checked(object sender, RoutedEventArgs e)
+        => SettingsStore.SetString(SettingsStore.AutoConnectLastKey, "1");
+
+    private void AutoConnectCheck_Unchecked(object sender, RoutedEventArgs e)
+    {
+        SettingsStore.SetString(SettingsStore.AutoConnectLastKey, "0");
+        CancelAutoConnect("Auto connect cancelled.");
+    }
+
+    private void StartAutoConnectCountdown()
+    {
+        if (s_autoConnectHandled)
+            return;
+
+        s_autoConnectHandled = true;
+
+        if (AutoConnectCheck.IsChecked != true || RadioClient.Instance.IsConnected)
+            return;
+
+        _autoConnectSecondsLeft = AutoConnectDelaySeconds;
+        _autoConnectTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _autoConnectTimer.Tick += AutoConnectTimer_Tick;
+        _autoConnectTimer.Start();
+        StatusText.Text = $"Auto connecting in {_autoConnectSecondsLeft}s...";
+    }
+
+    private async void AutoConnectTimer_Tick(object? sender, object e)
+    {
+        if (RadioClient.Instance.IsConnected)
+        {
+            CancelAutoConnect(null);
+            return;
+        }
+
+        _autoConnectSecondsLeft--;
+        if (_autoConnectSecondsLeft > 0)
+        {
+            StatusText.Text = $"Auto connecting in {_autoConnectSecondsLeft}s...";
+            return;
+        }
+
+        CancelAutoConnect(null);
+        StatusText.Text = "Auto connecting to last used node...";
+        AddLogLineUi("Auto connect: trying last used connection.");
+
+        try
+        {
+            var ok = await SettingsReconnectHelper.TryConnectToSavedEndpointOnceAsync();
+            UpdateUiFromClient();
+            if (!ok)
+                StatusText.Text = "Auto connect failed. Connect manually.";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Auto connect failed: " + ex.Message;
+        }
+    }
+
+    private void CancelAutoConnect(string? statusText)
+    {
+        if (_autoConnectTimer is not null)
+        {
+            _autoConnectTimer.Stop();
+            _autoConnectTimer = null;
+        }
+
+        if (statusText is not null)
+            StatusText.Text = statusText;
     }
 
     private void HookClientEvents()
@@ -125,6 +204,7 @@ public sealed partial class ConnectPage : Page
 
     private async void Connect_Click(object sender, RoutedEventArgs e)
     {
+        CancelAutoConnect(null);
         try
         {
             var port = PortCombo.SelectedItem as string;
@@ -158,6 +238,7 @@ public sealed partial class ConnectPage : Page
 
     private async void TcpConnect_Click(object sender, RoutedEventArgs e)
     {
+        CancelAutoConnect(null);
         try
         {
             var host = TcpHostBox.Text?.Trim();
@@ -199,6 +280,7 @@ public sealed partial class ConnectPage : Page
 
     private async void BluetoothConnect_Click(object sender, RoutedEventArgs e)
     {
+        CancelAutoConnect(null);
         try
         {
             if (BluetoothCombo.SelectedItem is not BluetoothDeviceOption option)
@@ -480,6 +562,7 @@ public sealed partial class ConnectPage : Page
 
     private async void Disconnect_Click(object sender, RoutedEventArgs e)
     {
+        CancelAutoConnect(null);
         try
         {
             await RadioClient.Instance.DisconnectAsync();

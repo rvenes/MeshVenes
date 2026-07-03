@@ -130,6 +130,33 @@ public static class SettingsReconnectHelper
         }
     }
 
+    /// <summary>
+    /// Tries each saved endpoint (preferred connection type first) exactly once,
+    /// without the reboot-oriented waiting used by the post-save reconnect flow.
+    /// </summary>
+    public static async Task<bool> TryConnectToSavedEndpointOnceAsync(CancellationToken ct = default)
+    {
+        if (RadioClient.Instance.IsConnected)
+            return true;
+
+        foreach (var candidate in BuildCandidates())
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                await candidate(ct).ConfigureAwait(false);
+                if (RadioClient.Instance.IsConnected)
+                    return true;
+            }
+            catch
+            {
+                try { await RadioClient.Instance.DisconnectAsync().ConfigureAwait(false); } catch { }
+            }
+        }
+
+        return RadioClient.Instance.IsConnected;
+    }
+
     public static void StartPostSaveReconnectWatchdog(Action<string>? setStatus = null)
     {
         if (Interlocked.CompareExchange(ref _watchdogRunning, 1, 0) != 0)

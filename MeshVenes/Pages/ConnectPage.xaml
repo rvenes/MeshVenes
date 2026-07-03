@@ -71,6 +71,14 @@
                     x:Name="TcpConnectButton"
                     Content="Connect"
                     Click="TcpConnect_Click" />
+            <CheckBox Grid.Row="1"
+                      Grid.Column="3"
+                      Grid.ColumnSpan="3"
+                      x:Name="AutoConnectCheck"
+                      Content="Auto connect last"
+                      ToolTipService.ToolTip="Connect automatically to the last used node 5 seconds after the app starts"
+                      Checked="AutoConnectCheck_Checked"
+                      Unchecked="AutoConnectCheck_Unchecked"/>
 
             <TextBlock Grid.Row="2" Grid.Column="0" Text="Bluetooth:" VerticalAlignment="Center" />
             <ProgressRing Grid.Row="2"

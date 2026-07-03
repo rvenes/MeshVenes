@@ -13,6 +13,7 @@ public static class SettingsStore
     public const string LastTcpPortKey = "LastTcpPort";
     public const string LastBluetoothDeviceIdKey = "LastBluetoothDeviceId";
     public const string LastConnectionTypeKey = "LastConnectionType";
+    public const string AutoConnectLastKey = "AutoConnectLast";
 
     private static readonly object _lock = new();
     private static Dictionary<string, string>? _fallback;
