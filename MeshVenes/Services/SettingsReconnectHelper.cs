@@ -148,13 +148,27 @@ public static class SettingsReconnectHelper
                 if (RadioClient.Instance.IsConnected)
                     return true;
             }
-            catch
+            catch (Exception ex)
             {
+                Log("Connect to saved endpoint failed: " + ex.Message);
                 try { await RadioClient.Instance.DisconnectAsync().ConfigureAwait(false); } catch { }
             }
         }
 
         return RadioClient.Instance.IsConnected;
+    }
+
+    private static Action<Action> BuildRunOnUi()
+    {
+        var dispatcher = MeshVenes.App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher is null)
+            return action => action();
+
+        return action =>
+        {
+            if (!dispatcher.TryEnqueue(() => action()))
+                action();
+        };
     }
 
     public static void StartPostSaveReconnectWatchdog(Action<string>? setStatus = null)
@@ -274,21 +288,27 @@ public static class SettingsReconnectHelper
 
         var entries = new List<(string kind, Func<CancellationToken, Task> connect)>();
 
+        // Incoming FromRadio processing updates UI-bound collections and must be
+        // marshalled to the dispatcher thread; running it inline on the RX pump
+        // thread makes the connection die right after it is established.
+        var runOnUi = BuildRunOnUi();
+        Action<string> logToUi = message => RadioClient.Instance.AddSystemLog(message);
+
         if (!string.IsNullOrWhiteSpace(serialPort))
         {
-            entries.Add(("serial", ct => RadioClient.Instance.ConnectAsync(serialPort, a => a(), _ => { })));
+            entries.Add(("serial", ct => RadioClient.Instance.ConnectAsync(serialPort, runOnUi, logToUi)));
         }
 
         if (!string.IsNullOrWhiteSpace(tcpHost) &&
             int.TryParse(tcpPortText, out var tcpPort) &&
             tcpPort is >= 1 and <= 65535)
         {
-            entries.Add(("tcp", ct => RadioClient.Instance.ConnectTcpAsync(tcpHost, tcpPort, a => a(), _ => { })));
+            entries.Add(("tcp", ct => RadioClient.Instance.ConnectTcpAsync(tcpHost, tcpPort, runOnUi, logToUi)));
         }
 
         if (!string.IsNullOrWhiteSpace(bleId))
         {
-            entries.Add(("ble", ct => RadioClient.Instance.ConnectBluetoothAsync(bleId, "saved device", a => a(), _ => { })));
+            entries.Add(("ble", ct => RadioClient.Instance.ConnectBluetoothAsync(bleId, "saved device", runOnUi, logToUi)));
         }
 
         if (!string.IsNullOrWhiteSpace(preferred))
