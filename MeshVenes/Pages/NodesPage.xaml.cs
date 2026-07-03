@@ -566,6 +566,29 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         RebuildVisibleNodes();
     }
 
+    // "Open node" on the Messages page stores the requested node id and then
+    // navigates here. The page is cached, so the stored value must be applied on
+    // every Loaded, not just in the constructor.
+    private void RestoreRequestedNodeSelection()
+    {
+        var requested = LoadLastSelectedNodeIdHex();
+        if (string.IsNullOrWhiteSpace(requested))
+            return;
+
+        _lastSelectedNodeIdHex = requested;
+
+        if (Selected is not null && string.Equals(Selected.IdHex, requested, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var node = _allNodes.FirstOrDefault(n => string.Equals(n.IdHex, requested, StringComparison.OrdinalIgnoreCase));
+        if (node is null)
+            return;
+
+        NodesList.SelectedItem = node;
+        Selected = node;
+        NodesList.ScrollIntoView(node);
+    }
+
     private void NodesPage_Unloaded(object sender, RoutedEventArgs e)
     {
         MeshVenes.AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
@@ -637,6 +660,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     {
         _pendingAutoFitOnLoad = true;
         ResyncAppStateSubscriptions();
+        RestoreRequestedNodeSelection();
         DisableDetailsTabContentAnimation();
         EnsureSelectedTabVisible();
         UpdateTabHeaderColors();

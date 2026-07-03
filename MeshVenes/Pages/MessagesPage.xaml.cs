@@ -156,6 +156,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         {
             HookAppStateEvents();
             SyncChatsFromAppState();
+            // Channel chat items and the active-chat selection are driven by
+            // events this page misses while unloaded (connect, "Send DM").
+            _ = RefreshChannelDisplayNamesAsync(force: false);
+            ActiveChatChanged();
         };
         Unloaded += (_, __) => UnhookAppStateEvents();
         HookAppStateEvents();
@@ -632,6 +636,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private bool ShouldShowChatItem(NodeLive node)
     {
+        // Sending a DM to the radio this app is connected to makes no sense.
+        if (IsConnectedNode(node))
+            return false;
+
         if (IsHiddenByInactive(node))
             return false;
 
@@ -646,6 +654,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             || (node.IdHex?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
             || (node.ShortId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false);
     }
+
+    private static bool IsConnectedNode(NodeLive node)
+        => !string.IsNullOrWhiteSpace(MeshVenes.AppState.ConnectedNodeIdHex) &&
+           string.Equals(node.IdHex, MeshVenes.AppState.ConnectedNodeIdHex, StringComparison.OrdinalIgnoreCase);
 
     private void ScheduleChatFilterRefresh()
     {
