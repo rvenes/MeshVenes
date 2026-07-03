@@ -11,6 +11,23 @@
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
             <!-- Other app resources here -->
+
+            <!-- Disable the built-in entrance/add animations so list content
+                 appears instantly instead of flying in from the bottom. -->
+            <Style TargetType="ListView">
+                <Setter Property="ItemContainerTransitions">
+                    <Setter.Value>
+                        <TransitionCollection />
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style TargetType="GridView">
+                <Setter Property="ItemContainerTransitions">
+                    <Setter.Value>
+                        <TransitionCollection />
+                    </Setter.Value>
+                </Setter>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
