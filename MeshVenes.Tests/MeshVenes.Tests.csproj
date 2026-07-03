@@ -18,6 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Meshtastic.Core\Meshtastic.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="..\\MeshVenes\\Protocol\\MeshtasticFrameDecoder.cs" Link="Protocol\\MeshtasticFrameDecoder.cs" />
+    <Compile Include="..\\MeshVenes\\Services\\ChannelUrlUtil.cs" Link="Services\\ChannelUrlUtil.cs" />
   </ItemGroup>
 </Project>

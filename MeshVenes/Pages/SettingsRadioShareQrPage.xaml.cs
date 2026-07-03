@@ -120,11 +120,7 @@ public sealed partial class SettingsRadioShareQrPage : Page
                 channelSet.Settings.Add(ch.Settings.Clone());
             }
 
-            var settingsString = channelSet.ToByteArray();
-            var base64 = Convert.ToBase64String(settingsString);
-            var base64url = ToBase64Url(base64);
-            var addPart = ReplaceChannelsCheck.IsChecked == true ? string.Empty : "?add=true";
-            ShareUrlBox.Text = $"https://meshtastic.org/e/{addPart}#{base64url}";
+            ShareUrlBox.Text = ChannelUrlUtil.BuildShareUrl(channelSet, addMode: ReplaceChannelsCheck.IsChecked != true);
             await UpdateQrPreviewAsync(ShareUrlBox.Text);
         }
         catch (Exception ex)
@@ -318,43 +314,7 @@ public sealed partial class SettingsRadioShareQrPage : Page
     }
 
     private static bool TryParseChannelSetFromQrText(string text, out ChannelSet channelSet, out bool addMode)
-    {
-        channelSet = new ChannelSet();
-        addMode = false;
-
-        if (string.IsNullOrWhiteSpace(text))
-            return false;
-
-        var source = text.Trim();
-        string payload;
-
-        if (Uri.TryCreate(source, UriKind.Absolute, out var uri))
-        {
-            payload = uri.Fragment?.StartsWith("#") == true ? uri.Fragment.Substring(1) : "";
-            var query = uri.Query ?? "";
-            addMode = query.IndexOf("add=true", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-        else
-        {
-            var hash = source.LastIndexOf('#');
-            payload = hash >= 0 ? source[(hash + 1)..] : source;
-        }
-
-        if (string.IsNullOrWhiteSpace(payload))
-            return false;
-
-        try
-        {
-            var normalized = FromBase64Url(payload);
-            var data = Convert.FromBase64String(normalized);
-            channelSet = ChannelSet.Parser.ParseFrom(data);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+        => ChannelUrlUtil.TryParseShareUrl(text, out channelSet, out addMode);
 
     private async Task UpdateQrPreviewAsync(string? text)
     {
@@ -442,24 +402,4 @@ public sealed partial class SettingsRadioShareQrPage : Page
         return result?.Text;
     }
 
-    private static string ToBase64Url(string base64)
-    {
-        return (base64 ?? string.Empty)
-            .TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
-    }
-
-    private static string FromBase64Url(string base64Url)
-    {
-        var value = (base64Url ?? string.Empty)
-            .Replace('-', '+')
-            .Replace('_', '/');
-
-        var pad = value.Length % 4;
-        if (pad > 0)
-            value = value.PadRight(value.Length + (4 - pad), '=');
-
-        return value;
-    }
 }
