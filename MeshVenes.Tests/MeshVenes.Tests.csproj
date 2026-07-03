@@ -25,5 +25,6 @@
     <Compile Include="..\\MeshVenes\\Protocol\\MeshtasticFrameDecoder.cs" Link="Protocol\\MeshtasticFrameDecoder.cs" />
     <Compile Include="..\\MeshVenes\\Services\\ChannelUrlUtil.cs" Link="Services\\ChannelUrlUtil.cs" />
     <Compile Include="..\\MeshVenes\\Models\\MessageLive.cs" Link="Models\\MessageLive.cs" />
+    <Compile Include="..\\MeshVenes\\Services\\UpdateVersionUtil.cs" Link="Services\\UpdateVersionUtil.cs" />
   </ItemGroup>
 </Project>
