@@ -21,6 +21,7 @@ using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.System;
+using SortMode = MeshVenes.Services.ListSortMode;
 
 namespace MeshVenes.Pages;
 
@@ -96,6 +97,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     public bool IsFavoritesFilterEnabled => _filterFavoritesOnly;
     public bool IsLoRaFilterEnabled => _includeLoRa;
     public bool IsMqttFilterEnabled => _includeMqtt;
+    public string ActiveChatFiltersText => BuildChatFiltersText();
+    public Visibility ActiveChatFiltersVisibility => HasChatFilters() ? Visibility.Visible : Visibility.Collapsed;
 
     private readonly ChatListItemVm _primaryChatItem = ChatListItemVm.Primary();
     private readonly Dictionary<string, ChatListItemVm> _chatItemsByPeer = new(StringComparer.OrdinalIgnoreCase);
@@ -126,15 +129,6 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     public bool HasAnyChatSelection => _selectedChatItem is not null;
     public bool CanOpenNodeFromDm => TryGetActiveDmPeerIdHex(out _);
     public Visibility OpenNodeFromDmVisibility => CanOpenNodeFromDm ? Visibility.Visible : Visibility.Collapsed;
-
-    private enum SortMode
-    {
-        Alphabetical,
-        HopsAway,
-        LastHeard,
-        FavoritesFirst,
-        MyNodes
-    }
 
     public MessagesPage()
     {
@@ -571,7 +565,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             or nameof(NodeLive.BatteryPercent)
             or nameof(NodeLive.IsPowered))
         {
-            UpdateChatItemFromNode(node);
+            UpdateChatItemFromNode(node, shouldRefreshSorting: ShouldRefreshChatSorting(e.PropertyName));
 
             var shouldRefreshFilter =
                 HasChatFilters()
@@ -612,14 +606,31 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             ChatListItems.Remove(item);
     }
 
-    private void UpdateChatItemFromNode(NodeLive node)
+    private void UpdateChatItemFromNode(NodeLive node, bool shouldRefreshSorting = true)
     {
         if (string.IsNullOrWhiteSpace(node.IdHex))
             return;
 
         if (_chatItemsByPeer.TryGetValue(node.IdHex, out var item))
             item.UpdateFromNode(node);
-        RefreshChatSorting();
+        if (shouldRefreshSorting)
+            RefreshChatSorting();
+    }
+
+    private bool ShouldRefreshChatSorting(string? propertyName)
+    {
+        return propertyName switch
+        {
+            nameof(NodeLive.Name) or nameof(NodeLive.ShortName)
+                => _sortMode == SortMode.Alphabetical,
+            nameof(NodeLive.HopsAway)
+                => _sortMode == SortMode.HopsAway,
+            nameof(NodeLive.IsFavorite)
+                => _sortMode == SortMode.FavoritesFirst,
+            nameof(NodeLive.IsMyNode)
+                => _sortMode == SortMode.MyNodes,
+            _ => false
+        };
     }
 
     private bool ShouldShowChatItem(NodeLive node)
@@ -727,7 +738,6 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             }
 
             EnsureChatSelectionVisible();
-            RefreshChatSorting();
         }
         finally
         {
@@ -1001,6 +1011,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private void ChatSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         _chatFilter = ChatSearchBox.Text ?? "";
+        RefreshSortFilterUi();
         RebuildVisibleChats();
         SyncListToActiveChat();
     }
@@ -1014,6 +1025,21 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             return;
 
         _sortMode = nextMode;
+        RefreshSortFilterUi();
+        RebuildVisibleChats();
+        SyncListToActiveChat();
+    }
+
+    private void ClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _hideInactive = false;
+        _filterMyNodesOnly = false;
+        _filterFavoritesOnly = false;
+        _includeLoRa = true;
+        _includeMqtt = true;
+        _chatFilter = "";
+        ChatSearchBox.Text = "";
+
         RefreshSortFilterUi();
         RebuildVisibleChats();
         SyncListToActiveChat();
@@ -1072,6 +1098,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         OnChanged(nameof(IsFavoritesFilterEnabled));
         OnChanged(nameof(IsLoRaFilterEnabled));
         OnChanged(nameof(IsMqttFilterEnabled));
+        OnChanged(nameof(ActiveChatFiltersText));
+        OnChanged(nameof(ActiveChatFiltersVisibility));
     }
 
     private bool HasChatFilters()
@@ -1101,6 +1129,23 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private bool HasChatTransportFilter()
         => _includeLoRa != _includeMqtt;
+
+    private string BuildChatFiltersText()
+    {
+        var filters = new List<string>();
+        if (_hideInactive)
+            filters.Add("Hide inactive");
+        if (_filterMyNodesOnly)
+            filters.Add("My Nodes");
+        if (_filterFavoritesOnly)
+            filters.Add("Favorites");
+        if (HasChatTransportFilter())
+            filters.Add(_includeMqtt ? "Via MQTT" : "Via LoRa");
+        if (!string.IsNullOrWhiteSpace(_chatFilter))
+            filters.Add($"Search: {_chatFilter.Trim()}");
+
+        return filters.Count == 0 ? "" : $"Filters: {string.Join(", ", filters)}";
+    }
 
     private static bool SetField(ref bool field, bool value)
     {
@@ -1177,72 +1222,16 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
     private List<ChatListItemVm> SortDirectChats(List<ChatListItemVm> items)
     {
-        return _sortMode switch
-        {
-            SortMode.LastHeard when _sortDescending => items
-                .OrderByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.LastHeard => items
-                .OrderByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenBy(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.HopsAway when _sortDescending => items
-                .OrderBy(item => item.HopsSortValue == int.MaxValue ? 1 : 0)
-                .ThenByDescending(item => item.HopsSortValue)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.HopsAway => items
-                .OrderBy(item => item.HopsSortValue)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.FavoritesFirst when _sortDescending => items
-                .OrderByDescending(item => item.IsFavorite)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.FavoritesFirst => items
-                .OrderBy(item => item.IsFavorite ? 1 : 0)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.MyNodes when _sortDescending => items
-                .OrderByDescending(item => item.IsMyNode)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.MyNodes => items
-                .OrderBy(item => item.IsMyNode ? 1 : 0)
-                .ThenByDescending(item => item.LastHeardUtc != DateTime.MinValue)
-                .ThenByDescending(item => item.LastHeardUtc)
-                .ThenBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            SortMode.Alphabetical when _sortDescending => items
-                .OrderByDescending(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList(),
-            _ => items
-                .OrderBy(item => item.SortNameKey, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(item => item.SortIdKey, StringComparer.OrdinalIgnoreCase)
-                .ToList()
-        };
+        return ListSorter.Sort(
+            items,
+            _sortMode,
+            _sortDescending,
+            item => item.LastHeardUtc,
+            item => item.HopsSortValue == int.MaxValue ? null : item.HopsSortValue,
+            item => item.IsFavorite,
+            item => item.IsMyNode,
+            item => item.SortNameKey,
+            item => item.SortIdKey);
     }
 
     private void RefreshChatSorting()

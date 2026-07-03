@@ -11,6 +11,14 @@
             <HyperlinkButton x:Name="UpdateLinkButton"
                              Content="Open latest release"
                              Visibility="Collapsed"/>
+            <HyperlinkButton x:Name="DownloadUpdateButton"
+                             Content="Download update"
+                             Visibility="Collapsed"/>
+            <TextBlock x:Name="ReleaseNotesText"
+                       Visibility="Collapsed"
+                       TextWrapping="Wrap"
+                       FontFamily="Consolas"
+                       MaxHeight="240"/>
 
             <TextBlock TextWrapping="Wrap">
                 MeshVenes is an unofficial desktop app for connecting to Meshtastic radios and working with messages and nodes.

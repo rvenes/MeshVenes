@@ -6,6 +6,7 @@
   </Configurations>
   <Project Path="../Meshtastic.Core/Meshtastic.Core.csproj" />
   <Project Path="../Meshtastic.Transport.Serial/Meshtastic.Transport.Serial.csproj" />
+  <Project Path="../MeshVenes.Tests/MeshVenes.Tests.csproj" />
   <Project Path="MeshVenes.csproj">
     <Platform Solution="*|ARM64" Project="ARM64" />
     <Platform Solution="*|x64" Project="x64" />

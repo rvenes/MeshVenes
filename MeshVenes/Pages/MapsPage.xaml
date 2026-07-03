@@ -1,0 +1,160 @@
+<Page
+    x:Class="MeshVenes.Pages.MapsPage"
+    x:Name="Root"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    xmlns:models="using:MeshVenes.Models">
+
+    <Grid Padding="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="360"/>
+            <ColumnDefinition Width="12"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Grid Grid.Column="0" RowDefinitions="Auto,6,Auto,6,Auto,6,*">
+            <TextBlock Text="Map" FontSize="22" FontWeight="SemiBold"/>
+
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" Opacity="0.85" VerticalAlignment="Center">
+                <TextBlock Text="{x:Bind NodeCountsText, Mode=OneWay}"/>
+                <Button Content="Sort / Filter">
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedLeft">
+                            <ScrollViewer MaxHeight="420" Width="280">
+                                <StackPanel Padding="12" Spacing="10">
+                                    <TextBlock Text="Sort by" FontWeight="SemiBold"/>
+                                    <RadioButton Content="Alphabetical"
+                                                 GroupName="MapSortMode"
+                                                 Tag="Alphabetical"
+                                                 IsChecked="{x:Bind IsSortByAlphabetical, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+                                    <RadioButton Content="Hops away"
+                                                 GroupName="MapSortMode"
+                                                 Tag="HopsAway"
+                                                 IsChecked="{x:Bind IsSortByHopsAway, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+                                    <RadioButton Content="Last heard"
+                                                 GroupName="MapSortMode"
+                                                 Tag="LastHeard"
+                                                 IsChecked="{x:Bind IsSortByLastHeard, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+                                    <RadioButton Content="Favorites"
+                                                 GroupName="MapSortMode"
+                                                 Tag="FavoritesFirst"
+                                                 IsChecked="{x:Bind IsSortByFavorites, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+                                    <RadioButton Content="My Nodes"
+                                                 GroupName="MapSortMode"
+                                                 Tag="MyNodes"
+                                                 IsChecked="{x:Bind IsSortByMyNodes, Mode=OneWay}"
+                                                 Checked="SortModeRadio_Checked"/>
+
+                                    <TextBlock Text="Order" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                                    <RadioButton Content="Ascending"
+                                                 GroupName="MapSortDirection"
+                                                 Tag="Ascending"
+                                                 IsChecked="{x:Bind IsSortAscending, Mode=OneWay}"
+                                                 Checked="SortDirectionRadio_Checked"/>
+                                    <RadioButton Content="Descending"
+                                                 GroupName="MapSortDirection"
+                                                 Tag="Descending"
+                                                 IsChecked="{x:Bind IsSortDescending, Mode=OneWay}"
+                                                 Checked="SortDirectionRadio_Checked"/>
+
+                                    <TextBlock Text="Filters" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                                    <CheckBox Content="Hide inactive"
+                                              Tag="HideInactive"
+                                              IsChecked="{x:Bind IsHideInactiveEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <CheckBox Content="My Nodes"
+                                              Tag="MyNodesOnly"
+                                              IsChecked="{x:Bind IsMyNodesFilterEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <CheckBox Content="Favorites"
+                                              Tag="FavoritesOnly"
+                                              IsChecked="{x:Bind IsFavoritesFilterEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <CheckBox Content="Via LoRa"
+                                              Tag="IncludeLoRa"
+                                              IsChecked="{x:Bind IsLoRaFilterEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <CheckBox Content="Via MQTT"
+                                              Tag="IncludeMqtt"
+                                              IsChecked="{x:Bind IsMqttFilterEnabled, Mode=OneWay}"
+                                              Click="FilterOption_Click"/>
+                                    <Button Content="Clear filters"
+                                            HorizontalAlignment="Left"
+                                            Margin="0,6,0,0"
+                                            Visibility="{x:Bind ActiveMapFiltersVisibility, Mode=OneWay}"
+                                            Click="ClearFilters_Click"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+                <TextBlock Text="{x:Bind ActiveMapFiltersText, Mode=OneWay}"
+                           Visibility="{x:Bind ActiveMapFiltersVisibility, Mode=OneWay}"
+                           TextTrimming="CharacterEllipsis"
+                           MaxWidth="145"/>
+            </StackPanel>
+
+            <TextBox Grid.Row="4"
+                     x:Name="SearchBox"
+                     PlaceholderText="Search (name / id)"
+                     TextChanged="SearchBox_TextChanged"/>
+
+            <ListView Grid.Row="6"
+                      x:Name="NodesList"
+                      ItemsSource="{x:Bind VisibleNodes, Mode=OneWay}"
+                      SelectionMode="Single"
+                      SelectionChanged="NodesList_SelectionChanged"
+                      DoubleTapped="NodesList_DoubleTapped">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="models:NodeLive">
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" Padding="4">
+                            <Ellipse Width="9" Height="9" Fill="{x:Bind TransportBrush}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="{x:Bind LastHeard}" Opacity="0.85"/>
+                                    <TextBlock Text="{x:Bind TransportBadgeText}" Foreground="{x:Bind TransportBrush}"/>
+                                    <TextBlock Text="{x:Bind DistanceDirectionText}" Opacity="0.85"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+
+        <Grid Grid.Column="2" RowDefinitions="Auto,8,*">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Send DM" Click="SendDm_Click" IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                <Button Content="Open node" Click="OpenNode_Click" IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                <Button Content="Zoom to selected" Click="ZoomToSelected_Click" IsEnabled="{x:Bind HasSelection, Mode=OneWay}"/>
+                <Button Content="Fit all" Click="FitAll_Click"/>
+                <Button Content="Reset map" Click="ResetMap_Click"/>
+            </StackPanel>
+
+            <Border Grid.Row="2"
+                    CornerRadius="10"
+                    Background="{ThemeResource CardBackgroundFillColorDefault}">
+                <Grid>
+                    <controls:WebView2 x:Name="MapView"
+                                       HorizontalAlignment="Stretch"
+                                       VerticalAlignment="Stretch"
+                                       MinHeight="500"/>
+                    <TextBlock x:Name="MapFallbackText"
+                               Text="Map assets missing"
+                               Visibility="Collapsed"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"
+                               FontSize="16"
+                               Opacity="0.8"/>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

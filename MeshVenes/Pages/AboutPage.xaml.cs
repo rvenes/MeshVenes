@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -96,6 +97,8 @@ public sealed partial class AboutPage : Page
             {
                 UpdateStatusText.Text = $"Update status: latest on GitHub is {latest.TagName}.";
                 SetReleaseLink(latest.HtmlUrl);
+                SetDownloadLink(latest);
+                SetReleaseNotes(latest);
                 return;
             }
 
@@ -103,17 +106,23 @@ public sealed partial class AboutPage : Page
             {
                 UpdateStatusText.Text = $"Update status: new version available ({latest.TagName}).";
                 SetReleaseLink(latest.HtmlUrl);
+                SetDownloadLink(latest);
+                SetReleaseNotes(latest);
             }
             else
             {
                 UpdateStatusText.Text = $"Update status: you are up to date ({currentVersion}).";
                 UpdateLinkButton.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                DownloadUpdateButton.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+                ReleaseNotesText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
             }
         }
         catch (Exception ex)
         {
             UpdateStatusText.Text = $"Update status: check failed ({ex.Message}).";
             UpdateLinkButton.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+            DownloadUpdateButton.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+            ReleaseNotesText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
         }
     }
 
@@ -138,6 +147,53 @@ public sealed partial class AboutPage : Page
 
         UpdateLinkButton.NavigateUri = new Uri(releaseUrl);
         UpdateLinkButton.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+    }
+
+    private void SetDownloadLink(LatestReleaseDto latest)
+    {
+        var asset = latest.Assets?
+            .Where(a => !string.IsNullOrWhiteSpace(a.BrowserDownloadUrl))
+            .OrderByDescending(a => IsPreferredUpdateAsset(a.Name))
+            .ThenBy(a => a.Name ?? "")
+            .FirstOrDefault();
+
+        if (asset is null)
+        {
+            DownloadUpdateButton.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+            return;
+        }
+
+        DownloadUpdateButton.Content = string.IsNullOrWhiteSpace(asset.Name)
+            ? "Download update"
+            : $"Download {asset.Name}";
+        DownloadUpdateButton.NavigateUri = new Uri(asset.BrowserDownloadUrl!);
+        DownloadUpdateButton.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+    }
+
+    private void SetReleaseNotes(LatestReleaseDto latest)
+    {
+        var notes = latest.Body?.Trim();
+        if (string.IsNullOrWhiteSpace(notes))
+        {
+            ReleaseNotesText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+            return;
+        }
+
+        if (notes.Length > 1800)
+            notes = notes[..1800] + Environment.NewLine + "...";
+
+        ReleaseNotesText.Text = notes;
+        ReleaseNotesText.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+    }
+
+    private static bool IsPreferredUpdateAsset(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+
+        return name.EndsWith(".msix", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".msixbundle", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryParseVersion(string? text, out Version version)
@@ -218,5 +274,20 @@ public sealed partial class AboutPage : Page
 
         [JsonPropertyName("html_url")]
         public string? HtmlUrl { get; set; }
+
+        [JsonPropertyName("body")]
+        public string? Body { get; set; }
+
+        [JsonPropertyName("assets")]
+        public LatestReleaseAssetDto[]? Assets { get; set; }
+    }
+
+    private sealed class LatestReleaseAssetDto
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("browser_download_url")]
+        public string? BrowserDownloadUrl { get; set; }
     }
 }
