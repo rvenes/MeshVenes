@@ -82,7 +82,6 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
     private readonly Dictionary<string, HashSet<LogKind>> _pendingLogIndicatorsByNode = new();
     private string _activeLogScope = AppDataPaths.ActiveNodeScope;
     private static readonly SolidColorBrush ActiveTabHeaderBrush = new(ColorHelper.FromArgb(255, 79, 195, 247));
-    private readonly Brush _inactiveTabHeaderBrush = ResolveDefaultTabHeaderBrush();
 
     private bool _deviceMetricsTabIndicator;
     private bool _positionTabIndicator;
@@ -613,18 +612,6 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         _logPollTimer.Stop();
     }
 
-    private static Brush ResolveDefaultTabHeaderBrush()
-    {
-        if (Application.Current?.Resources is ResourceDictionary resources &&
-            resources.TryGetValue("TextFillColorPrimaryBrush", out var brushObj) &&
-            brushObj is Brush brush)
-        {
-            return brush;
-        }
-
-        return new SolidColorBrush(Colors.White);
-    }
-
     private void AppState_SettingsChanged()
     {
         _ = DispatcherQueue.TryEnqueue(() =>
@@ -662,7 +649,10 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void SetTabHeaderBrush(TextBlock headerText, bool isActive)
     {
-        headerText.Foreground = isActive ? ActiveTabHeaderBrush : _inactiveTabHeaderBrush;
+        if (isActive)
+            headerText.Foreground = ActiveTabHeaderBrush;
+        else
+            headerText.ClearValue(TextBlock.ForegroundProperty);
     }
 
     private async void NodesPage_Loaded(object sender, RoutedEventArgs e)
