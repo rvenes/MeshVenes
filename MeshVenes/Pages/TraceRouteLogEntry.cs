@@ -11,7 +11,7 @@ public sealed class TraceRouteLogEntry : INotifyPropertyChanged
 {
     private static readonly SolidColorBrush ActiveHeaderBrush = new(ColorHelper.FromArgb(255, 79, 195, 247));
     private static readonly SolidColorBrush PassiveHeaderBrush = new(ColorHelper.FromArgb(255, 255, 183, 77));
-    private static readonly SolidColorBrush ForwardPathBrush = new(ColorHelper.FromArgb(255, 224, 224, 224));
+    private static readonly SolidColorBrush ForwardPathBrush = new(ColorHelper.FromArgb(255, 144, 144, 144));
     private static readonly SolidColorBrush BackPathBrush = new(ColorHelper.FromArgb(255, 129, 199, 132));
 
     public event PropertyChangedEventHandler? PropertyChanged;
