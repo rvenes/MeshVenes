@@ -174,7 +174,7 @@ Two files are uploaded manually to `venes.org/meshvenes/`:
 
 1. On startup (and on demand from the About page) the app fetches `version.json` with a cache-busting query string.
 2. If the manifest version is greater than the running version, the user is prompted to update. If the manifest is unreachable, the app falls back to the GitHub releases API for display-only information (no self-update).
-3. On accept, the app downloads the zip to `%LOCALAPPDATA%` under the app data `Updates` folder, verifies the sha256, extracts to a staging folder, writes an `apply-update.cmd` script, starts it, and exits. The script waits for the process to exit, robocopies the staged files over the install folder, and restarts the app.
+3. On accept, the app downloads the zip to `%LOCALAPPDATA%` under the app data `Updates` folder, verifies the sha256, extracts to a staging folder, writes an `apply-update.cmd` script, and starts it. The script waits for the app process to exit, robocopies the staged files over the install folder, and restarts the app. The app does NOT exit automatically: the UI tells the user the update is downloaded and offers "Restart now" (closes the main window so the script can apply the update); otherwise the update is applied the next time the app is closed.
 4. Self-update only works for unpackaged installs in a writable folder (`CanSelfUpdate()`); MSIX/read-only installs only get a download link.
 5. For testing, the manifest URL can be overridden via the `UpdateManifestUrlOverride` settings key.
 

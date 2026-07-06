@@ -44,15 +44,8 @@
             <TextBlock TextWrapping="Wrap">
                 The program is free. Donations are optional and help improve features, stability, testing, and long-term support.
             </TextBlock>
-            <HyperlinkButton Content="Open PayPal donation page"
-                             NavigateUri="https://www.paypal.com/donate/?business=VSSTWS8ETDPXW&amp;no_recurring=0&amp;item_name=MeshVenes+is+free+and+open+source+%28GPLv3%29.+Optional+donations+help+improve+features%2C+stability%2C+and+support.&amp;currency_code=USD"/>
-            <TextBlock Text="Scan QR code:" FontWeight="SemiBold"/>
-            <Image x:Name="PayPalQrImage"
-                   Source="ms-appx:///Assets/paypalqr.png"
-                   Width="220"
-                   Height="220"
-                   Stretch="Uniform"
-                   ImageFailed="PayPalQrImage_ImageFailed"/>
+            <HyperlinkButton Content="Donate via PayPal (paypal.me/rvenes)"
+                             NavigateUri="https://paypal.me/rvenes"/>
         </StackPanel>
     </ScrollViewer>
 </Page>

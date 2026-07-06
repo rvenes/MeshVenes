@@ -4,8 +4,11 @@ using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Protocol;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,11 +21,15 @@ public sealed class MqttProxyService
     private readonly SemaphoreSlim _sync = new(1, 1);
     private readonly MqttFactory _factory = new();
 
+    private const string DefaultTopicRoot = "msh";
+    private const string PublicBrokerHost = "mqtt.meshtastic.org";
+
     private bool _initialized;
     private IMqttClient? _client;
     private ModuleConfig.Types.MQTTConfig _currentConfig = new();
     private uint _connectedNodeNum;
     private string _topicFilter = string.Empty;
+    private IReadOnlyList<string> _topicFilters = Array.Empty<string>();
     private string _configSignature = string.Empty;
     private CancellationTokenSource? _reconnectLoopCts;
     private Task? _reconnectLoopTask;
@@ -103,13 +110,14 @@ public sealed class MqttProxyService
                 .ConfigureAwait(false);
 
             var config = module.Mqtt ?? new ModuleConfig.Types.MQTTConfig();
+            var subscribeFilters = await ResolveSubscribeFiltersAsync(nodeNum, config).ConfigureAwait(false);
             if (_manualSuspend && !forceReconnect)
             {
-                await ApplyConfigWhileSuspendedAsync(nodeNum, config).ConfigureAwait(false);
+                await ApplyConfigWhileSuspendedAsync(nodeNum, config, subscribeFilters).ConfigureAwait(false);
                 return;
             }
 
-            await ApplyConfigAsync(nodeNum, config, forceReconnect).ConfigureAwait(false);
+            await ApplyConfigAsync(nodeNum, config, subscribeFilters, forceReconnect).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -188,7 +196,7 @@ public sealed class MqttProxyService
                 .WithTopic(topic)
                 .WithPayload(payload)
                 .WithRetainFlag(proxyMessage.Retained)
-                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
+                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
                 .Build();
 
             await client.PublishAsync(appMsg, CancellationToken.None).ConfigureAwait(false);
@@ -202,13 +210,95 @@ public sealed class MqttProxyService
         }
     }
 
-    private async Task ApplyConfigAsync(uint nodeNum, ModuleConfig.Types.MQTTConfig config, bool forceReconnect)
+    /// <summary>
+    /// Builds the subscription list the same way the official clients do:
+    /// one filter per downlink-enabled channel ({root}/2/e/{channel}/+, plus
+    /// {root}/2/json/{channel}/+ when JSON is enabled) and always the PKI
+    /// topic for direct messages. Falls back to {root}/2/e/# wildcards when
+    /// the channel list cannot be read.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> ResolveSubscribeFiltersAsync(uint nodeNum, ModuleConfig.Types.MQTTConfig config)
+    {
+        var enabled = config.Enabled && config.ProxyToClientEnabled && !string.IsNullOrWhiteSpace(config.Address);
+        if (!enabled)
+            return Array.Empty<string>();
+
+        var root = GetRootTopic(config);
+        try
+        {
+            var channels = await AdminConfigClient.Instance.GetChannelsAsync(nodeNum).ConfigureAwait(false);
+
+            var presetName = "LongFast";
+            try
+            {
+                var loraConfig = await AdminConfigClient.Instance
+                    .GetConfigAsync(nodeNum, AdminMessage.Types.ConfigType.LoraConfig)
+                    .ConfigureAwait(false);
+                presetName = GetModemPresetName(loraConfig.Lora?.ModemPreset);
+            }
+            catch
+            {
+                // Preset name only matters for unnamed channels; keep the default.
+            }
+
+            var filters = new List<string>();
+            foreach (var channel in channels)
+            {
+                if (channel.Role == Channel.Types.Role.Disabled)
+                    continue;
+                if (channel.Settings?.DownlinkEnabled != true)
+                    continue;
+
+                var name = string.IsNullOrWhiteSpace(channel.Settings.Name)
+                    ? presetName
+                    : channel.Settings.Name.Trim();
+
+                filters.Add($"{root}/2/e/{name}/+");
+                if (config.JsonEnabled)
+                    filters.Add($"{root}/2/json/{name}/+");
+            }
+
+            filters.Add($"{root}/2/e/PKI/+");
+            return filters.Distinct(StringComparer.Ordinal).ToList();
+        }
+        catch
+        {
+            var fallback = new List<string> { $"{root}/2/e/#" };
+            if (config.JsonEnabled)
+                fallback.Add($"{root}/2/json/#");
+            return fallback;
+        }
+    }
+
+    private static string GetRootTopic(ModuleConfig.Types.MQTTConfig config)
+    {
+        var root = (config.Root ?? string.Empty).Trim().TrimEnd('/');
+        return string.IsNullOrWhiteSpace(root) ? DefaultTopicRoot : root;
+    }
+
+    private static string GetModemPresetName(Config.Types.LoRaConfig.Types.ModemPreset? preset) => preset switch
+    {
+        // Deprecated presets are kept so nodes on old firmware still map to
+        // the correct channel topic name.
+#pragma warning disable CS0612
+        Config.Types.LoRaConfig.Types.ModemPreset.LongSlow => "LongSlow",
+        Config.Types.LoRaConfig.Types.ModemPreset.VeryLongSlow => "VLongSlow",
+#pragma warning restore CS0612
+        Config.Types.LoRaConfig.Types.ModemPreset.MediumSlow => "MediumSlow",
+        Config.Types.LoRaConfig.Types.ModemPreset.MediumFast => "MediumFast",
+        Config.Types.LoRaConfig.Types.ModemPreset.ShortSlow => "ShortSlow",
+        Config.Types.LoRaConfig.Types.ModemPreset.ShortFast => "ShortFast",
+        Config.Types.LoRaConfig.Types.ModemPreset.LongModerate => "LongMod",
+        Config.Types.LoRaConfig.Types.ModemPreset.ShortTurbo => "ShortTurbo",
+        _ => "LongFast"
+    };
+
+    private async Task ApplyConfigAsync(uint nodeNum, ModuleConfig.Types.MQTTConfig config, IReadOnlyList<string> subscribeFilters, bool forceReconnect)
     {
         var address = (config.Address ?? string.Empty).Trim();
-        var root = (config.Root ?? string.Empty).Trim();
         var enabled = config.Enabled && config.ProxyToClientEnabled && !string.IsNullOrWhiteSpace(address);
         var brokerText = string.IsNullOrWhiteSpace(address) ? "—" : address;
-        var signature = BuildSignature(config, nodeNum);
+        var signature = BuildSignature(config, nodeNum, subscribeFilters);
 
         await _sync.WaitAsync().ConfigureAwait(false);
         try
@@ -217,7 +307,8 @@ public sealed class MqttProxyService
             _connectedNodeNum = nodeNum;
             _proxyEnabledByConfig = enabled;
             _broker = brokerText;
-            _topicFilter = BuildTopicFilter(root);
+            _topicFilters = subscribeFilters;
+            _topicFilter = string.Join(", ", subscribeFilters);
 
             if (!enabled)
             {
@@ -240,10 +331,9 @@ public sealed class MqttProxyService
         }
     }
 
-    private async Task ApplyConfigWhileSuspendedAsync(uint nodeNum, ModuleConfig.Types.MQTTConfig config)
+    private async Task ApplyConfigWhileSuspendedAsync(uint nodeNum, ModuleConfig.Types.MQTTConfig config, IReadOnlyList<string> subscribeFilters)
     {
         var address = (config.Address ?? string.Empty).Trim();
-        var root = (config.Root ?? string.Empty).Trim();
         var enabled = config.Enabled && config.ProxyToClientEnabled && !string.IsNullOrWhiteSpace(address);
         var brokerText = string.IsNullOrWhiteSpace(address) ? "—" : address;
 
@@ -254,8 +344,9 @@ public sealed class MqttProxyService
             _connectedNodeNum = nodeNum;
             _proxyEnabledByConfig = enabled;
             _broker = brokerText;
-            _topicFilter = BuildTopicFilter(root);
-            _configSignature = BuildSignature(config, nodeNum);
+            _topicFilters = subscribeFilters;
+            _topicFilter = string.Join(", ", subscribeFilters);
+            _configSignature = BuildSignature(config, nodeNum, subscribeFilters);
             await StopInternalLockedAsync("Proxy manually disconnected.", clearConfigEnabled: false).ConfigureAwait(false);
         }
         finally
@@ -276,6 +367,11 @@ public sealed class MqttProxyService
 
     private async Task ReconnectLoopAsync(CancellationToken ct)
     {
+        // Exponential backoff like the official clients: 1s doubling to 30s,
+        // reset after a successful broker session.
+        var reconnectDelay = TimeSpan.FromSeconds(1);
+        var maxReconnectDelay = TimeSpan.FromSeconds(30);
+
         while (!ct.IsCancellationRequested)
         {
             if (!RadioClient.Instance.IsConnected)
@@ -303,6 +399,7 @@ public sealed class MqttProxyService
 
                 await SubscribeCurrentTopicFilterAsync(client, ct).ConfigureAwait(false);
                 SetState("Broker connected (active).", _broker, null);
+                reconnectDelay = TimeSpan.FromSeconds(1);
                 await WaitForDisconnectOrStopAsync(client, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -312,7 +409,8 @@ public sealed class MqttProxyService
             catch (Exception ex)
             {
                 SetState("Broker connection failed.", _broker, ex.Message);
-                await DelaySafeAsync(TimeSpan.FromSeconds(8), ct).ConfigureAwait(false);
+                await DelaySafeAsync(reconnectDelay, ct).ConfigureAwait(false);
+                reconnectDelay = reconnectDelay * 2 > maxReconnectDelay ? maxReconnectDelay : reconnectDelay * 2;
             }
         }
     }
@@ -361,26 +459,41 @@ public sealed class MqttProxyService
             return;
         }
 
-        // Forward only native Meshtastic service-envelope MQTT topics to the node.
-        // Topics like ".../2/json/..." are not service envelopes and trigger parse errors on device.
-        if (!IsForwardableServiceEnvelopeTopic(topic))
-        {
-            Interlocked.Increment(ref _droppedCount);
-            RaiseStateChanged();
-            return;
-        }
-
+        var payload = ReadPayload(arg.ApplicationMessage);
         var proxyMsg = new MqttClientProxyMessage
         {
             Topic = topic,
             Retained = arg.ApplicationMessage.Retain
         };
 
-        var payload = ReadPayload(arg.ApplicationMessage);
-        if (payload.Length > 0)
-            proxyMsg.Data = ByteString.CopyFrom(payload);
+        if (IsJsonTopic(topic))
+        {
+            // JSON topics are forwarded as text (like the official clients),
+            // but only when JSON is enabled and the payload parses as JSON —
+            // binary payloads on json topics would trigger parse errors on
+            // the device.
+            if (!_currentConfig.JsonEnabled || !TryDecodeJsonText(payload, out var jsonText))
+            {
+                Interlocked.Increment(ref _droppedCount);
+                RaiseStateChanged();
+                return;
+            }
+
+            proxyMsg.Text = jsonText;
+        }
+        else if (IsServiceEnvelopeTopic(topic))
+        {
+            if (payload.Length > 0)
+                proxyMsg.Data = ByteString.CopyFrom(payload);
+            else
+                proxyMsg.Text = string.Empty;
+        }
         else
-            proxyMsg.Text = string.Empty;
+        {
+            Interlocked.Increment(ref _droppedCount);
+            RaiseStateChanged();
+            return;
+        }
 
         try
         {
@@ -409,7 +522,7 @@ public sealed class MqttProxyService
         return payload;
     }
 
-    private static bool IsForwardableServiceEnvelopeTopic(string topic)
+    private static bool IsServiceEnvelopeTopic(string topic)
     {
         var normalized = (topic ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(normalized))
@@ -419,28 +532,40 @@ public sealed class MqttProxyService
             || normalized.IndexOf("/2/c/", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    private static string BuildSignature(ModuleConfig.Types.MQTTConfig config, uint nodeNum)
+    private static bool IsJsonTopic(string topic)
+        => (topic ?? string.Empty).IndexOf("/2/json/", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static bool TryDecodeJsonText(byte[] payload, out string jsonText)
+    {
+        jsonText = string.Empty;
+        if (payload.Length == 0)
+            return false;
+
+        try
+        {
+            jsonText = Encoding.UTF8.GetString(payload);
+            using var _ = JsonDocument.Parse(jsonText);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string BuildSignature(ModuleConfig.Types.MQTTConfig config, uint nodeNum, IReadOnlyList<string> subscribeFilters)
     {
         return string.Join("|",
             nodeNum.ToString(CultureInfo.InvariantCulture),
             config.Enabled ? "1" : "0",
             config.ProxyToClientEnabled ? "1" : "0",
             config.TlsEnabled ? "1" : "0",
+            config.JsonEnabled ? "1" : "0",
             config.Address ?? string.Empty,
             config.Root ?? string.Empty,
             config.Username ?? string.Empty,
-            config.Password ?? string.Empty);
-    }
-
-    private static string BuildTopicFilter(string root)
-    {
-        if (string.IsNullOrWhiteSpace(root))
-            return "msh/#";
-
-        if (root.Contains('#') || root.Contains('+'))
-            return root;
-
-        return root.TrimEnd('/') + "/#";
+            config.Password ?? string.Empty,
+            string.Join(",", subscribeFilters));
     }
 
     private async Task WaitForDisconnectOrStopAsync(IMqttClient client, CancellationToken ct)
@@ -451,54 +576,68 @@ public sealed class MqttProxyService
 
     private async Task SubscribeCurrentTopicFilterAsync(IMqttClient client, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_topicFilter))
+        var filters = _topicFilters;
+        if (filters.Count == 0)
             return;
 
-        var options = _factory.CreateSubscribeOptionsBuilder()
-            .WithTopicFilter(f =>
+        var builder = _factory.CreateSubscribeOptionsBuilder();
+        foreach (var filter in filters)
+        {
+            builder.WithTopicFilter(f =>
             {
-                f.WithTopic(_topicFilter);
-                f.WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce);
-            })
-            .Build();
+                f.WithTopic(filter);
+                // Match the official clients: QoS 1 and no-local so the
+                // node's own uplinked packets are not echoed back to it.
+                f.WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce);
+                f.WithNoLocal(true);
+            });
+        }
 
-        await client.SubscribeAsync(options, ct).ConfigureAwait(false);
+        await client.SubscribeAsync(builder.Build(), ct).ConfigureAwait(false);
     }
 
     private static MqttClientOptions BuildClientOptions(ModuleConfig.Types.MQTTConfig config)
     {
         var builder = new MqttClientOptionsBuilder()
-            .WithClientId("MeshVenes-" + Guid.NewGuid().ToString("N"))
+            .WithClientId("MeshVenesMqttProxy-" + Guid.NewGuid().ToString("N"))
             .WithProtocolVersion(MQTTnet.Formatter.MqttProtocolVersion.V500)
+            .WithKeepAlivePeriod(TimeSpan.FromSeconds(30))
             .WithCleanSession(true);
 
-        ConfigureServer(builder, config);
+        // Like the official clients: always use TLS against the public
+        // Meshtastic broker, regardless of the node's tls_enabled flag.
+        var tls = config.TlsEnabled || IsPublicMeshtasticBroker(config.Address);
+
+        ConfigureServer(builder, config, tls);
 
         var username = (config.Username ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(username))
             builder.WithCredentials(username, config.Password ?? string.Empty);
 
-        if (config.TlsEnabled)
-        {
-            builder.WithTlsOptions(o =>
-            {
-                o.UseTls();
-                o.WithAllowUntrustedCertificates(true);
-                o.WithIgnoreCertificateChainErrors(true);
-                o.WithIgnoreCertificateRevocationErrors(true);
-            });
-        }
+        if (tls)
+            builder.WithTlsOptions(o => o.UseTls());
 
         return builder.Build();
     }
 
-    private static void ConfigureServer(MqttClientOptionsBuilder builder, ModuleConfig.Types.MQTTConfig config)
+    private static bool IsPublicMeshtasticBroker(string? address)
+    {
+        var raw = (address ?? string.Empty).Trim();
+        if (raw.Length == 0)
+            return false;
+
+        var afterScheme = raw.Contains("://", StringComparison.Ordinal)
+            ? raw[(raw.IndexOf("://", StringComparison.Ordinal) + 3)..]
+            : raw;
+        var host = afterScheme.Split('/')[0].Split(':')[0];
+        return string.Equals(host, PublicBrokerHost, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ConfigureServer(MqttClientOptionsBuilder builder, ModuleConfig.Types.MQTTConfig config, bool tls)
     {
         var addressRaw = (config.Address ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(addressRaw))
             throw new InvalidOperationException("MQTT address is empty.");
-
-        var tls = config.TlsEnabled;
 
         if (!addressRaw.Contains("://", StringComparison.Ordinal))
             addressRaw = (tls ? "mqtts://" : "mqtt://") + addressRaw;
