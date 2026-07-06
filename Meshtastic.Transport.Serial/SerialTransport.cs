@@ -15,11 +15,14 @@ public sealed class SerialTransport : IRadioTransport
     private CancellationTokenSource? _receiveCts;
     private Task? _receiveLoopTask;
     private int _isDisconnecting;
+    private int _isBroken;
 
     public event Action<string>? Log;
     public event Action<byte[]>? BytesReceived;
 
-    public bool IsConnected => _port?.IsOpen == true;
+    // SerialPort.IsOpen can stay true after a USB unplug, so a broken flag
+    // (set on read/write I/O failures) is needed for loss detection.
+    public bool IsConnected => _port?.IsOpen == true && Volatile.Read(ref _isBroken) == 0;
 
     public SerialTransport(string portName, int baudRate = 115200)
     {
@@ -33,6 +36,7 @@ public sealed class SerialTransport : IRadioTransport
             return Task.CompletedTask;
 
         Interlocked.Exchange(ref _isDisconnecting, 0);
+        Interlocked.Exchange(ref _isBroken, 0);
 
         var port = new SerialPort(_portName, _baudRate)
         {
@@ -140,9 +144,10 @@ public sealed class SerialTransport : IRadioTransport
         {
             port.Write(data, 0, data.Length);
         }
-        catch (ObjectDisposedException) { Log?.Invoke("TX dropped: serial disposed"); return Task.CompletedTask; }
-        catch (NullReferenceException) { Log?.Invoke("TX dropped: serial unavailable"); return Task.CompletedTask; }
-        catch (IOException) { Log?.Invoke("TX dropped: serial I/O unavailable"); return Task.CompletedTask; }
+        catch (ObjectDisposedException) { MarkBroken("TX failed: serial disposed"); return Task.CompletedTask; }
+        catch (NullReferenceException) { MarkBroken("TX failed: serial unavailable"); return Task.CompletedTask; }
+        catch (IOException) { MarkBroken("TX failed: serial I/O unavailable"); return Task.CompletedTask; }
+        catch (InvalidOperationException) { MarkBroken("TX failed: serial port closed"); return Task.CompletedTask; }
 
         Log?.Invoke($"TX {data.Length} bytes");
         return Task.CompletedTask;
@@ -165,14 +170,17 @@ public sealed class SerialTransport : IRadioTransport
             }
             catch (ObjectDisposedException)
             {
+                MarkBroken("Serial read failed: port disposed");
                 break;
             }
             catch (NullReferenceException)
             {
+                MarkBroken("Serial read failed: port unavailable");
                 break;
             }
             catch (IOException)
             {
+                MarkBroken("Serial read failed: I/O error (cable unplugged?)");
                 break;
             }
 
@@ -187,6 +195,15 @@ public sealed class SerialTransport : IRadioTransport
 
             BytesReceived?.Invoke(payload);
         }
+    }
+
+    private void MarkBroken(string reason)
+    {
+        if (Interlocked.Exchange(ref _isBroken, 1) != 0)
+            return;
+
+        if (Volatile.Read(ref _isDisconnecting) == 0)
+            Log?.Invoke(reason);
     }
 
     // Kept for safe explicit unsubscription during shutdown.

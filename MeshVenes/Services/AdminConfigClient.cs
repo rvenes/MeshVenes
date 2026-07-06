@@ -363,6 +363,22 @@ public sealed class AdminConfigClient
         await SendWithoutResponseAsync(adminNodeNum, req, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Sets the node's real-time clock (admin set_time_only, firmware 2.5.5+).
+    /// Useful for nodes without GPS or NTP access.
+    /// </summary>
+    public async Task SetTimeAsync(uint nodeNum, DateTimeOffset time, CancellationToken ct = default)
+    {
+        await EnsureSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);
+
+        var req = new AdminMessage
+        {
+            SetTimeOnly = (uint)time.ToUnixTimeSeconds()
+        };
+
+        await SendWithoutResponseAsync(nodeNum, req, ct).ConfigureAwait(false);
+    }
+
     public async Task RebootNodeAsync(uint nodeNum, int seconds = 0, CancellationToken ct = default)
     {
         await EnsureSessionPasskeyAsync(nodeNum, ct).ConfigureAwait(false);

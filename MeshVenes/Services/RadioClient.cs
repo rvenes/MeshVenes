@@ -46,7 +46,7 @@ public sealed class RadioClient
     private readonly SemaphoreSlim _txSendGate = new(1, 1);
     private readonly SemaphoreSlim _txQueueSpaceSignal = new(0, int.MaxValue);
     private readonly object _txQueueLock = new();
-    private readonly Dictionary<uint, TaskCompletionSource<bool>> _pendingTxQueueResults = new();
+    private readonly Dictionary<uint, TaskCompletionSource<int>> _pendingTxQueueResults = new();
     private int? _txQueueFree;
     private int? _txQueueMaxLen;
     private DateTime _lastTxQueueStatusUtc;
@@ -97,8 +97,8 @@ public sealed class RadioClient
 
     public void ApplyQueueStatus(int? free, int? maxLen, int? res, uint meshPacketId)
     {
-        TaskCompletionSource<bool>? completion = null;
-        bool result = true;
+        TaskCompletionSource<int>? completion = null;
+        int result = 0;
 
         lock (_txQueueLock)
         {
@@ -122,7 +122,7 @@ public sealed class RadioClient
             {
                 _pendingTxQueueResults.Remove(meshPacketId);
                 completion = pending;
-                result = !res.HasValue || res.Value == 0;
+                result = res ?? 0;
             }
         }
 
@@ -131,14 +131,14 @@ public sealed class RadioClient
 
     private void ResetTxQueueState(Exception? pendingFailure = null)
     {
-        List<TaskCompletionSource<bool>> pending;
+        List<TaskCompletionSource<int>> pending;
         lock (_txQueueLock)
         {
             _txQueueFree = null;
             _txQueueMaxLen = null;
             _lastTxQueueStatusUtc = DateTime.MinValue;
             _hasTxQueueStatus = false;
-            pending = new List<TaskCompletionSource<bool>>(_pendingTxQueueResults.Values);
+            pending = new List<TaskCompletionSource<int>>(_pendingTxQueueResults.Values);
             _pendingTxQueueResults.Clear();
         }
 
@@ -187,7 +187,7 @@ public sealed class RadioClient
         }
     }
 
-    private async Task<bool> WaitForQueueResultAsync(uint packetId, TaskCompletionSource<bool> resultSource)
+    private async Task<int> WaitForQueueResultAsync(uint packetId, TaskCompletionSource<int> resultSource)
     {
         using var timeout = new CancellationTokenSource(TxQueueResultWaitTimeout);
         try
@@ -207,8 +207,34 @@ public sealed class RadioClient
 
             // If firmware does not report QueueStatus for this packet, fall back
             // to transport-level success to avoid dropping legitimate sends.
-            return true;
+            return 0;
         }
+    }
+
+    /// <summary>
+    /// Maps the firmware's queue rejection code (a Routing.Error value) to an
+    /// actionable message instead of a bare packet id.
+    /// </summary>
+    private static string BuildQueueRejectionMessage(uint packetId, int res)
+    {
+        var error = (Routing.Types.Error)res;
+        var hint = error switch
+        {
+            Routing.Types.Error.PkiUnknownPubkey or Routing.Types.Error.PkiSendFailPublicKey =>
+                "The radio has no public key for that node yet, so it refuses to encrypt a direct message. " +
+                "Request node info from the node (or wait until it has been heard with its node info), then try again.",
+            Routing.Types.Error.PkiFailed =>
+                "Encryption to that node failed (key mismatch). If the node was reflashed, remove it from the node list so a fresh key can be learned.",
+            Routing.Types.Error.DutyCycleLimit =>
+                "The regional duty cycle limit was reached. Wait a bit before sending again.",
+            Routing.Types.Error.TooLarge => "The message is too large to send.",
+            Routing.Types.Error.RateLimitExceeded => "Sending too fast; wait a moment and try again.",
+            Routing.Types.Error.NoChannel => "The radio has no channel matching this message.",
+            _ => null
+        };
+
+        var baseText = $"Radio rejected packet 0x{packetId:x8} ({error}).";
+        return hint is null ? baseText : $"{baseText} {hint}";
     }
 
     private async Task<bool> SendPacketWithQueueControlAsync(byte[] framedPayload, uint packetId)
@@ -228,10 +254,10 @@ public sealed class RadioClient
                 return false;
             }
 
-            TaskCompletionSource<bool>? queueResult = null;
+            TaskCompletionSource<int>? queueResult = null;
             if (packetId != 0 && HasFreshQueueStatus())
             {
-                queueResult = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                queueResult = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
                 lock (_txQueueLock)
                     _pendingTxQueueResults[packetId] = queueResult;
             }
@@ -276,9 +302,9 @@ public sealed class RadioClient
                         _txQueueFree--;
                 }
 
-                var accepted = await WaitForQueueResultAsync(packetId, queueResult).ConfigureAwait(false);
-                if (!accepted)
-                    throw new IOException($"Radio queue rejected packet 0x{packetId:x8}.");
+                var res = await WaitForQueueResultAsync(packetId, queueResult).ConfigureAwait(false);
+                if (res != 0)
+                    throw new IOException(BuildQueueRejectionMessage(packetId, res));
             }
 
             return true;
@@ -538,6 +564,16 @@ public sealed class RadioClient
 
         try
         {
+            if (transport is SerialTransport)
+            {
+                // Wake the device serial console before the first request,
+                // like the official clients (32 x 0xC3 sync bytes).
+                var wake = new byte[32];
+                Array.Fill(wake, (byte)0xC3);
+                await transport.SendAsync(wake);
+                await System.Threading.Tasks.Task.Delay(100);
+            }
+
             var helloMsg = ToRadioFactory.CreateHelloRequest(1u);
             var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)helloMsg);
             await transport.SendAsync(framed);
@@ -618,9 +654,9 @@ public sealed class RadioClient
 
     private void StartHeartbeatPump(IRadioTransport transport)
     {
-        var shouldHeartbeat = transport is SerialTransport || transport is TcpTransport;
-        if (!shouldHeartbeat)
-            return;
+        // Runs for all transports: keeps the serial/TCP PhoneAPI session
+        // alive and doubles as periodic connection-loss detection (the
+        // IsConnected check below catches BLE drops and USB unplugs).
 
         StopHeartbeatPump();
         _heartbeatNonce = 0;

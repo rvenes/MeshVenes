@@ -61,6 +61,27 @@ public sealed partial class SettingsDeviceDevicePage : Page
         await LoadAsync();
     }
 
+    private async void SetTime_Click(object sender, RoutedEventArgs e)
+    {
+        if (!NodeIdentity.TryGetConnectedNodeNum(out var nodeNum))
+        {
+            StatusText.Text = "Connect to a node before setting the time.";
+            return;
+        }
+
+        try
+        {
+            var now = DateTimeOffset.Now;
+            StatusText.Text = "Setting node time...";
+            await AdminConfigClient.Instance.SetTimeAsync(nodeNum, now);
+            StatusText.Text = $"Node time set to {now:yyyy-MM-dd HH:mm:ss} (local).";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Failed to set node time: " + ex.Message;
+        }
+    }
+
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
         if (!NodeIdentity.TryGetConnectedNodeNum(out var nodeNum))

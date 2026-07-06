@@ -14,6 +14,7 @@ using System.Globalization;
 using System.ComponentModel;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.IO;
@@ -155,8 +156,14 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             _ = RefreshChannelDisplayNamesAsync(force: false);
             ActiveChatChanged();
         };
-        Unloaded += (_, __) => UnhookAppStateEvents();
+        Unloaded += (_, __) =>
+        {
+            UnhookAppStateEvents();
+            CaptureDraftForChat(_selectedChatItem);
+            PersistDrafts();
+        };
         HookAppStateEvents();
+        LoadDraftsFromStore();
 
         _chatFilterRefreshTimer.Interval = TimeSpan.FromMilliseconds(200);
         _chatFilterRefreshTimer.Tick += (_, __) =>
@@ -867,11 +874,15 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             return;
         }
 
+        CaptureDraftForChat(_selectedChatItem);
+
         ChatList.SelectedItem = chat;
         _selectedChatItem = chat;
         if (chat is not null)
             chat.HasLogIndicator = false;
         MeshVenes.AppState.SetActiveChatPeer(chat?.PeerIdHex);
+        RestoreDraftForChat(chat);
+        PersistDrafts();
         _autoScrollEnabled = true;
         ResetPendingMessagesIndicator();
         EnsureChatHistoryLoaded(chat);
@@ -896,8 +907,11 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             return;
         }
 
+        CaptureDraftForChat(_selectedChatItem);
         _selectedChatItem = target;
         MeshVenes.AppState.SetActiveChatPeer(target.PeerIdHex);
+        RestoreDraftForChat(target);
+        PersistDrafts();
         MeshVenes.AppState.MarkChatRead(target.PeerIdHex);
         target.HasLogIndicator = false;
         _autoScrollEnabled = true;
@@ -1774,6 +1788,88 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         EnforceMessageByteLimit();
         UpdateMessageLengthCounter();
         UpdateSendButtonState();
+
+        if (!_suppressDraftCapture && _selectedChatItem is not null)
+            SetDraft(_selectedChatItem.ChatKey, InputBox.Text ?? "");
+    }
+
+    // --- Message drafts: keep unsent text per conversation (like the official apps) ---
+
+    private const string DraftsSettingsKey = "MessageDraftsJson";
+    private Dictionary<string, string> _draftsByChatKey = new(StringComparer.OrdinalIgnoreCase);
+    private bool _suppressDraftCapture;
+
+    private void LoadDraftsFromStore()
+    {
+        try
+        {
+            var json = SettingsStore.GetString(DraftsSettingsKey);
+            if (string.IsNullOrWhiteSpace(json))
+                return;
+
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            if (parsed is not null)
+                _draftsByChatKey = new Dictionary<string, string>(parsed, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            // A corrupt draft store must never break the messages page.
+        }
+    }
+
+    private void PersistDrafts()
+    {
+        try
+        {
+            SettingsStore.SetString(DraftsSettingsKey, JsonSerializer.Serialize(_draftsByChatKey));
+        }
+        catch
+        {
+            // Persisting drafts is best-effort.
+        }
+    }
+
+    private void SetDraft(string chatKey, string text)
+    {
+        if (string.IsNullOrWhiteSpace(chatKey))
+            return;
+
+        if (string.IsNullOrWhiteSpace(text))
+            _draftsByChatKey.Remove(chatKey);
+        else
+            _draftsByChatKey[chatKey] = text;
+    }
+
+    private void CaptureDraftForChat(ChatListItemVm? chat)
+    {
+        if (chat is null)
+            return;
+
+        SetDraft(chat.ChatKey, InputBox.Text ?? "");
+    }
+
+    private void RestoreDraftForChat(ChatListItemVm? chat)
+    {
+        var draft = chat is not null && _draftsByChatKey.TryGetValue(chat.ChatKey, out var text)
+            ? text
+            : "";
+
+        _suppressDraftCapture = true;
+        try
+        {
+            if (!string.Equals(InputBox.Text ?? "", draft, StringComparison.Ordinal))
+            {
+                InputBox.Text = draft;
+                InputBox.SelectionStart = draft.Length;
+            }
+        }
+        finally
+        {
+            _suppressDraftCapture = false;
+        }
+
+        UpdateMessageLengthCounter();
+        UpdateSendButtonState();
     }
 
     private void UpdateMessageLengthCounter()
@@ -1852,6 +1948,12 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
 
         InputBox.Text = "";
         UpdateSendButtonState();
+
+        if (_selectedChatItem is not null)
+        {
+            SetDraft(_selectedChatItem.ChatKey, "");
+            PersistDrafts();
+        }
 
         var peer = MeshVenes.AppState.ActiveChatPeerIdHex;
 
