@@ -1,8 +1,6 @@
 using MeshVenes.Services;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media.Imaging;
 using System;
-using System.IO;
 using System.Threading.Tasks;
 
 namespace MeshVenes.Pages;
@@ -19,54 +17,7 @@ public sealed partial class AboutPage : Page
 
     private async void AboutPage_Loaded(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
-        EnsurePayPalQrImageSource();
         await CheckForUpdatesAsync();
-    }
-
-    private void PayPalQrImage_ImageFailed(object sender, Microsoft.UI.Xaml.ExceptionRoutedEventArgs e)
-    {
-        EnsurePayPalQrImageSource();
-    }
-
-    private void EnsurePayPalQrImageSource()
-    {
-        if (TrySetPayPalQrFromPath(Path.Combine(AppContext.BaseDirectory, "Assets", "paypalqr.png")))
-            return;
-
-        if (TrySetPayPalQrFromPath(Path.Combine(AppContext.BaseDirectory, "paypalqr.png")))
-            return;
-
-        if (TrySetPayPalQrFromUri("ms-appx:///Assets/paypalqr.png"))
-            return;
-    }
-
-    private bool TrySetPayPalQrFromPath(string path)
-    {
-        try
-        {
-            if (!File.Exists(path))
-                return false;
-
-            PayPalQrImage.Source = new BitmapImage(new Uri(path));
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private bool TrySetPayPalQrFromUri(string uriText)
-    {
-        try
-        {
-            PayPalQrImage.Source = new BitmapImage(new Uri(uriText));
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private async void CheckForUpdates_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
@@ -96,8 +47,18 @@ public sealed partial class AboutPage : Page
                 : Microsoft.UI.Xaml.Visibility.Collapsed;
     }
 
+    private bool _updateStaged;
+
     private async void UpdateInstall_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
     {
+        if (_updateStaged)
+        {
+            // Second click ("Restart now"): close the app so the updater
+            // script can apply the staged update and restart.
+            UpdateService.RestartToApplyUpdate();
+            return;
+        }
+
         if (UpdateService.LastResult?.Update is not { } update)
             return;
 
@@ -109,8 +70,14 @@ public sealed partial class AboutPage : Page
             UpdateStatusText.Text = $"Update status: downloading {update.VersionText}...";
 
             var progress = new Progress<double>(value => UpdateProgressBar.Value = value);
-            await UpdateService.DownloadAndInstallAsync(update, progress);
-            // On success the app exits and the updater script takes over.
+            await UpdateService.DownloadAndStageAsync(update, progress);
+
+            _updateStaged = true;
+            UpdateProgressBar.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+            UpdateStatusText.Text = $"Update status: {update.VersionText} downloaded. " +
+                "Restart the app for the update to take effect (it is also applied automatically the next time you close the app).";
+            UpdateInstallButton.Content = "Restart now";
+            UpdateInstallButton.IsEnabled = true;
         }
         catch (Exception ex)
         {

@@ -424,10 +424,11 @@ public sealed class RadioClient
         string deviceId,
         string deviceName,
         Action<Action> runOnUi,
-        Action<string> logToUi)
+        Action<string> logToUi,
+        Func<System.Threading.Tasks.Task<string?>>? pinProvider = null)
     {
         await ConnectWithTransportAsync(
-            new BluetoothLeTransport(deviceId),
+            new BluetoothLeTransport(deviceId, pinProvider),
             $"Bluetooth {deviceName}",
             runOnUi,
             logToUi);

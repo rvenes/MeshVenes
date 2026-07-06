@@ -1,5 +1,6 @@
 using Meshtastic.Core;
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -18,13 +19,23 @@ public sealed class BluetoothLeTransport : IRadioTransport
     // Polling mode avoids that failure path and keeps connection stable.
     private static readonly bool PreferPollingMode = false;
 
-    private static readonly Guid MeshtasticServiceUuid = new("6ba1b218-15a8-461f-9fa8-5dcae273eafd");
+    public static readonly Guid MeshtasticServiceUuid = new("6ba1b218-15a8-461f-9fa8-5dcae273eafd");
     private static readonly Guid ToRadioUuid = new("f75c76d2-129e-4dad-a1dd-7866124401e7");
     private static readonly Guid FromRadioUuid = new("2c55e69e-4993-11ed-b878-0242ac120002");
     private static readonly Guid FromNumUuid = new("ed9da18c-a800-4f66-a670-aa7547e34453");
     private static readonly Guid LegacyFromRadioUuid = new("8ba2bcc2-ee02-4a55-a531-c525c5e454d5");
 
+    /// <summary>
+    /// Device id prefix for connecting by raw BLE address (from an advertisement
+    /// scan) instead of a Windows device id: "bleaddr:" + 12 hex digits.
+    /// </summary>
+    public const string AddressIdPrefix = "bleaddr:";
+
+    /// <summary>Default Meshtastic pairing PIN for devices without a screen.</summary>
+    private const string DefaultPairingPin = "123456";
+
     private readonly string _deviceId;
+    private readonly Func<Task<string?>>? _pinProvider;
     private readonly object _sync = new();
 
     private BluetoothLEDevice? _device;
@@ -44,9 +55,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
     public bool IsConnected => _device is not null && _toRadio is not null && _fromRadio is not null;
 
-    public BluetoothLeTransport(string deviceId)
+    public BluetoothLeTransport(string deviceId, Func<Task<string?>>? pinProvider = null)
     {
         _deviceId = deviceId;
+        _pinProvider = pinProvider;
     }
 
     public async Task ConnectAsync(CancellationToken ct = default)
@@ -65,9 +77,13 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
         try
         {
-            device = await BluetoothLEDevice.FromIdAsync(_deviceId);
+            device = await ResolveDeviceAsync(_deviceId);
             if (device is null)
                 throw new InvalidOperationException("Bluetooth device not found.");
+
+            // Meshtastic firmware requires an encrypted bond before its GATT
+            // characteristics can be used, so pair before service discovery.
+            await TryEnsurePairedAsync(device).ConfigureAwait(false);
 
             service = await TryGetMeshtasticServiceAsync(device);
             if (service is null)
@@ -96,8 +112,6 @@ public sealed class BluetoothLeTransport : IRadioTransport
             }
             else
             {
-                await TryEnsurePairedAsync(_deviceId).ConfigureAwait(false);
-
                 var notifyCandidates = GetNotifyCandidates(fromRadio, fromNum);
                 string? notifyError = null;
                 foreach (var candidate in notifyCandidates)
@@ -108,7 +122,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
                         var enableError = await EnableNotificationsAsync(candidate);
                         if (enableError is not null && IsGattPermissionError(enableError))
                         {
-                            var pairedNow = await TryEnsurePairedAsync(_deviceId).ConfigureAwait(false);
+                            // A permission error while Windows believes we are
+                            // paired usually means a stale bond (device was
+                            // reset or re-flashed) — remove it and pair again.
+                            var pairedNow = await TryEnsurePairedAsync(device, forceRepair: true).ConfigureAwait(false);
                             if (pairedNow)
                                 enableError = await EnableNotificationsAsync(candidate).ConfigureAwait(false);
                         }
@@ -679,44 +696,120 @@ public sealed class BluetoothLeTransport : IRadioTransport
                error.IndexOf("0x80650003", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    private async Task<bool> TryEnsurePairedAsync(string deviceId)
+    private static async Task<BluetoothLEDevice?> ResolveDeviceAsync(string deviceId)
+    {
+        if (deviceId.StartsWith(AddressIdPrefix, StringComparison.OrdinalIgnoreCase) &&
+            ulong.TryParse(deviceId[AddressIdPrefix.Length..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var address))
+        {
+            return await BluetoothLEDevice.FromBluetoothAddressAsync(address);
+        }
+
+        return await BluetoothLEDevice.FromIdAsync(deviceId);
+    }
+
+    /// <summary>
+    /// Ensures the device is bonded. Uses custom pairing so passkey ("provide
+    /// PIN") ceremonies work — Meshtastic devices show a PIN on their screen
+    /// (or use 123456 without one), which the basic PairAsync API cannot
+    /// deliver. With <paramref name="forceRepair"/> an existing (stale) bond
+    /// is removed first and the device is paired again.
+    /// </summary>
+    private async Task<bool> TryEnsurePairedAsync(BluetoothLEDevice device, bool forceRepair = false)
     {
         try
         {
-            var info = await DeviceInformation.CreateFromIdAsync(deviceId);
-            if (info?.Pairing is null)
+            var pairing = device.DeviceInformation?.Pairing;
+            if (pairing is null)
                 return false;
 
-            if (info.Pairing.IsPaired)
-                return true;
+            if (pairing.IsPaired)
+            {
+                if (!forceRepair)
+                    return true;
 
-            if (!info.Pairing.CanPair)
-                return false;
+                Log?.Invoke("BLE: removing stale pairing...");
+                var unpair = await pairing.UnpairAsync();
+                if (unpair.Status != DeviceUnpairingResultStatus.Unpaired &&
+                    unpair.Status != DeviceUnpairingResultStatus.AlreadyUnpaired)
+                {
+                    Log?.Invoke($"BLE: unpair failed ({unpair.Status}).");
+                    return false;
+                }
+            }
 
-            DevicePairingResult pairResult;
+            var custom = pairing.Custom;
+            custom.PairingRequested += Pairing_Requested;
             try
             {
-                pairResult = await info.Pairing.PairAsync(DevicePairingProtectionLevel.Encryption);
-            }
-            catch
-            {
-                pairResult = await info.Pairing.PairAsync();
-            }
+                const DevicePairingKinds kinds =
+                    DevicePairingKinds.ConfirmOnly |
+                    DevicePairingKinds.ProvidePin |
+                    DevicePairingKinds.ConfirmPinMatch;
 
-            if (pairResult.Status == DevicePairingResultStatus.Paired ||
-                pairResult.Status == DevicePairingResultStatus.AlreadyPaired)
-            {
-                Log?.Invoke("BLE: pairing completed.");
-                return true;
-            }
+                var result = await custom.PairAsync(kinds, DevicePairingProtectionLevel.Encryption);
+                if (result.Status == DevicePairingResultStatus.Paired ||
+                    result.Status == DevicePairingResultStatus.AlreadyPaired)
+                {
+                    Log?.Invoke("BLE: pairing completed.");
+                    return true;
+                }
 
-            Log?.Invoke($"BLE: pairing status={pairResult.Status}.");
-            return false;
+                Log?.Invoke($"BLE: pairing status={result.Status}.");
+                return false;
+            }
+            finally
+            {
+                custom.PairingRequested -= Pairing_Requested;
+            }
         }
         catch (Exception ex)
         {
             Log?.Invoke($"BLE: pairing failed: {ex.Message}");
             return false;
+        }
+    }
+
+    private async void Pairing_Requested(DeviceInformationCustomPairing sender, DevicePairingRequestedEventArgs args)
+    {
+        switch (args.PairingKind)
+        {
+            case DevicePairingKinds.ProvidePin:
+            {
+                var deferral = args.GetDeferral();
+                try
+                {
+                    string? pin = null;
+                    if (_pinProvider is not null)
+                    {
+                        try { pin = await _pinProvider().ConfigureAwait(false); }
+                        catch { }
+                    }
+
+                    if (pin is null && _pinProvider is not null)
+                    {
+                        // User cancelled the PIN dialog; let pairing fail.
+                        Log?.Invoke("BLE: pairing cancelled.");
+                        return;
+                    }
+
+                    pin = string.IsNullOrWhiteSpace(pin) ? DefaultPairingPin : pin.Trim();
+                    args.Accept(pin);
+                }
+                finally
+                {
+                    deferral.Complete();
+                }
+                break;
+            }
+
+            case DevicePairingKinds.ConfirmPinMatch:
+                Log?.Invoke($"BLE: confirming PIN {args.Pin}.");
+                args.Accept();
+                break;
+
+            default:
+                args.Accept();
+                break;
         }
     }
 

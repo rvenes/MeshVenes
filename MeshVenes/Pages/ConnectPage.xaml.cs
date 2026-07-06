@@ -16,6 +16,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Devices.Bluetooth;
+using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Enumeration;
 using Windows.Storage;
 
@@ -340,7 +341,7 @@ public sealed partial class ConnectPage : Page
             }
 
             AddLogLineUi($"Connecting to Bluetooth {option.DisplayName}...");
-            await RadioClient.Instance.ConnectBluetoothAsync(option.DeviceId, option.DisplayName, RunOnUi(), LogToUi);
+            await RadioClient.Instance.ConnectBluetoothAsync(option.DeviceId, option.DisplayName, RunOnUi(), LogToUi, PromptBluetoothPinAsync);
 
             SettingsStore.SetString(SettingsStore.LastBluetoothDeviceIdKey, option.DeviceId);
             SettingsStore.SetString(SettingsStore.LastConnectionTypeKey, "ble");
@@ -433,12 +434,7 @@ public sealed partial class ConnectPage : Page
             _hasBluetoothDevices = false;
             UpdateUiFromClient();
 
-            var devices = await ScanBluetoothDevicesAsync();
-
-            var options = devices
-                .Select(d => new BluetoothDeviceOption(
-                    d.Id,
-                    BuildBluetoothDisplayName(d)))
+            var options = (await ScanBluetoothDevicesAsync())
                 .OrderBy(d => GetBluetoothSortKey(d.DisplayName))
                 .ThenBy(d => d.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -492,91 +488,162 @@ public sealed partial class ConnectPage : Page
         }
     }
 
-    private static async Task<IReadOnlyList<DeviceInformation>> ScanBluetoothDevicesAsync()
+    private static async Task<IReadOnlyList<BluetoothDeviceOption>> ScanBluetoothDevicesAsync()
     {
-        const string BleProtocolAqs = "System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\"";
-        var perSelectorTimeout = TimeSpan.FromSeconds(4);
+        // Active advertisement scan finds Meshtastic devices that are powered
+        // on and in range right now, including never-paired ones. The paired
+        // list adds devices Windows knows that may be asleep or out of range.
+        var advertisingTask = ScanAdvertisingMeshtasticAsync(TimeSpan.FromSeconds(6));
+        var pairedTask = FindPairedBleDevicesAsync(TimeSpan.FromSeconds(4));
 
-        var selectors = new[]
+        var advertising = await advertisingTask;
+        var paired = await pairedTask;
+
+        var options = new List<BluetoothDeviceOption>();
+        var matchedAddresses = new HashSet<ulong>();
+
+        foreach (var device in paired)
         {
-            BluetoothLEDevice.GetDeviceSelector(),
-            BluetoothLEDevice.GetDeviceSelectorFromPairingState(true),
-            BluetoothLEDevice.GetDeviceSelectorFromPairingState(false),
-            BleProtocolAqs
-        };
-
-        var byId = new Dictionary<string, DeviceInformation>(StringComparer.OrdinalIgnoreCase);
-        var errors = new List<Exception>();
-        var results = await Task.WhenAll(selectors
-            .Distinct(StringComparer.Ordinal)
-            .Select(selector => ScanSelectorAsync(selector, perSelectorTimeout)));
-        var anySelectorSucceeded = false;
-        foreach (var result in results)
-        {
-            if (result.Error is not null)
-            {
-                errors.Add(result.Error);
-                continue;
-            }
-
-            if (result.TimedOut)
+            if (string.IsNullOrWhiteSpace(device.Id))
                 continue;
 
-            anySelectorSucceeded = true;
+            var address = TryParseAddressFromDeviceId(device.Id);
+            var inRange = address.HasValue && advertising.ContainsKey(address.Value);
+            if (inRange)
+                matchedAddresses.Add(address!.Value);
 
-            foreach (var d in result.Devices)
-            {
-                if (string.IsNullOrWhiteSpace(d.Id))
-                    continue;
+            var name = !string.IsNullOrWhiteSpace(device.Name)
+                ? device.Name.Trim()
+                : inRange && !string.IsNullOrWhiteSpace(advertising[address!.Value])
+                    ? advertising[address!.Value].Trim()
+                    : "(Unnamed device)";
 
-                if (!byId.TryGetValue(d.Id, out var existing))
-                {
-                    byId[d.Id] = d;
-                    continue;
-                }
-
-                // Prefer entries with a readable name.
-                if (string.IsNullOrWhiteSpace(existing.Name) && !string.IsNullOrWhiteSpace(d.Name))
-                    byId[d.Id] = d;
-            }
+            options.Add(new BluetoothDeviceOption(
+                device.Id,
+                inRange ? $"{name} [paired, in range]" : $"{name} [paired]"));
         }
 
-        if (!anySelectorSucceeded && errors.Count > 0)
-            throw new InvalidOperationException($"Bluetooth scan failed: {errors[0].Message}", errors[0]);
+        foreach (var (address, advertisedName) in advertising)
+        {
+            if (matchedAddresses.Contains(address))
+                continue;
 
-        return byId.Values.ToList();
+            var name = string.IsNullOrWhiteSpace(advertisedName)
+                ? FormatBluetoothAddress(address)
+                : advertisedName.Trim();
+
+            options.Add(new BluetoothDeviceOption(
+                $"{BluetoothLeTransport.AddressIdPrefix}{address:X12}",
+                $"{name} [in range]"));
+        }
+
+        return options;
     }
 
-    private static async Task<BluetoothSelectorScanResult> ScanSelectorAsync(string selector, TimeSpan timeout)
+    private static async Task<IReadOnlyDictionary<ulong, string>> ScanAdvertisingMeshtasticAsync(TimeSpan duration)
+    {
+        // Do NOT filter the watcher on the Meshtastic service UUID: the device
+        // name ("Meshtastic_XXXX") arrives in a scan response packet that does
+        // not repeat the service UUID, so a UUID filter would drop exactly the
+        // packets carrying the name. Listen to everything and correlate per
+        // address instead.
+        var names = new System.Collections.Concurrent.ConcurrentDictionary<ulong, string>();
+        var meshtasticAddresses = new System.Collections.Concurrent.ConcurrentDictionary<ulong, byte>();
+        var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Active };
+
+        void OnReceived(BluetoothLEAdvertisementWatcher sender, BluetoothLEAdvertisementReceivedEventArgs args)
+        {
+            var advertisement = args.Advertisement;
+            if (advertisement is null)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(advertisement.LocalName))
+                names[args.BluetoothAddress] = advertisement.LocalName;
+
+            try
+            {
+                if (advertisement.ServiceUuids.Contains(BluetoothLeTransport.MeshtasticServiceUuid))
+                    meshtasticAddresses[args.BluetoothAddress] = 1;
+            }
+            catch (ArgumentException) { }
+        }
+
+        watcher.Received += OnReceived;
+        try
+        {
+            watcher.Start();
+            await Task.Delay(duration);
+        }
+        finally
+        {
+            try { watcher.Stop(); } catch { }
+            watcher.Received -= OnReceived;
+        }
+
+        var found = new Dictionary<ulong, string>();
+        foreach (var address in meshtasticAddresses.Keys)
+            found[address] = names.TryGetValue(address, out var name) ? name : "";
+
+        // Fallback for devices whose scan response was not captured: ask
+        // Windows for the cached GAP device name.
+        foreach (var address in found.Where(kv => string.IsNullOrWhiteSpace(kv.Value)).Select(kv => kv.Key).ToList())
+        {
+            try
+            {
+                using var device = await BluetoothLEDevice.FromBluetoothAddressAsync(address);
+                if (!string.IsNullOrWhiteSpace(device?.Name))
+                    found[address] = device.Name;
+            }
+            catch { }
+        }
+
+        return found;
+    }
+
+    private static async Task<IReadOnlyList<DeviceInformation>> FindPairedBleDevicesAsync(TimeSpan timeout)
     {
         try
         {
-            var queryTask = DeviceInformation.FindAllAsync(selector).AsTask();
+            var queryTask = DeviceInformation.FindAllAsync(
+                BluetoothLEDevice.GetDeviceSelectorFromPairingState(true)).AsTask();
             var completedTask = await Task.WhenAny(queryTask, Task.Delay(timeout));
             if (completedTask != queryTask)
             {
-                // Consume potential late exceptions from timed out discovery task.
+                // Consume potential late exceptions from the timed out query.
                 _ = queryTask.ContinueWith(
                     t => _ = t.Exception,
                     CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted,
                     TaskScheduler.Default);
-                return new BluetoothSelectorScanResult(Array.Empty<DeviceInformation>(), null, true);
+                return Array.Empty<DeviceInformation>();
             }
 
-            return new BluetoothSelectorScanResult(await queryTask, null, false);
+            return (await queryTask).ToList();
         }
-        catch (Exception ex)
+        catch
         {
-            return new BluetoothSelectorScanResult(Array.Empty<DeviceInformation>(), ex, false);
+            return Array.Empty<DeviceInformation>();
         }
     }
 
-    private static string BuildBluetoothDisplayName(DeviceInformation device)
+    private static ulong? TryParseAddressFromDeviceId(string deviceId)
     {
-        var name = string.IsNullOrWhiteSpace(device.Name) ? "(Unnamed device)" : device.Name.Trim();
-        var isPaired = device.Pairing?.IsPaired == true;
-        return isPaired ? $"{name} [paired]" : name;
+        // Windows BLE device ids end with the device MAC: "...-aa:bb:cc:dd:ee:ff".
+        var dash = deviceId.LastIndexOf('-');
+        if (dash < 0 || dash >= deviceId.Length - 1)
+            return null;
+
+        var hex = deviceId[(dash + 1)..].Replace(":", "");
+        return hex.Length == 12 &&
+               ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var address)
+            ? address
+            : null;
+    }
+
+    private static string FormatBluetoothAddress(ulong address)
+    {
+        var hex = address.ToString("X12", CultureInfo.InvariantCulture);
+        return string.Join(":", Enumerable.Range(0, 6).Select(i => hex.Substring(i * 2, 2)));
     }
 
     private static (int group, string name) GetBluetoothSortKey(string displayName)
@@ -876,5 +943,57 @@ public sealed partial class ConnectPage : Page
     }
 
     private sealed record BluetoothDeviceOption(string DeviceId, string DisplayName);
-    private sealed record BluetoothSelectorScanResult(IReadOnlyList<DeviceInformation> Devices, Exception? Error, bool TimedOut);
+
+    /// <summary>
+    /// Asks the user for the Bluetooth pairing PIN. Called from a background
+    /// thread during pairing, so the dialog is marshalled to the UI thread.
+    /// Returns null when the user cancels.
+    /// </summary>
+    private Task<string?> PromptBluetoothPinAsync()
+    {
+        var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var enqueued = DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                var pinBox = new TextBox
+                {
+                    PlaceholderText = "123456",
+                    MaxLength = 6
+                };
+                var panel = new StackPanel { Spacing = 8 };
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "Enter the pairing PIN shown on the device screen. Devices without a screen use 123456.",
+                    TextWrapping = TextWrapping.Wrap
+                });
+                panel.Children.Add(pinBox);
+
+                var dialog = new ContentDialog
+                {
+                    Title = "Bluetooth pairing",
+                    Content = panel,
+                    PrimaryButtonText = "Pair",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = XamlRoot
+                };
+
+                var result = await dialog.ShowAsync();
+                tcs.TrySetResult(result == ContentDialogResult.Primary
+                    ? (string.IsNullOrWhiteSpace(pinBox.Text) ? "123456" : pinBox.Text.Trim())
+                    : null);
+            }
+            catch
+            {
+                tcs.TrySetResult(null);
+            }
+        });
+
+        if (!enqueued)
+            tcs.TrySetResult(null);
+
+        return tcs.Task;
+    }
 }

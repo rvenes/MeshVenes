@@ -83,23 +83,40 @@ public sealed partial class MainWindow : Window
                 XamlRoot = RootGrid.XamlRoot
             };
 
+            var updateStaged = false;
             dialog.PrimaryButtonClick += async (d, args) =>
             {
+                if (updateStaged)
+                {
+                    // Second click ("Restart now"): close the app so the
+                    // updater script can apply the update and restart.
+                    UpdateService.RestartToApplyUpdate();
+                    return;
+                }
+
                 var deferral = args.GetDeferral();
                 try
                 {
+                    args.Cancel = true;
                     d.IsPrimaryButtonEnabled = false;
                     d.CloseButtonText = "";
                     bodyText.Text = $"Downloading MeshVenes {update.VersionText}...";
                     progressBar.Visibility = Visibility.Visible;
 
                     var progress = new Progress<double>(value => progressBar.Value = value);
-                    await UpdateService.DownloadAndInstallAsync(update, progress);
-                    // On success the app exits and the updater script restarts it.
+                    await UpdateService.DownloadAndStageAsync(update, progress);
+
+                    updateStaged = true;
+                    progressBar.Visibility = Visibility.Collapsed;
+                    bodyText.Text = $"MeshVenes {update.VersionText} has been downloaded. " +
+                        "The app must be restarted for the update to take effect. " +
+                        "If you choose Later, the update is applied automatically the next time you close the app.";
+                    d.PrimaryButtonText = "Restart now";
+                    d.IsPrimaryButtonEnabled = true;
+                    d.CloseButtonText = "Later";
                 }
                 catch (Exception ex)
                 {
-                    args.Cancel = true;
                     bodyText.Text = $"Update failed: {ex.Message}\n\nYou can update manually from the About page or GitHub.";
                     progressBar.Visibility = Visibility.Collapsed;
                     d.IsPrimaryButtonEnabled = true;

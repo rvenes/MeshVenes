@@ -223,10 +223,11 @@ public static class UpdateService
 
     /// <summary>
     /// Downloads and verifies the update zip, extracts it to a staging folder,
-    /// launches the updater script, and exits the app so the script can replace
-    /// the install folder and restart.
+    /// and launches the updater script. The script waits for this process to
+    /// exit, then replaces the install folder and restarts the app — so the
+    /// caller must tell the user a restart is required and offer to do it.
     /// </summary>
-    public static async Task DownloadAndInstallAsync(UpdateInfo update, IProgress<double>? downloadProgress = null, CancellationToken ct = default)
+    public static async Task DownloadAndStageAsync(UpdateInfo update, IProgress<double>? downloadProgress = null, CancellationToken ct = default)
     {
         if (update is null)
             throw new ArgumentNullException(nameof(update));
@@ -267,6 +268,21 @@ public static class UpdateService
 
         if (Process.Start(startInfo) is null)
             throw new InvalidOperationException("Could not start the updater script.");
+    }
+
+    /// <summary>
+    /// Closes the app so the pending updater script can apply the staged
+    /// update and restart. Window.Close() runs normal shutdown handlers;
+    /// Application.Exit() alone does not reliably end the process.
+    /// </summary>
+    public static void RestartToApplyUpdate()
+    {
+        var window = MeshVenes.App.MainWindowInstance;
+        if (window is not null)
+        {
+            window.Close();
+            return;
+        }
 
         Microsoft.UI.Xaml.Application.Current.Exit();
     }
