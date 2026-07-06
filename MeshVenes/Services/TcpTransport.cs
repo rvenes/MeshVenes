@@ -38,7 +38,11 @@ public sealed class TcpTransport : IRadioTransport
 
         Interlocked.Exchange(ref _isDisconnecting, 0);
 
-        var client = new TcpClient();
+        var client = new TcpClient
+        {
+            NoDelay = true
+        };
+        client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
         await client.ConnectAsync(_host, _portNumber, ct).ConfigureAwait(false);
         var stream = client.GetStream();
 

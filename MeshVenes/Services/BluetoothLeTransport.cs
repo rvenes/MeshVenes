@@ -49,11 +49,14 @@ public sealed class BluetoothLeTransport : IRadioTransport
     private Task? _pollTask;
     private uint _lastFromNum;
     private int _isDisconnecting;
+    private int _isBroken;
 
     public event Action<string>? Log;
     public event Action<byte[]>? BytesReceived;
 
-    public bool IsConnected => _device is not null && _toRadio is not null && _fromRadio is not null;
+    public bool IsConnected =>
+        _device is not null && _toRadio is not null && _fromRadio is not null &&
+        Volatile.Read(ref _isBroken) == 0;
 
     public BluetoothLeTransport(string deviceId, Func<Task<string?>>? pinProvider = null)
     {
@@ -67,6 +70,7 @@ public sealed class BluetoothLeTransport : IRadioTransport
             return;
 
         Interlocked.Exchange(ref _isDisconnecting, 0);
+        Interlocked.Exchange(ref _isBroken, 0);
 
         BluetoothLEDevice? device = null;
         GattDeviceService? service = null;
@@ -177,6 +181,8 @@ public sealed class BluetoothLeTransport : IRadioTransport
                 _pollCts = new CancellationTokenSource();
             }
 
+            device.ConnectionStatusChanged += Device_ConnectionStatusChanged;
+
             Log?.Invoke($"Connected to Bluetooth LE {device.Name}");
             if (fromNum is not null)
             {
@@ -210,6 +216,18 @@ public sealed class BluetoothLeTransport : IRadioTransport
             catch (COMException) { }
             throw;
         }
+    }
+
+    private void Device_ConnectionStatusChanged(BluetoothLEDevice sender, object args)
+    {
+        if (sender.ConnectionStatus != BluetoothConnectionStatus.Disconnected)
+            return;
+
+        if (Interlocked.Exchange(ref _isBroken, 1) != 0)
+            return;
+
+        if (Volatile.Read(ref _isDisconnecting) == 0)
+            Log?.Invoke("BLE: device connection lost (out of range or powered off).");
     }
 
     public async Task DisconnectAsync()
@@ -253,6 +271,11 @@ public sealed class BluetoothLeTransport : IRadioTransport
             catch (COMException) { }
             catch (OperationCanceledException) { }
         }
+
+        try { device.ConnectionStatusChanged -= Device_ConnectionStatusChanged; }
+        catch (ObjectDisposedException) { }
+        catch (NullReferenceException) { }
+        catch (COMException) { }
 
         if (notifyCharacteristic is not null)
         {
