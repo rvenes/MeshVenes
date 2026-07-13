@@ -1,18 +1,19 @@
-name: Build MeshVenes
+name: CI MeshVenes
 
 on:
   push:
     branches:
       - main
-  release:
-    types:
-      - created
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
-    permissions:
-      contents: write
 
     env:
       CONFIGURATION: Release
@@ -20,7 +21,6 @@ jobs:
       RUNTIME: win-x64
       PROJECT_PATH: MeshVenes/MeshVenes.csproj
       PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish\win-x64
-      ZIP_PATH: ${{ github.workspace }}\artifacts\MeshVenes-win-x64-release.zip
 
     steps:
       - name: Checkout
@@ -57,7 +57,7 @@ jobs:
         shell: pwsh
         run: dotnet test MeshVenes.Tests/MeshVenes.Tests.csproj -c $env:CONFIGURATION -p:Platform=x64
 
-      - name: Publish self-contained win-x64
+      - name: Validate self-contained win-x64 publish
         shell: pwsh
         run: |
           dotnet publish $env:PROJECT_PATH `
@@ -69,51 +69,3 @@ jobs:
             --no-restore `
             /p:PublishReadyToRun=false `
             -o $env:PUBLISH_DIR
-
-      - name: Zip publish output (release only)
-        if: github.event_name == 'release'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path (Split-Path -Parent $env:ZIP_PATH) -Force | Out-Null
-          if (Test-Path $env:ZIP_PATH) { Remove-Item $env:ZIP_PATH -Force }
-          Compress-Archive -Path "$env:PUBLISH_DIR\*" -DestinationPath $env:ZIP_PATH -Force
-
-      - name: Prepare venes.org upload (release only)
-        if: github.event_name == 'release'
-        shell: pwsh
-        env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
-          RELEASE_BODY: ${{ github.event.release.body }}
-          RELEASE_URL: ${{ github.event.release.html_url }}
-        run: |
-          $version = $env:TAG_NAME.TrimStart('v', 'V')
-          $venesDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\venes-upload'
-          New-Item -ItemType Directory -Path $venesDir -Force | Out-Null
-          $zipName = "MeshVenes-$version-win-x64.zip"
-          $zipDest = Join-Path $venesDir $zipName
-          Copy-Item $env:ZIP_PATH $zipDest
-          $notes = $env:RELEASE_BODY
-          if ($notes -and $notes.Length -gt 1000) { $notes = $notes.Substring(0, 1000) }
-          [ordered]@{
-            version    = $version
-            url        = "https://venes.org/meshvenes/$zipName"
-            sha256     = (Get-FileHash $zipDest -Algorithm SHA256).Hash.ToLowerInvariant()
-            sizeBytes  = (Get-Item $zipDest).Length
-            notes      = $notes
-            releaseUrl = $env:RELEASE_URL
-          } | ConvertTo-Json | Set-Content (Join-Path $venesDir 'version.json') -Encoding utf8NoBOM
-
-      - name: Upload venes.org package (release only)
-        if: github.event_name == 'release'
-        uses: actions/upload-artifact@v6
-        with:
-          name: venes-upload
-          path: artifacts/venes-upload
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload ZIP to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ env.ZIP_PATH }}
