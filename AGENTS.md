@@ -1,197 +1,87 @@
-# CODEX Rules (MeshVenes)
+# MeshVenes agent instructions
 
-## Core principles
+## Project and environment
 
-1. Prefer minimal diffs: change only what is required to satisfy the request.
-   - If the request genuinely needs larger changes, do them, but keep them tightly scoped and explain the tradeoff.
-2. English only inside the repo for: source code, identifiers, comments, UI text, commit messages, and documentation.
-3. This repository is a **.NET 8 WinUI 3** project. Keep changes compatible with that stack unless explicitly upgraded with approval.
-4. Ask questions when anything is unclear or requires a decision (UI/UX, behavior, naming, edge cases, data format, etc.).
-5. Work safely: avoid destructive operations and do not overwrite or discard work unless it is clearly safe.
+- MeshVenes is a .NET 8 WinUI 3 application for Windows.
+- The primary development environment is Windows 11. Use PowerShell and run commands from the repository root.
+- Normal development, testing, packaging, and publishing for MeshVenes happen on Windows. The Mac and `SyncMacPC` are not part of the normal MeshVenes flow.
+- If a task genuinely requires Mac work, cross-machine transfer, or Syncthing, follow the private development-environment instructions configured outside the repository. Private instructions must never be copied into this repository or committed.
 
-## Language Rules
+## Communication and repository language
 
-1. Explanations and chat responses: Norwegian (Nynorsk preferred).
-2. ALL source code, identifiers, comments, UI text, and commit messages: English only.
-3. Never generate Norwegian text inside code or UI.
+- Chat with the user in Norwegian, preferably Nynorsk.
+- Use English for all repository content: source code, identifiers, comments, UI text, documentation, branch names, commit messages, and pull requests.
 
-## Change scope
+## Working style
 
-- Default: minimal, targeted edits.
-- Allowed when necessary: larger refactors or multi-file changes **only** when they clearly reduce bugs, improve stability, or are required by the feature/fix.
-- Avoid unrelated cleanups.
+- Implement the requested outcome completely while keeping the diff focused.
+- Preserve unrelated user changes and never discard or overwrite them.
+- Make safe, reasonable assumptions when details are minor. Ask only when a missing decision could materially change behavior, data, user experience, or release safety.
+- Avoid unrelated cleanup and broad refactors unless they are necessary for correctness or clearly reduce risk.
+- Add dependencies only when they materially improve the project. Prefer maintained Microsoft-supported libraries with clear licensing and explain any meaningful tradeoff.
 
-## Frameworks / libraries
+## Validation
 
-- Default: do **not** introduce new frameworks, UI libraries, or architectural patterns.
-- Exception: if a new dependency would make the app **materially better** (stability, performance, accessibility, maintainability, UX), it may be proposed.
-  - Before adding it, ask for approval and provide:
-    - What it solves and why current stack is insufficient
-    - Cost/risks (size, complexity, licensing, maintenance)
-    - Minimal integration plan
-  - Prefer Microsoft-supported, well-maintained libraries with clear licensing.
+Run validation appropriate to the change before handing work back. For normal code changes, use the actual project paths:
 
-## Build / validation (required)
+```powershell
+dotnet restore MeshVenes\MeshVenes.csproj -r win-x64 -p:Platform=x64
+dotnet build MeshVenes\MeshVenes.csproj -c Release -p:Platform=x64 --no-restore
+dotnet test MeshVenes.Tests\MeshVenes.Tests.csproj -c Release -p:Platform=x64
+```
 
-After making changes, validate locally so the user does not need to discover basic failures manually:
+For release or packaging changes, also validate the self-contained publish:
 
-1. Ensure the solution builds (no compilation errors).
-2. If tests exist, run them.
-3. If a specific packaging/build configuration is relevant, validate that path too.
+```powershell
+dotnet publish MeshVenes\MeshVenes.csproj -c Release -f net8.0-windows10.0.19041.0 -r win-x64 -p:Platform=x64 --self-contained true /p:PublishReadyToRun=false -o <temporaryPublishDirectory>
+```
 
-Use standard .NET CLI commands from repo root (examples, adjust to the solution layout):
+- A release ZIP must contain `MeshVenes.exe` at the ZIP root.
+- If a relevant check cannot run, state exactly what was not run and why.
 
-- dotnet --info
-- dotnet restore
-- dotnet build -c Debug
-- dotnet test (only if tests exist)
+## Versioning
 
-If a build/test cannot be run in the current environment, state exactly what could not be run and why, and still keep changes minimal and safe.
+- Bump the application version when explicitly preparing a new distributable release, not for every pull request or push.
+- Documentation, tests, CI/workflow changes, and internal refactors do not require a version bump unless they are part of a requested release.
+- For a release, keep these properties in `MeshVenes/MeshVenes.csproj` aligned: `Version`, `AssemblyVersion`, `FileVersion`, and `AssemblyInformationalVersion`.
+- Update `MeshVenes/Package.appxmanifest` only if packaged distribution is explicitly reintroduced.
+- Use a patch bump by default unless the user requests another version.
 
-## Version bump rule (required)
+## Git and pull requests
 
-Before commit/push for changes that are intended to go to GitHub and trigger GitHub Actions artifacts/releases, bump the app version.
+- Inspect the working tree before editing and include only task-related files in commits.
+- Continue on the current pull-request branch while that pull request is open.
+- For new work after a merge, update `main`, verify a clean working tree, and create a focused `codex/<name>` branch.
+- When the user asks to publish changes, commit the validated task files, push the branch, and open or update a draft pull request. No fixed approval phrase is required.
+- After a pull request is merged, synchronize local `main` before starting unrelated work.
+- Do not force-push, rewrite shared history, hard-reset user work, or delete branches unless explicitly requested.
 
-When the user asks for a version bump, or when preparing changes for GitHub push/release flow, update all relevant version sources so About and packaged builds show the same new version:
+## Distribution and releases
 
-- `MeshVenes.csproj`: `Version`, `AssemblyVersion`, `FileVersion`, `AssemblyInformationalVersion`
-- `MeshVenes/Package.appxmanifest`: `<Identity Version="...">`
+- MeshVenes is distributed as an unsigned, self-contained Windows ZIP. Do not build or publish MSIX, MSIXBundle, or APPX packages unless the user explicitly changes this policy and provides a signing plan.
+- GitHub Actions is CI only. It may build, test, and validate publishing, but it must not retain build artifacts or create releases.
+- Create a release only when the user explicitly requests publication. Follow the private release safeguards configured outside the repository without copying them into the repository.
 
-Never bump only one location.
-Default bump level: patch version, unless the user explicitly requests a different version.
+Release flow:
 
-## Git operations (automation)
+1. Bump the version and complete the build and tests locally on Windows.
+2. Publish to a temporary directory outside the configured web-publishing directory.
+3. ZIP the publish directory contents as `MeshVenes-<version>-win-x64.zip`, with `MeshVenes.exe` at the ZIP root.
+4. Calculate SHA-256 and generate `version.json` with `version`, `url`, `sha256`, `sizeBytes`, `notes`, and `releaseUrl`.
+5. Create or update the GitHub release with the verified ZIP using `gh`; use that release URL in `version.json`.
+6. Copy the verified ZIP and `version.json` directly to the configured local MeshVenes web-publishing directory, then verify the copied size and SHA-256.
+7. WinSCP uploads changes from that folder automatically. Confirm the public manifest and ZIP before reporting success.
 
-Codex should handle the full Git workflow so the user can simply review a PR link and then pull/merge from GitHub.
+- Do not use an intermediate release staging directory or retain release files as GitHub Actions artifacts.
+- Publish only when the user explicitly asks for it.
+- Keep Git tags as release history even when obsolete binary assets are removed.
 
-### Safety rules
+## Self-update behavior
 
-- Run git commands only when safe and unambiguous.
-- Never use: force push, hard reset, rewriting history, deleting remote branches, rebasing shared branches, or mass file rewrites unless explicitly requested.
-- Never delete anything if there is uncertainty.
-- If the working tree is not clean, stop and ask what to do.
-
-### Standard workflow (run from repo root)
-
-1. Update main:
-
-- git switch main
-- git pull
-
-2. Create a branch with the required Codex prefix:
-
-- git switch -c codex/<name>
-
-3. Implement changes + validate build/tests (see section above).
-
-4. Commit:
-
-- git add -A
-- git commit -m "<English technical message>"
-
-5. Push and provide a PR link:
-
-- git push -u origin codex/<name>
-
-Then provide the GitHub URL to open a PR (or use `gh pr create` only if GitHub CLI is installed and authenticated).
-
-6. Do not delete the local branch automatically.
-   - After the PR is merged, suggest cleanup commands, but do not run them unless asked:
-     - git switch main
-     - git pull
-     - git branch -d codex/<name>
-
-### Post-merge reset workflow (required)
-
-When the user confirms the PR is merged and asks to prepare for new work:
-
-1. `git switch main`
-2. `git pull`
-3. Verify clean state (`git status`)
-4. Create a fresh feature branch for the next task only when the user is ready to start coding:
-   - `git switch -c codex/<next-name>`
-
-When the user confirms the PR is already merged on GitHub, Codex should perform steps 1-3 automatically before doing any further repo work, as long as the working tree is clean or the state can be advanced safely without discarding changes.
-
-## Manual approval before commit & push (mandatory)
-
-After implementing changes and successfully validating the build/tests:
-
-1. STOP before running:
-   - git add
-   - git commit
-   - git push
-
-2. Provide a concise summary including:
-   - Files changed
-   - What was implemented
-   - Build/test status
-   - Any assumptions or UI decisions
-
-3. Clearly instruct the user how to proceed by printing exactly:
-
-To continue, reply with:
-Approved – proceed with commit and push
-
-4. Only after the user replies exactly:
-
-Approved – proceed with commit and push
-
-Then execute the standard Git workflow:
-
-- git switch main
-- git pull
-- git switch -c codex/<name>
-- git add -A
-- git commit -m "<English technical message>"
-- git push -u origin codex/<name>
-
-Then provide the GitHub PR link.
-
-Never push automatically without explicit approval.
-
-## Branch hygiene (required)
-
-- If continuing work for an open PR, stay on that PR branch and keep working there until the user asks to reset after merge.
-- If starting a new task and the previous PR is already merged, switch to `main`, pull, verify a clean working tree, then create a fresh `codex/<name>` branch before editing.
-- Do not keep coding on an outdated branch if the intended work should land through a different active PR branch.
-- During post-merge cleanup, never discard uncommitted work. If cleanup would overwrite local changes, stop and preserve them safely before advancing branches.
-- Do not delete merged local branches automatically during cleanup. Only delete them if the user explicitly asks.
-
-## App self-update (venes.org/meshvenes)
-
-The app updates itself from a static feed hosted at `https://venes.org/meshvenes/`. The implementation lives in `MeshVenes/Services/UpdateService.cs`.
-
-### Feed layout on venes.org
-
-Two files are uploaded manually to `venes.org/meshvenes/`:
-
-- `version.json` — manifest describing the latest version:
-  - `version` (e.g. `"1.4.8"`), `url` (absolute URL to the zip), `sha256` (lowercase hex of the zip), `sizeBytes`, `notes`, `releaseUrl`
-- `MeshVenes-<version>-win-x64.zip` — full zip of the self-contained win-x64 publish output (must contain `MeshVenes.exe` at the zip root)
-
-### How the check works
-
-1. On startup (and on demand from the About page) the app fetches `version.json` with a cache-busting query string.
-2. If the manifest version is greater than the running version, the user is prompted to update. If the manifest is unreachable, the app falls back to the GitHub releases API for display-only information (no self-update).
-3. On accept, the app downloads the zip to `%LOCALAPPDATA%` under the app data `Updates` folder, verifies the sha256, extracts to a staging folder, writes an `apply-update.cmd` script, and starts it. The script waits for the app process to exit, robocopies the staged files over the install folder, and restarts the app. The app does NOT exit automatically: the UI tells the user the update is downloaded and offers "Restart now" (closes the main window so the script can apply the update); otherwise the update is applied the next time the app is closed.
-4. Self-update only works for unpackaged installs in a writable folder (`CanSelfUpdate()`); MSIX/read-only installs only get a download link.
-5. For testing, the manifest URL can be overridden via the `UpdateManifestUrlOverride` settings key.
-
-### Building the upload package locally
-
-1. Bump the version (see version bump rule) and build/publish:
-   `dotnet publish MeshVenes/MeshVenes.csproj -c Release -f net8.0-windows10.0.19041.0 -r win-x64 -p:Platform=x64 --self-contained true -o <publishDir>`
-2. Zip the publish folder contents (not the folder itself) as `MeshVenes-<version>-win-x64.zip`.
-3. Generate `version.json` with the new version, URL `https://venes.org/meshvenes/<zipName>`, sha256, and size.
-4. Place both files in `H:\Koding\venes-upload` for the user to upload to `venes.org/meshvenes/`.
-
-The GitHub Actions workflow (`.github/workflows/build-release.yml`) produces the same two files as a `venes-upload` artifact when a GitHub release is created (version taken from the release tag).
-
-## Environment assumptions
-
-- Windows 11
-- Repository path: `H:\Koding\MeshVenes`
-- Git is executed from Windows PowerShell in the repo root.
-- Do not use WSL paths like `/mnt/h/...`.
-- Do not use `git -C <path>`.
+- The implementation lives in `MeshVenes/Services/UpdateService.cs`.
+- The application reads `https://venes.org/meshvenes/version.json` with cache busting.
+- The manifest points to `https://venes.org/meshvenes/MeshVenes-<version>-win-x64.zip` and includes its lowercase SHA-256 and exact byte size.
+- Updates are downloaded, size-checked, hash-verified, extracted to staging, and applied after the app exits.
+- Self-update is available only for unpackaged installations in writable folders. Packaged or read-only installations receive a download link instead.
+- If the static manifest is unavailable, the GitHub releases API is a display-only fallback; it does not perform self-update.
+- Tests may override the manifest URL through the `UpdateManifestUrlOverride` settings key.
