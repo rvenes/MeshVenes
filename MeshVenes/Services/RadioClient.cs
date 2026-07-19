@@ -22,8 +22,13 @@ public sealed class RadioClient
     private static readonly TimeSpan TxQueueSpaceWaitTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan TxQueueResultWaitTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan TxQueueStatusFreshWindow = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan TransportDisconnectTimeout = TimeSpan.FromSeconds(10);
 
     private IRadioTransport? _transport;
+    private readonly RadioConnectionStateMachine _connectionStateMachine = new();
+    private readonly SemaphoreSlim _connectionGate = new(1, 1);
+    private readonly object _connectCancellationLock = new();
+    private CancellationTokenSource? _activeConnectCts;
     private readonly SerialTextDecoder _decoder = new();
     private readonly MeshtasticFrameDecoder _frameDecoder = new();
     private int _disconnecting;
@@ -42,6 +47,7 @@ public sealed class RadioClient
     private Action<byte[]>? _transportBytesHandler;
     private CancellationTokenSource? _heartbeatCts;
     private Task? _heartbeatTask;
+    private readonly AsyncLocal<bool> _isHeartbeatPumpContext = new();
     private uint _heartbeatNonce;
     private readonly SemaphoreSlim _txSendGate = new(1, 1);
     private readonly SemaphoreSlim _txQueueSpaceSignal = new(0, int.MaxValue);
@@ -52,23 +58,37 @@ public sealed class RadioClient
     private DateTime _lastTxQueueStatusUtc;
     private bool _hasTxQueueStatus;
 
-    public bool IsConnected { get; private set; }
-    public bool IsReconnecting { get; private set; }
-    public string? PortName { get; private set; }
+    public RadioConnectionState ConnectionState => _connectionStateMachine.Current;
+    public bool IsConnected => ConnectionState.IsConnected;
+    public bool IsReconnecting => ConnectionState.Status == RadioConnectionStatus.Reconnecting;
+    public string? PortName => ConnectionState.Endpoint;
 
     public ObservableCollection<string> LogLines { get; } = new();
 
     public event Action? ConnectionChanged;
 
-    private RadioClient() { }
-
-    public void SetReconnectingState(bool reconnecting)
+    private RadioClient()
     {
-        if (IsReconnecting == reconnecting)
-            return;
+        _connectionStateMachine.Changed += _ => ConnectionChanged?.Invoke();
+    }
 
-        IsReconnecting = reconnecting;
-        ConnectionChanged?.Invoke();
+    public async Task PrepareForReconnectAsync(CancellationToken ct = default)
+    {
+        await DisconnectInternalAsync(
+            finalStatus: RadioConnectionStatus.Reconnecting,
+            failureReason: null,
+            expectedTransport: null,
+            ct).ConfigureAwait(false);
+    }
+
+    public void CompleteReconnect(string? failureReason = null)
+    {
+        _connectionStateMachine.TryTransitionFrom(
+            RadioConnectionStatus.Reconnecting,
+            string.IsNullOrWhiteSpace(failureReason)
+                ? RadioConnectionStatus.Disconnected
+                : RadioConnectionStatus.Failed,
+            errorMessage: failureReason);
     }
 
     private static bool IsTransportNotConnectedException(Exception ex)
@@ -77,22 +97,28 @@ public sealed class RadioClient
                ioe.Message.IndexOf("Not connected", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    private async Task MarkConnectionLostAsync(string? reason = null)
+    private async Task MarkConnectionLostAsync(
+        IRadioTransport expectedTransport,
+        string? reason = null)
     {
-        if (!IsConnected && _transport is null)
+        if (Volatile.Read(ref _disconnecting) != 0 ||
+            !ReferenceEquals(_transport, expectedTransport))
+        {
             return;
+        }
 
         try
         {
-            await DisconnectAsync().ConfigureAwait(false);
+            await DisconnectInternalAsync(
+                finalStatus: RadioConnectionStatus.Failed,
+                failureReason: reason ?? "Connection lost.",
+                expectedTransport,
+                CancellationToken.None).ConfigureAwait(false);
         }
         catch
         {
             // Best-effort cleanup after transport loss.
         }
-
-        IsConnected = false;
-        ResetTxQueueState(new IOException(reason ?? "Connection lost."));
     }
 
     public void ApplyQueueStatus(int? free, int? maxLen, int? res, uint meshPacketId)
@@ -250,7 +276,7 @@ public sealed class RadioClient
 
             if (!transport.IsConnected)
             {
-                await MarkConnectionLostAsync("Connection lost.").ConfigureAwait(false);
+                await MarkConnectionLostAsync(transport, "Connection lost.").ConfigureAwait(false);
                 return false;
             }
 
@@ -267,7 +293,7 @@ public sealed class RadioClient
                 await transport.SendAsync(framedPayload).ConfigureAwait(false);
                 if (!transport.IsConnected)
                 {
-                    await MarkConnectionLostAsync("Connection lost.").ConfigureAwait(false);
+                    await MarkConnectionLostAsync(transport, "Connection lost.").ConfigureAwait(false);
                     return false;
                 }
             }
@@ -287,7 +313,7 @@ public sealed class RadioClient
 
                 if (IsTransportNotConnectedException(ex) || !transport.IsConnected)
                 {
-                    await MarkConnectionLostAsync(ex.Message).ConfigureAwait(false);
+                    await MarkConnectionLostAsync(transport, ex.Message).ConfigureAwait(false);
                     return false;
                 }
 
@@ -424,26 +450,30 @@ public sealed class RadioClient
     public async System.Threading.Tasks.Task ConnectAsync(
         string port,
         Action<Action> runOnUi,
-        Action<string> logToUi)
+        Action<string> logToUi,
+        CancellationToken ct = default)
     {
         await ConnectWithTransportAsync(
             new SerialTransport(port),
             port,
             runOnUi,
-            logToUi);
+            logToUi,
+            ct).ConfigureAwait(false);
     }
 
     public async System.Threading.Tasks.Task ConnectTcpAsync(
         string host,
         int port,
         Action<Action> runOnUi,
-        Action<string> logToUi)
+        Action<string> logToUi,
+        CancellationToken ct = default)
     {
         await ConnectWithTransportAsync(
             new TcpTransport(host, port),
             $"TCP {host}:{port}",
             runOnUi,
-            logToUi);
+            logToUi,
+            ct).ConfigureAwait(false);
     }
 
     public async System.Threading.Tasks.Task ConnectBluetoothAsync(
@@ -451,97 +481,67 @@ public sealed class RadioClient
         string deviceName,
         Action<Action> runOnUi,
         Action<string> logToUi,
-        Func<System.Threading.Tasks.Task<string?>>? pinProvider = null)
+        Func<System.Threading.Tasks.Task<string?>>? pinProvider = null,
+        CancellationToken ct = default)
     {
         await ConnectWithTransportAsync(
             new BluetoothLeTransport(deviceId, pinProvider),
             $"Bluetooth {deviceName}",
             runOnUi,
-            logToUi);
+            logToUi,
+            ct).ConfigureAwait(false);
     }
 
-    public async System.Threading.Tasks.Task DisconnectAsync()
+    public Task DisconnectAsync(CancellationToken ct = default)
+        => DisconnectInternalAsync(
+            RadioConnectionStatus.Disconnected,
+            failureReason: null,
+            expectedTransport: null,
+            ct);
+
+    private void CancelActiveConnect()
     {
-        var transport = _transport;
-        if (transport is null)
-            return;
-
-        Interlocked.Exchange(ref _disconnecting, 1);
-        IsConnected = false;
-        ConnectionChanged?.Invoke();
-
-        if (_transportLogHandler is not null)
-            transport.Log -= _transportLogHandler;
-        if (_transportBytesHandler is not null)
-            transport.BytesReceived -= _transportBytesHandler;
-
-        _transportLogHandler = null;
-        _transportBytesHandler = null;
-        ResetTxQueueState(new IOException("Disconnected."));
-
-        StopHeartbeatPump();
-
-        if (transport is SerialTransport && transport.IsConnected)
+        lock (_connectCancellationLock)
         {
-            try
-            {
-                var disconnectMsg = ToRadioFactory.CreateDisconnectNotice();
-                var disconnectFrame = MeshtasticWire.Wrap((Google.Protobuf.IMessage)disconnectMsg);
-                await transport.SendAsync(disconnectFrame).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Optional notice; ignore on shutdown.
-            }
+            try { _activeConnectCts?.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
-
-        StopRxPump();
-        await transport.DisconnectAsync();
-        _transport = null;
-
-        PortName = null;
-        MeshVenes.AppState.SetConnectedNodeIdHex(null);
     }
 
-    private async System.Threading.Tasks.Task ConnectWithTransportAsync(
-        IRadioTransport transport,
-        string endpointName,
-        Action<Action> runOnUi,
-        Action<string> logToUi)
+    private async Task DisconnectInternalAsync(
+        RadioConnectionStatus finalStatus,
+        string? failureReason,
+        IRadioTransport? expectedTransport,
+        CancellationToken ct)
     {
-        if (IsConnected)
-            return;
-
-        Interlocked.Exchange(ref _disconnecting, 0);
-        StopHeartbeatPump();
-        ResetTxQueueState();
-
-        PortName = endpointName;
-        _transport = transport;
-
-        StartRxPump(runOnUi, logToUi);
-
-        _transportLogHandler = msg => logToUi(msg);
-        _transportBytesHandler = bytes =>
-        {
-            if (Volatile.Read(ref _disconnecting) != 0 || !IsConnected)
-                return;
-
-            lock (_rxQueueLock)
-                _rxQueue.Enqueue(bytes);
-
-            _rxQueueSignal.Release();
-        };
-
-        transport.Log += _transportLogHandler;
-        transport.BytesReceived += _transportBytesHandler;
-
+        CancelActiveConnect();
+        await _connectionGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await transport.ConnectAsync();
-        }
-        catch
-        {
+            if (expectedTransport is not null && !ReferenceEquals(_transport, expectedTransport))
+                return;
+
+            var transport = _transport;
+            var endpoint = ConnectionState.Endpoint;
+            if (transport is null)
+            {
+                if (ConnectionState.Status != finalStatus)
+                {
+                    _connectionStateMachine.TransitionTo(
+                        finalStatus,
+                        endpoint,
+                        failureReason);
+                }
+
+                MeshVenes.AppState.SetConnectedNodeIdHex(null);
+                return;
+            }
+
+            _connectionStateMachine.TransitionTo(
+                RadioConnectionStatus.Disconnecting,
+                endpoint);
+            Interlocked.Exchange(ref _disconnecting, 1);
+
             if (_transportLogHandler is not null)
                 transport.Log -= _transportLogHandler;
             if (_transportBytesHandler is not null)
@@ -549,42 +549,253 @@ public sealed class RadioClient
 
             _transportLogHandler = null;
             _transportBytesHandler = null;
-            ResetTxQueueState(new IOException("Connection failed."));
-            StopHeartbeatPump();
-            StopRxPump();
             _transport = null;
-            PortName = null;
-            try { await transport.DisconnectAsync(); } catch { }
-            throw;
-        }
 
-        IsConnected = true;
-        ConnectionChanged?.Invoke();
-        MeshVenes.AppState.SetConnectedNodeIdHex(null);
+            ResetTxQueueState(new IOException(failureReason ?? "Disconnected."));
+            StopHeartbeatPump();
+
+            if (transport is SerialTransport &&
+                finalStatus == RadioConnectionStatus.Disconnected &&
+                transport.IsConnected)
+            {
+                try
+                {
+                    var disconnectMsg = ToRadioFactory.CreateDisconnectNotice();
+                    var disconnectFrame = MeshtasticWire.Wrap((Google.Protobuf.IMessage)disconnectMsg);
+                    await transport.SendAsync(disconnectFrame, ct).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Optional notice; ignore on shutdown.
+                }
+            }
+
+            StopRxPump();
+            try
+            {
+                await AwaitTransportCleanupAsync(
+                    transport.DisconnectAsync(),
+                    "Transport disconnect").ConfigureAwait(false);
+            }
+            finally
+            {
+                MeshVenes.AppState.SetConnectedNodeIdHex(null);
+                _connectionStateMachine.TransitionTo(
+                    finalStatus,
+                    endpoint,
+                    failureReason);
+            }
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
+    private async Task AwaitTransportCleanupAsync(Task cleanupTask, string operation)
+    {
+        try
+        {
+            await cleanupTask.WaitAsync(TransportDisconnectTimeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _ = cleanupTask.ContinueWith(
+                completed => _ = completed.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            AddSystemLog(
+                $"{operation} timed out after {TransportDisconnectTimeout.TotalSeconds:0} seconds.");
+        }
+    }
+
+    private async System.Threading.Tasks.Task ConnectWithTransportAsync(
+        IRadioTransport transport,
+        string endpointName,
+        Action<Action> runOnUi,
+        Action<string> logToUi,
+        CancellationToken ct)
+    {
+        CancellationTokenSource? connectCts = null;
+        var reconnectAttempt = false;
+        var gateAcquired = false;
+        var retainTransport = false;
+        try
+        {
+            await _connectionGate.WaitAsync(ct).ConfigureAwait(false);
+            gateAcquired = true;
+
+            if (IsConnected)
+                throw new InvalidOperationException($"Already connected to {PortName}.");
+
+            var status = ConnectionState.Status;
+            if (status == RadioConnectionStatus.Disconnecting)
+                throw new InvalidOperationException("Cannot connect while disconnecting.");
+
+            reconnectAttempt = status == RadioConnectionStatus.Reconnecting;
+            if (!reconnectAttempt)
+            {
+                _connectionStateMachine.TransitionTo(
+                    RadioConnectionStatus.Connecting,
+                    endpointName);
+            }
+            else
+            {
+                _connectionStateMachine.TransitionTo(
+                    RadioConnectionStatus.Reconnecting,
+                    endpointName);
+            }
+
+            connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            lock (_connectCancellationLock)
+                _activeConnectCts = connectCts;
+
+            Interlocked.Exchange(ref _disconnecting, 0);
+            StopHeartbeatPump();
+            ResetTxQueueState();
+            _transport = transport;
+
+            StartRxPump(runOnUi, logToUi);
+
+            _transportLogHandler = msg =>
+            {
+                logToUi(msg);
+                if (Volatile.Read(ref _disconnecting) == 0 &&
+                    IsConnected &&
+                    !transport.IsConnected)
+                {
+                    _ = MarkConnectionLostAsync(transport, msg);
+                }
+            };
+            _transportBytesHandler = bytes =>
+            {
+                if (Volatile.Read(ref _disconnecting) != 0 || !IsConnected)
+                    return;
+
+                lock (_rxQueueLock)
+                    _rxQueue.Enqueue(bytes);
+
+                _rxQueueSignal.Release();
+            };
+
+            transport.Log += _transportLogHandler;
+            transport.BytesReceived += _transportBytesHandler;
+
+            try
+            {
+                await transport.ConnectAsync(connectCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await CleanupFailedConnectAsync(transport, ex).ConfigureAwait(false);
+
+                var cancelled = connectCts.IsCancellationRequested;
+                if (reconnectAttempt && !cancelled)
+                {
+                    _connectionStateMachine.TransitionTo(
+                        RadioConnectionStatus.Reconnecting,
+                        endpointName,
+                        ex.Message);
+                }
+                else
+                {
+                    _connectionStateMachine.TransitionTo(
+                        cancelled
+                            ? RadioConnectionStatus.Disconnected
+                            : RadioConnectionStatus.Failed,
+                        endpointName,
+                        cancelled ? null : ex.Message);
+                }
+
+                throw;
+            }
+
+            _connectionStateMachine.TransitionTo(
+                RadioConnectionStatus.Connected,
+                endpointName);
+            retainTransport = true;
+            MeshVenes.AppState.SetConnectedNodeIdHex(null);
+
+            try
+            {
+                if (transport is SerialTransport)
+                {
+                    // Wake the device serial console before the first request,
+                    // like the official clients (32 x 0xC3 sync bytes).
+                    var wake = new byte[32];
+                    Array.Fill(wake, (byte)0xC3);
+                    await transport.SendAsync(wake, connectCts.Token).ConfigureAwait(false);
+                    await System.Threading.Tasks.Task.Delay(100, connectCts.Token).ConfigureAwait(false);
+                }
+
+                var helloMsg = ToRadioFactory.CreateHelloRequest(1u);
+                var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)helloMsg);
+                await transport.SendAsync(framed, connectCts.Token).ConfigureAwait(false);
+                logToUi("Sent ToRadio: WantConfigId=1");
+            }
+            catch (Exception ex)
+            {
+                logToUi($"Failed to send ToRadio hello: {ex.Message}");
+                if (!transport.IsConnected)
+                    _ = MarkConnectionLostAsync(transport, ex.Message);
+            }
+
+            if (ReferenceEquals(_transport, transport) && IsConnected)
+                StartHeartbeatPump(transport);
+        }
+        finally
+        {
+            lock (_connectCancellationLock)
+            {
+                if (ReferenceEquals(_activeConnectCts, connectCts))
+                    _activeConnectCts = null;
+            }
+
+            connectCts?.Dispose();
+            try
+            {
+                if (gateAcquired)
+                    _connectionGate.Release();
+            }
+            finally
+            {
+                if (!retainTransport)
+                {
+                    try
+                    {
+                        await AwaitTransportCleanupAsync(
+                            transport.DisposeAsync().AsTask(),
+                            "Transport disposal").ConfigureAwait(false);
+                    }
+                    catch { }
+                }
+            }
+        }
+    }
+
+    private async Task CleanupFailedConnectAsync(IRadioTransport transport, Exception error)
+    {
+        if (_transportLogHandler is not null)
+            transport.Log -= _transportLogHandler;
+        if (_transportBytesHandler is not null)
+            transport.BytesReceived -= _transportBytesHandler;
+
+        _transportLogHandler = null;
+        _transportBytesHandler = null;
+        ResetTxQueueState(new IOException("Connection failed.", error));
+        StopHeartbeatPump();
+        StopRxPump();
+        if (ReferenceEquals(_transport, transport))
+            _transport = null;
 
         try
         {
-            if (transport is SerialTransport)
-            {
-                // Wake the device serial console before the first request,
-                // like the official clients (32 x 0xC3 sync bytes).
-                var wake = new byte[32];
-                Array.Fill(wake, (byte)0xC3);
-                await transport.SendAsync(wake);
-                await System.Threading.Tasks.Task.Delay(100);
-            }
-
-            var helloMsg = ToRadioFactory.CreateHelloRequest(1u);
-            var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)helloMsg);
-            await transport.SendAsync(framed);
-            logToUi("Sent ToRadio: WantConfigId=1");
+            await AwaitTransportCleanupAsync(
+                transport.DisconnectAsync(),
+                "Failed connection cleanup").ConfigureAwait(false);
         }
-        catch (Exception ex)
-        {
-            logToUi($"Failed to send ToRadio hello: {ex.Message}");
-        }
-
-        StartHeartbeatPump(transport);
+        catch { }
     }
 
     private void StartRxPump(Action<Action> runOnUi, Action<string> logToUi)
@@ -666,58 +877,66 @@ public sealed class RadioClient
 
         _heartbeatTask = Task.Run(async () =>
         {
-            while (!ct.IsCancellationRequested && Volatile.Read(ref _disconnecting) == 0 && IsConnected)
+            _isHeartbeatPumpContext.Value = true;
+            try
             {
-                try
+                while (!ct.IsCancellationRequested && Volatile.Read(ref _disconnecting) == 0 && IsConnected)
                 {
-                    await Task.Delay(HeartbeatInterval, ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-
-                if (ct.IsCancellationRequested || Volatile.Read(ref _disconnecting) != 0 || !IsConnected)
-                    break;
-
-                try
-                {
-                    if (!transport.IsConnected)
+                    try
                     {
-                        await MarkConnectionLostAsync("Connection lost.").ConfigureAwait(false);
+                        await Task.Delay(HeartbeatInterval, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
                         break;
                     }
 
-                    var nonce = unchecked(++_heartbeatNonce);
-                    var msg = ToRadioFactory.CreateHeartbeat(nonce);
-                    var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
-                    await transport.SendAsync(framed).ConfigureAwait(false);
+                    if (ct.IsCancellationRequested || Volatile.Read(ref _disconnecting) != 0 || !IsConnected)
+                        break;
+
+                    try
+                    {
+                        if (!transport.IsConnected)
+                        {
+                            await MarkConnectionLostAsync(transport, "Connection lost.").ConfigureAwait(false);
+                            break;
+                        }
+
+                        var nonce = unchecked(++_heartbeatNonce);
+                        var msg = ToRadioFactory.CreateHeartbeat(nonce);
+                        var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
+                        await transport.SendAsync(framed).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (ObjectDisposedException) when (Volatile.Read(ref _disconnecting) != 0)
+                    {
+                        break;
+                    }
+                    catch (NullReferenceException) when (Volatile.Read(ref _disconnecting) != 0)
+                    {
+                        break;
+                    }
+                    catch (IOException) when (Volatile.Read(ref _disconnecting) != 0)
+                    {
+                        break;
+                    }
+                    catch (InvalidOperationException ex) when (IsTransportNotConnectedException(ex))
+                    {
+                        await MarkConnectionLostAsync(transport, ex.Message).ConfigureAwait(false);
+                        break;
+                    }
+                    catch
+                    {
+                        // Ignore heartbeat errors; regular traffic should continue.
+                    }
                 }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (ObjectDisposedException) when (Volatile.Read(ref _disconnecting) != 0)
-                {
-                    break;
-                }
-                catch (NullReferenceException) when (Volatile.Read(ref _disconnecting) != 0)
-                {
-                    break;
-                }
-                catch (IOException) when (Volatile.Read(ref _disconnecting) != 0)
-                {
-                    break;
-                }
-                catch (InvalidOperationException ex) when (IsTransportNotConnectedException(ex))
-                {
-                    await MarkConnectionLostAsync(ex.Message).ConfigureAwait(false);
-                    break;
-                }
-                catch
-                {
-                    // Ignore heartbeat errors; regular traffic should continue.
-                }
+            }
+            finally
+            {
+                _isHeartbeatPumpContext.Value = false;
             }
         }, ct);
     }
@@ -734,7 +953,7 @@ public sealed class RadioClient
             try { cts.Cancel(); } catch { }
         }
 
-        if (task is not null)
+        if (task is not null && !_isHeartbeatPumpContext.Value)
         {
             try { task.Wait(TimeSpan.FromSeconds(1)); } catch { }
         }

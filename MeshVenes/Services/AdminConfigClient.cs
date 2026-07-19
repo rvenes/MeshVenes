@@ -524,10 +524,11 @@ public sealed class AdminConfigClient
 
     private async Task SendWithoutResponseAsync(uint nodeNum, AdminMessage message, CancellationToken ct)
     {
+        EnsureRadioOperationAvailable();
         AttachSessionPasskey(nodeNum, message);
         var packetId = await RadioClient.Instance.SendAdminMessageAsync(nodeNum, message, wantResponse: false).ConfigureAwait(false);
         if (packetId == 0)
-            throw new InvalidOperationException("Not connected");
+            throw CreateRadioSendFailure();
         ct.ThrowIfCancellationRequested();
     }
 
@@ -538,6 +539,7 @@ public sealed class AdminConfigClient
         TimeSpan timeout,
         CancellationToken ct)
     {
+        EnsureRadioOperationAvailable();
         var tcs = new TaskCompletionSource<AdminMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -563,7 +565,7 @@ public sealed class AdminConfigClient
             AttachSessionPasskey(nodeNum, request);
             var packetId = await RadioClient.Instance.SendAdminMessageAsync(nodeNum, request, wantResponse: true).ConfigureAwait(false);
             if (packetId == 0)
-                return new AdminMessage();
+                throw CreateRadioSendFailure();
 
             try
             {
@@ -579,6 +581,24 @@ public sealed class AdminConfigClient
             lock (_lock)
                 _incomingAdmin -= Handler;
         }
+    }
+
+    private static void EnsureRadioOperationAvailable()
+    {
+        var availability = RadioOperationGate.Evaluate(RadioClient.Instance.ConnectionState);
+        if (!availability.IsAllowed)
+        {
+            throw new InvalidOperationException(
+                availability.UnavailableMessage ?? RadioOperationGate.DisconnectedMessage);
+        }
+    }
+
+    private static InvalidOperationException CreateRadioSendFailure()
+    {
+        var availability = RadioOperationGate.Evaluate(RadioClient.Instance.ConnectionState);
+        return new InvalidOperationException(
+            availability.UnavailableMessage ??
+            "The radio did not accept the admin request. Try again.");
     }
 
     private void AttachSessionPasskey(uint nodeNum, AdminMessage message)

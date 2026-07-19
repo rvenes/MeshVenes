@@ -19,14 +19,15 @@ Import / export of settings
 
 Download & install
 
-Go to Releases on GitHub  
-Download the .zip file under Assets  
-Extract the zip  
-Run the .exe directly  
-No installer is required.
+- Go to Releases on GitHub.
+- Download `MeshVenes-<version>-win-x64.zip` under Assets.
+- Extract the ZIP.
+- Run `MeshVenes.exe` directly.
 
-There is also an .msix package generated automatically by GitHub Actions, but it is not code-signed, so Windows will most likely block installation due to certificate trust. The recommended method is to use the zip release.  
-All release artifacts are built automatically by GitHub Actions. The full source code is available in the repository if you want to review or build it yourself.  
+No installer or package registration is required.
+
+MeshVenes is distributed only as an unsigned, self-contained Windows ZIP. MSIX, APPX, and MSIXBundle packages are not built or published because an unsigned package is not a useful installation path for end users. GitHub Actions validates the same self-contained publish flow used for releases, but does not retain artifacts or publish releases.
+The full source code is available in the repository if you want to review or build it yourself.
 The project is fully open-source and licensed under GPL-3.0.
 
 If you encounter bugs or have feature requests, post them on GitHub. Changes and improvements will be considered based on feedback.

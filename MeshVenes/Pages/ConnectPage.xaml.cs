@@ -76,7 +76,8 @@ public sealed partial class ConnectPage : Page
 
         s_autoConnectHandled = true;
 
-        if (AutoConnectCheck.IsChecked != true || RadioClient.Instance.IsConnected)
+        if (AutoConnectCheck.IsChecked != true ||
+            !RadioClient.Instance.ConnectionState.CanConnect)
             return;
 
         _autoConnectTarget = DescribeSavedEndpoint();
@@ -113,7 +114,7 @@ public sealed partial class ConnectPage : Page
 
     private async void AutoConnectTimer_Tick(object? sender, object e)
     {
-        if (RadioClient.Instance.IsConnected)
+        if (!RadioClient.Instance.ConnectionState.CanConnect)
         {
             CancelAutoConnect(null);
             return;
@@ -136,6 +137,10 @@ public sealed partial class ConnectPage : Page
             UpdateUiFromClient();
             if (!ok)
                 StatusText.Text = "Auto connect failed. Connect manually.";
+        }
+        catch (OperationCanceledException)
+        {
+            UpdateUiFromClient();
         }
         catch (Exception ex)
         {
@@ -230,17 +235,33 @@ public sealed partial class ConnectPage : Page
     private void UpdateUiFromClient()
     {
         var client = RadioClient.Instance;
+        var state = client.ConnectionState;
 
-        StatusText.Text = client.IsConnected
-            ? $"Connected to {client.PortName}"
-            : "Disconnected";
+        StatusText.Text = state.Status switch
+        {
+            RadioConnectionStatus.Connecting => $"Connecting to {state.Endpoint}...",
+            RadioConnectionStatus.Connected => $"Connected to {state.Endpoint}",
+            RadioConnectionStatus.Reconnecting => string.IsNullOrWhiteSpace(state.Endpoint)
+                ? "Reconnecting..."
+                : $"Reconnecting to {state.Endpoint}...",
+            RadioConnectionStatus.Disconnecting => "Disconnecting...",
+            RadioConnectionStatus.Failed => string.IsNullOrWhiteSpace(state.ErrorMessage)
+                ? "Connection failed"
+                : $"Connection failed: {state.ErrorMessage}",
+            _ => "Disconnected"
+        };
 
-        ConnectButton.IsEnabled = !client.IsConnected && _hasPorts;
-        TcpConnectButton.IsEnabled = !client.IsConnected;
-        BluetoothConnectButton.IsEnabled = !client.IsConnected && _hasBluetoothDevices && !_isBluetoothScanning;
-        DisconnectButton.IsEnabled = client.IsConnected;
+        ConnectButton.IsEnabled = state.CanConnect && _hasPorts;
+        TcpConnectButton.IsEnabled = state.CanConnect;
+        BluetoothConnectButton.IsEnabled = state.CanConnect && _hasBluetoothDevices && !_isBluetoothScanning;
+        DisconnectButton.IsEnabled = state.CanDisconnect;
 
-        RefreshBluetoothButton.IsEnabled = !_isBluetoothScanning;
+        PortCombo.IsEnabled = state.CanConnect && _hasPorts;
+        TcpHostBox.IsEnabled = state.CanConnect;
+        TcpPortBox.IsEnabled = state.CanConnect;
+        BluetoothCombo.IsEnabled = state.CanConnect && _hasBluetoothDevices && !_isBluetoothScanning;
+        RefreshPortsButton.IsEnabled = state.CanConnect;
+        RefreshBluetoothButton.IsEnabled = state.CanConnect && !_isBluetoothScanning;
         BluetoothScanRing.IsActive = _isBluetoothScanning;
         BluetoothScanRing.Visibility = _isBluetoothScanning ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -269,6 +290,10 @@ public sealed partial class ConnectPage : Page
 
             SettingsStore.SetString(SettingsStore.LastSerialPortKey, port);
             SettingsStore.SetString(SettingsStore.LastConnectionTypeKey, "serial");
+            UpdateUiFromClient();
+        }
+        catch (OperationCanceledException)
+        {
             UpdateUiFromClient();
         }
         catch (Exception ex)
@@ -313,6 +338,10 @@ public sealed partial class ConnectPage : Page
             SettingsStore.SetString(SettingsStore.LastConnectionTypeKey, "tcp");
             UpdateUiFromClient();
         }
+        catch (OperationCanceledException)
+        {
+            UpdateUiFromClient();
+        }
         catch (Exception ex)
         {
             StatusText.Text = "Error";
@@ -345,6 +374,10 @@ public sealed partial class ConnectPage : Page
 
             SettingsStore.SetString(SettingsStore.LastBluetoothDeviceIdKey, option.DeviceId);
             SettingsStore.SetString(SettingsStore.LastConnectionTypeKey, "ble");
+            UpdateUiFromClient();
+        }
+        catch (OperationCanceledException)
+        {
             UpdateUiFromClient();
         }
         catch (Exception ex)
@@ -672,6 +705,7 @@ public sealed partial class ConnectPage : Page
     private async void Disconnect_Click(object sender, RoutedEventArgs e)
     {
         CancelAutoConnect(null);
+        SettingsReconnectHelper.CancelPendingConnectionAttempts();
         try
         {
             await RadioClient.Instance.DisconnectAsync();
