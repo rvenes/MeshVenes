@@ -69,3 +69,20 @@ jobs:
             --no-restore `
             /p:PublishReadyToRun=false `
             -o $env:PUBLISH_DIR
+
+          $exePath = Join-Path $env:PUBLISH_DIR 'MeshVenes.exe'
+          if (-not (Test-Path -LiteralPath $exePath)) {
+            throw 'MeshVenes.exe is missing from the publish root.'
+          }
+
+          $priPath = Join-Path $env:PUBLISH_DIR 'MeshVenes.pri'
+          if (-not (Test-Path -LiteralPath $priPath -PathType Leaf)) {
+            throw 'MeshVenes.pri is missing from the publish root. The unpackaged app will crash during XAML initialization.'
+          }
+
+          $packageArtifacts = Get-ChildItem -LiteralPath $env:PUBLISH_DIR -Recurse -File |
+            Where-Object { $_.Extension -in '.msix', '.msixbundle', '.appx', '.appxbundle', '.appinstaller' }
+          if ($packageArtifacts) {
+            $paths = $packageArtifacts.FullName -join [Environment]::NewLine
+            throw "Packaged artifacts are not supported. Found:$([Environment]::NewLine)$paths"
+          }

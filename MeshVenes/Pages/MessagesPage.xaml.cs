@@ -56,7 +56,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     {
         get
         {
-            var peer = MeshVenes.AppState.ActiveChatPeerIdHex;
+            var peer = _selectedChatItem?.PeerIdHex;
             if (string.IsNullOrWhiteSpace(peer))
                 return "Primary channel";
 
@@ -212,6 +212,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         MeshVenes.AppState.ActiveChatChanged += ActiveChatChanged;
         MeshVenes.AppState.UnreadChanged += UnreadChanged;
         MeshVenes.AppState.ConnectedNodeChanged += ConnectedNodeChanged;
+        RadioClient.Instance.ConnectionChanged += RadioConnectionChanged;
     }
 
     private void UnhookAppStateEvents()
@@ -225,6 +226,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         MeshVenes.AppState.ActiveChatChanged -= ActiveChatChanged;
         MeshVenes.AppState.UnreadChanged -= UnreadChanged;
         MeshVenes.AppState.ConnectedNodeChanged -= ConnectedNodeChanged;
+        RadioClient.Instance.ConnectionChanged -= RadioConnectionChanged;
     }
 
     private void Messages_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -310,6 +312,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             OnActiveChatUiChanged();
         });
 
+    private void RadioConnectionChanged()
+        => DispatcherQueue.TryEnqueue(UpdateSendButtonState);
+
     private void ConnectedNodeChanged()
     {
         try
@@ -334,6 +339,8 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
                     _channelRefreshRetryPending = false;
                     _ = RefreshChannelDisplayNamesAsync(force: true);
 
+                    RebuildVisibleChats();
+                    SyncListToActiveChat();
                     EnsureChatHistoryLoaded(_selectedChatItem);
                     OnChanged(nameof(SelectedChatMessages));
                     OnActiveChatUiChanged();
@@ -711,7 +718,11 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             }
 
             if (!string.IsNullOrWhiteSpace(activePeer) &&
-                string.Equals(item.PeerIdHex, activePeer, StringComparison.OrdinalIgnoreCase))
+                string.Equals(item.PeerIdHex, activePeer, StringComparison.OrdinalIgnoreCase) &&
+                MessageSendSelectionPolicy.ResolveTarget(
+                    hasSelectedChat: true,
+                    item.PeerIdHex,
+                    MeshVenes.AppState.ConnectedNodeIdHex).IsValid)
             {
                 desired.Add(item);
                 continue;
@@ -786,10 +797,10 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         else
             preferred = VisibleChatItems.FirstOrDefault(x => string.Equals(x.PeerIdHex, activePeer, StringComparison.OrdinalIgnoreCase));
 
-        if (preferred is null && !string.IsNullOrWhiteSpace(activePeer))
-            return;
-
-        SetActiveChatSelection(preferred ?? VisibleChatItems.FirstOrDefault());
+        SetActiveChatSelection(
+            preferred ??
+            VisibleChatItems.FirstOrDefault(x => x.PeerIdHex is null) ??
+            VisibleChatItems.FirstOrDefault());
     }
 
     private bool IsChatItemVisible(ChatListItemVm item)
@@ -820,48 +831,22 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     {
         _suppressListEvent = true;
 
-        var peer = MeshVenes.AppState.ActiveChatPeerIdHex;
+        var selection = MessageSendSelectionPolicy.SelectOrPrimary(
+            hasSelectedChat: true,
+            MeshVenes.AppState.ActiveChatPeerIdHex,
+            VisibleChatItems.Select(item => item.PeerIdHex),
+            MeshVenes.AppState.ConnectedNodeIdHex);
 
-        ChatListItemVm? match;
-        if (string.IsNullOrWhiteSpace(peer))
-            match = ChatListItems.FirstOrDefault(x => x.PeerIdHex is null);
-        else
-            match = ChatListItems.FirstOrDefault(x => string.Equals(x.PeerIdHex, peer, StringComparison.OrdinalIgnoreCase));
+        var targetPeerKey = selection.Target.Kind == MessageSendTargetKind.PrimaryChannel
+            ? null
+            : selection.Target.PeerKey;
+        var match = VisibleChatItems.FirstOrDefault(item =>
+            string.Equals(item.PeerIdHex, targetPeerKey, StringComparison.OrdinalIgnoreCase));
 
-        if (match is not null && IsChatItemVisible(match))
-        {
-            var selectedChanged = !ReferenceEquals(_selectedChatItem, match);
-
-            if (!ReferenceEquals(ChatList.SelectedItem, match))
-                ChatList.SelectedItem = match;
-
-            _selectedChatItem = match;
-            match.HasLogIndicator = false;
-            EnsureChatHistoryLoaded(match);
-
-            if (selectedChanged)
-            {
-                OnChanged(nameof(SelectedChatMessages));
-                OnChanged(nameof(HasAnyChatSelection));
-                OnChanged(nameof(CanOpenNodeFromDm));
-                OnChanged(nameof(OpenNodeFromDmVisibility));
-            }
-        }
-        else if (!string.IsNullOrWhiteSpace(peer))
-        {
-            if (_selectedChatItem is not null || ChatList.SelectedItem is not null)
-            {
-                ChatList.SelectedItem = null;
-                _selectedChatItem = null;
-                ResetPendingMessagesIndicator();
-                OnChanged(nameof(SelectedChatMessages));
-                OnChanged(nameof(HasAnyChatSelection));
-                OnChanged(nameof(CanOpenNodeFromDm));
-                OnChanged(nameof(OpenNodeFromDmVisibility));
-            }
-        }
-        else
-            SetActiveChatSelection(VisibleChatItems.FirstOrDefault());
+        SetActiveChatSelection(
+            match ??
+            VisibleChatItems.FirstOrDefault(item => item.PeerIdHex is null) ??
+            VisibleChatItems.FirstOrDefault());
 
         _suppressListEvent = false;
     }
@@ -869,7 +854,11 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private void SetActiveChatSelection(ChatListItemVm? chat)
     {
         if (ReferenceEquals(chat, _selectedChatItem) &&
-            ReferenceEquals(ChatList.SelectedItem, chat))
+            ReferenceEquals(ChatList.SelectedItem, chat) &&
+            string.Equals(
+                MeshVenes.AppState.ActiveChatPeerIdHex,
+                chat?.PeerIdHex,
+                StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
@@ -1884,7 +1873,14 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private void UpdateSendButtonState()
     {
         var text = InputBox.Text ?? "";
-        var canSend = !string.IsNullOrWhiteSpace(text.Trim());
+        var target = MessageSendSelectionPolicy.ResolveTarget(
+            _selectedChatItem is not null,
+            _selectedChatItem?.PeerIdHex,
+            MeshVenes.AppState.ConnectedNodeIdHex);
+        var canSend = MessageSendSelectionPolicy.CanSend(
+            RadioClient.Instance.ConnectionState.Status,
+            text,
+            target);
         SendButton.IsEnabled = canSend;
     }
 
@@ -1946,6 +1942,39 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         if (string.IsNullOrWhiteSpace(text))
             return;
 
+        var target = MessageSendSelectionPolicy.ResolveTarget(
+            _selectedChatItem is not null,
+            _selectedChatItem?.PeerIdHex,
+            MeshVenes.AppState.ConnectedNodeIdHex);
+        if (!MessageSendSelectionPolicy.CanSend(
+                RadioClient.Instance.ConnectionState.Status,
+                text,
+                target))
+        {
+            if (!target.IsValid)
+            {
+                var pendingText = InputBox.Text ?? "";
+                SetActiveChatSelection(_primaryChatItem);
+                InputBox.Text = pendingText;
+                InputBox.SelectionStart = pendingText.Length;
+                InputBox.SelectionLength = 0;
+                SetDraft(_primaryChatItem.ChatKey, pendingText);
+                PersistDrafts();
+
+                var dialog = new ContentDialog
+                {
+                    Title = "Message not sent",
+                    Content = "The selected chat is no longer available. Your message was kept and the Primary channel was selected.",
+                    CloseButtonText = "OK",
+                    XamlRoot = XamlRoot
+                };
+                _ = await dialog.ShowAsync();
+            }
+
+            UpdateSendButtonState();
+            return;
+        }
+
         InputBox.Text = "";
         UpdateSendButtonState();
 
@@ -1955,7 +1984,9 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
             PersistDrafts();
         }
 
-        var peer = MeshVenes.AppState.ActiveChatPeerIdHex;
+        var peer = target.Kind == MessageSendTargetKind.PrimaryChannel
+            ? null
+            : target.PeerKey;
 
         // Primary defaults
         uint? toNodeNum = null;
@@ -1966,23 +1997,22 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         string toIdHex = "0xffffffff";
         string toName = "Primary";
 
-        if (TryParseChannelPeerKey(peer, out var selectedChannel))
+        if (target.Kind == MessageSendTargetKind.Channel)
         {
+            var selectedChannel = target.ChannelIndex;
             channelIndex = selectedChannel;
             var channelDisplayName = ResolveChannelDisplayName(selectedChannel, fallbackName: $"Channel {selectedChannel}");
             channelName = ResolveChannelArchiveName(selectedChannel, fallbackName: $"Channel {selectedChannel}");
             toName = channelDisplayName;
         }
         // DM
-        else if (!string.IsNullOrWhiteSpace(peer))
+        else if (target.Kind == MessageSendTargetKind.DirectMessage &&
+                 target.NodeNumber is uint selectedNodeNumber &&
+                 !string.IsNullOrWhiteSpace(peer))
         {
             toIdHex = peer;
-
-            if (TryParseNodeNumFromHex(peer, out var u))
-            {
-                toNodeNum = u;
-                dmTargetNodeNum = u;
-            }
+            toNodeNum = selectedNodeNumber;
+            dmTargetNodeNum = selectedNodeNumber;
 
             var node = MeshVenes.AppState.Nodes.FirstOrDefault(n =>
                 string.Equals(n.IdHex, peer, StringComparison.OrdinalIgnoreCase));
@@ -2030,7 +2060,7 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
         // Arkiv
         if (string.IsNullOrWhiteSpace(peer))
             MessageArchive.Append(local, channelName: channelName);
-        else if (TryParseChannelPeerKey(peer, out _))
+        else if (target.Kind == MessageSendTargetKind.Channel)
             MessageArchive.Append(local, channelName: channelName);
         else
             MessageArchive.Append(local, dmPeerIdHex: peer);
@@ -2283,17 +2313,23 @@ public sealed partial class MessagesPage : Page, INotifyPropertyChanged
     private bool TryGetActiveDmPeerIdHex(out string? peerIdHex)
     {
         peerIdHex = null;
-        var peer = MeshVenes.AppState.ActiveChatPeerIdHex;
-        if (string.IsNullOrWhiteSpace(peer))
+        var target = MessageSendSelectionPolicy.ResolveTarget(
+            _selectedChatItem is not null,
+            _selectedChatItem?.PeerIdHex,
+            MeshVenes.AppState.ConnectedNodeIdHex);
+        if (target.Kind != MessageSendTargetKind.DirectMessage ||
+            string.IsNullOrWhiteSpace(target.PeerKey))
+        {
             return false;
+        }
 
-        if (TryParseChannelPeerKey(peer, out _))
+        if (!MeshVenes.AppState.Nodes.Any(n =>
+                string.Equals(n.IdHex, target.PeerKey, StringComparison.OrdinalIgnoreCase)))
+        {
             return false;
+        }
 
-        if (!MeshVenes.AppState.Nodes.Any(n => string.Equals(n.IdHex, peer, StringComparison.OrdinalIgnoreCase)))
-            return false;
-
-        peerIdHex = peer;
+        peerIdHex = target.PeerKey;
         return true;
     }
 

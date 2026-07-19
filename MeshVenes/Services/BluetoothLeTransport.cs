@@ -81,33 +81,34 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
         try
         {
-            device = await ResolveDeviceAsync(_deviceId);
+            ct.ThrowIfCancellationRequested();
+            device = await ResolveDeviceAsync(_deviceId, ct).ConfigureAwait(false);
             if (device is null)
                 throw new InvalidOperationException("Bluetooth device not found.");
 
             // Meshtastic firmware requires an encrypted bond before its GATT
             // characteristics can be used, so pair before service discovery.
-            await TryEnsurePairedAsync(device).ConfigureAwait(false);
+            await TryEnsurePairedAsync(device, cancellationToken: ct).ConfigureAwait(false);
 
-            service = await TryGetMeshtasticServiceAsync(device);
+            service = await TryGetMeshtasticServiceAsync(device, ct).ConfigureAwait(false);
             if (service is null)
                 throw new InvalidOperationException("Meshtastic BLE service not found.");
 
-            toRadio = await TryGetCharacteristicAsync(service, ToRadioUuid);
-            fromRadio = await TryGetCharacteristicAsync(service, FromRadioUuid)
-                ?? await TryGetCharacteristicAsync(service, LegacyFromRadioUuid);
-            fromNum = await TryGetCharacteristicAsync(service, FromNumUuid);
+            toRadio = await TryGetCharacteristicAsync(service, ToRadioUuid, ct).ConfigureAwait(false);
+            fromRadio = await TryGetCharacteristicAsync(service, FromRadioUuid, ct).ConfigureAwait(false)
+                ?? await TryGetCharacteristicAsync(service, LegacyFromRadioUuid, ct).ConfigureAwait(false);
+            fromNum = await TryGetCharacteristicAsync(service, FromNumUuid, ct).ConfigureAwait(false);
 
             if (toRadio is null)
             {
                 throw new InvalidOperationException(
-                    $"Meshtastic ToRadio characteristic not found. Available chars: {await DescribeCharacteristicsAsync(service)}");
+                    $"Meshtastic ToRadio characteristic not found. Available chars: {await DescribeCharacteristicsAsync(service, ct).ConfigureAwait(false)}");
             }
 
             if (fromRadio is null)
             {
                 throw new InvalidOperationException(
-                    $"Meshtastic FromRadio characteristic not found. Available chars: {await DescribeCharacteristicsAsync(service)}");
+                    $"Meshtastic FromRadio characteristic not found. Available chars: {await DescribeCharacteristicsAsync(service, ct).ConfigureAwait(false)}");
             }
 
             if (PreferPollingMode)
@@ -123,15 +124,18 @@ public sealed class BluetoothLeTransport : IRadioTransport
                     candidate.ValueChanged += Notify_ValueChanged;
                     try
                     {
-                        var enableError = await EnableNotificationsAsync(candidate);
+                        var enableError = await EnableNotificationsAsync(candidate, ct).ConfigureAwait(false);
                         if (enableError is not null && IsGattPermissionError(enableError))
                         {
                             // A permission error while Windows believes we are
                             // paired usually means a stale bond (device was
                             // reset or re-flashed) — remove it and pair again.
-                            var pairedNow = await TryEnsurePairedAsync(device, forceRepair: true).ConfigureAwait(false);
+                            var pairedNow = await TryEnsurePairedAsync(
+                                device,
+                                forceRepair: true,
+                                cancellationToken: ct).ConfigureAwait(false);
                             if (pairedNow)
-                                enableError = await EnableNotificationsAsync(candidate).ConfigureAwait(false);
+                                enableError = await EnableNotificationsAsync(candidate, ct).ConfigureAwait(false);
                         }
 
                         if (enableError is null)
@@ -142,6 +146,12 @@ public sealed class BluetoothLeTransport : IRadioTransport
                         }
 
                         notifyError = $"{candidate.Uuid:D}: {enableError}";
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        try { candidate.ValueChanged -= Notify_ValueChanged; }
+                        catch { }
+                        throw;
                     }
                     catch (Exception ex)
                     {
@@ -170,6 +180,17 @@ public sealed class BluetoothLeTransport : IRadioTransport
                 }
             }
 
+            ct.ThrowIfCancellationRequested();
+            device.ConnectionStatusChanged += Device_ConnectionStatusChanged;
+
+            if (fromNum is not null)
+            {
+                var start = await TryReadFromNumAsync(fromNum, ct).ConfigureAwait(false);
+                if (start.HasValue)
+                    _lastFromNum = start.Value;
+            }
+
+            ct.ThrowIfCancellationRequested();
             lock (_sync)
             {
                 _device = device;
@@ -181,20 +202,18 @@ public sealed class BluetoothLeTransport : IRadioTransport
                 _pollCts = new CancellationTokenSource();
             }
 
-            device.ConnectionStatusChanged += Device_ConnectionStatusChanged;
-
             Log?.Invoke($"Connected to Bluetooth LE {device.Name}");
-            if (fromNum is not null)
-            {
-                var start = await TryReadFromNumAsync(fromNum);
-                if (start.HasValue)
-                    _lastFromNum = start.Value;
-            }
             _ = DrainFromRadioMailboxAsync(null);
             _pollTask = Task.Run(() => PollLoopAsync(_pollCts.Token));
         }
         catch
         {
+            if (device is not null)
+            {
+                try { device.ConnectionStatusChanged -= Device_ConnectionStatusChanged; }
+                catch { }
+            }
+
             if (notifyCharacteristic is not null)
             {
                 try { notifyCharacteristic.ValueChanged -= Notify_ValueChanged; }
@@ -433,17 +452,28 @@ public sealed class BluetoothLeTransport : IRadioTransport
         await DisconnectAsync();
     }
 
-    private static async Task<GattDeviceService?> TryGetMeshtasticServiceAsync(BluetoothLEDevice device)
+    private static async Task<GattDeviceService?> TryGetMeshtasticServiceAsync(
+        BluetoothLEDevice device,
+        CancellationToken cancellationToken)
     {
-        var byUuidCached = await device.GetGattServicesForUuidAsync(MeshtasticServiceUuid, BluetoothCacheMode.Cached);
+        var byUuidCached = await device
+            .GetGattServicesForUuidAsync(MeshtasticServiceUuid, BluetoothCacheMode.Cached)
+            .AsTask(cancellationToken)
+            .ConfigureAwait(false);
         if (byUuidCached.Status == GattCommunicationStatus.Success && byUuidCached.Services.Count > 0)
             return byUuidCached.Services[0];
 
-        var byUuidUncached = await device.GetGattServicesForUuidAsync(MeshtasticServiceUuid, BluetoothCacheMode.Uncached);
+        var byUuidUncached = await device
+            .GetGattServicesForUuidAsync(MeshtasticServiceUuid, BluetoothCacheMode.Uncached)
+            .AsTask(cancellationToken)
+            .ConfigureAwait(false);
         if (byUuidUncached.Status == GattCommunicationStatus.Success && byUuidUncached.Services.Count > 0)
             return byUuidUncached.Services[0];
 
-        var cached = await device.GetGattServicesAsync(BluetoothCacheMode.Cached);
+        var cached = await device
+            .GetGattServicesAsync(BluetoothCacheMode.Cached)
+            .AsTask(cancellationToken)
+            .ConfigureAwait(false);
         if (cached.Status == GattCommunicationStatus.Success && cached.Services.Count > 0)
         {
             var match = cached.Services.FirstOrDefault(s => s.Uuid == MeshtasticServiceUuid);
@@ -451,7 +481,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
                 return match;
         }
 
-        var uncached = await device.GetGattServicesAsync(BluetoothCacheMode.Uncached);
+        var uncached = await device
+            .GetGattServicesAsync(BluetoothCacheMode.Uncached)
+            .AsTask(cancellationToken)
+            .ConfigureAwait(false);
         if (uncached.Status == GattCommunicationStatus.Success && uncached.Services.Count > 0)
         {
             var match = uncached.Services.FirstOrDefault(s => s.Uuid == MeshtasticServiceUuid);
@@ -462,11 +495,17 @@ public sealed class BluetoothLeTransport : IRadioTransport
         return null;
     }
 
-    private static async Task<GattCharacteristic?> TryGetCharacteristicAsync(GattDeviceService service, Guid uuid)
+    private static async Task<GattCharacteristic?> TryGetCharacteristicAsync(
+        GattDeviceService service,
+        Guid uuid,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var uncachedByUuid = await service.GetCharacteristicsForUuidAsync(uuid, BluetoothCacheMode.Uncached);
+            var uncachedByUuid = await service
+                .GetCharacteristicsForUuidAsync(uuid, BluetoothCacheMode.Uncached)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
             if (uncachedByUuid.Status == GattCommunicationStatus.Success && uncachedByUuid.Characteristics.Count > 0)
                 return uncachedByUuid.Characteristics[0];
         }
@@ -474,7 +513,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
         try
         {
-            var cachedByUuid = await service.GetCharacteristicsForUuidAsync(uuid, BluetoothCacheMode.Cached);
+            var cachedByUuid = await service
+                .GetCharacteristicsForUuidAsync(uuid, BluetoothCacheMode.Cached)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
             if (cachedByUuid.Status == GattCommunicationStatus.Success && cachedByUuid.Characteristics.Count > 0)
                 return cachedByUuid.Characteristics[0];
         }
@@ -482,7 +524,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
         try
         {
-            var uncachedAll = await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached);
+            var uncachedAll = await service
+                .GetCharacteristicsAsync(BluetoothCacheMode.Uncached)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
             if (uncachedAll.Status == GattCommunicationStatus.Success)
             {
                 var match = uncachedAll.Characteristics.FirstOrDefault(c => c.Uuid == uuid);
@@ -494,7 +539,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
 
         try
         {
-            var cachedAll = await service.GetCharacteristicsAsync(BluetoothCacheMode.Cached);
+            var cachedAll = await service
+                .GetCharacteristicsAsync(BluetoothCacheMode.Cached)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
             if (cachedAll.Status == GattCommunicationStatus.Success)
             {
                 var match = cachedAll.Characteristics.FirstOrDefault(c => c.Uuid == uuid);
@@ -507,11 +555,16 @@ public sealed class BluetoothLeTransport : IRadioTransport
         return null;
     }
 
-    private static async Task<string> DescribeCharacteristicsAsync(GattDeviceService service)
+    private static async Task<string> DescribeCharacteristicsAsync(
+        GattDeviceService service,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var chars = await service.GetCharacteristicsAsync(BluetoothCacheMode.Uncached);
+            var chars = await service
+                .GetCharacteristicsAsync(BluetoothCacheMode.Uncached)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
             if (chars.Status != GattCommunicationStatus.Success)
                 return $"status={chars.Status}";
 
@@ -602,10 +655,18 @@ public sealed class BluetoothLeTransport : IRadioTransport
         return true;
     }
 
-    private static async Task<uint?> TryReadFromNumAsync(GattCharacteristic fromNum)
+    private static async Task<uint?> TryReadFromNumAsync(
+        GattCharacteristic fromNum,
+        CancellationToken cancellationToken = default)
     {
-        var result = await TryReadCharacteristicAsync(fromNum, BluetoothCacheMode.Uncached).ConfigureAwait(false)
-            ?? await TryReadCharacteristicAsync(fromNum, BluetoothCacheMode.Cached).ConfigureAwait(false);
+        var result = await TryReadCharacteristicAsync(
+                fromNum,
+                BluetoothCacheMode.Uncached,
+                cancellationToken).ConfigureAwait(false)
+            ?? await TryReadCharacteristicAsync(
+                fromNum,
+                BluetoothCacheMode.Cached,
+                cancellationToken).ConfigureAwait(false);
 
         if (result is null)
             return null;
@@ -620,21 +681,30 @@ public sealed class BluetoothLeTransport : IRadioTransport
         return reader.ReadUInt32();
     }
 
-    private static async Task<GattReadResult?> TryReadCharacteristicAsync(GattCharacteristic characteristic, BluetoothCacheMode cacheMode)
+    private static async Task<GattReadResult?> TryReadCharacteristicAsync(
+        GattCharacteristic characteristic,
+        BluetoothCacheMode cacheMode,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            return await characteristic.ReadValueAsync(cacheMode);
+            return await characteristic
+                .ReadValueAsync(cacheMode)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (ObjectDisposedException) { return null; }
         catch (NullReferenceException) { return null; }
         catch (IOException) { return null; }
         catch (COMException) { return null; }
     }
 
-    private static async Task<string?> EnableNotificationsAsync(GattCharacteristic characteristic)
+    private static async Task<string?> EnableNotificationsAsync(
+        GattCharacteristic characteristic,
+        CancellationToken cancellationToken)
     {
-        var hasCccd = await HasCccdAsync(characteristic).ConfigureAwait(false);
+        var hasCccd = await HasCccdAsync(characteristic, cancellationToken).ConfigureAwait(false);
         if (!hasCccd)
             return "Characteristic has no CCCD descriptor.";
 
@@ -657,11 +727,17 @@ public sealed class BluetoothLeTransport : IRadioTransport
             try
             {
                 var indicateStatus = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
-                    GattClientCharacteristicConfigurationDescriptorValue.Indicate);
+                        GattClientCharacteristicConfigurationDescriptorValue.Indicate)
+                    .AsTask(cancellationToken)
+                    .ConfigureAwait(false);
                 if (indicateStatus == GattCommunicationStatus.Success)
                     return null;
 
                 lastError = $"Indicate status={indicateStatus}";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -676,11 +752,17 @@ public sealed class BluetoothLeTransport : IRadioTransport
             try
             {
                 var notifyStatus = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
-                    GattClientCharacteristicConfigurationDescriptorValue.Notify);
+                        GattClientCharacteristicConfigurationDescriptorValue.Notify)
+                    .AsTask(cancellationToken)
+                    .ConfigureAwait(false);
                 if (notifyStatus == GattCommunicationStatus.Success)
                     return null;
 
                 lastError = $"Notify status={notifyStatus}";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -694,15 +776,24 @@ public sealed class BluetoothLeTransport : IRadioTransport
         return lastError ?? "Unable to enable BLE notifications/indications.";
     }
 
-    private static async Task<bool> HasCccdAsync(GattCharacteristic characteristic)
+    private static async Task<bool> HasCccdAsync(
+        GattCharacteristic characteristic,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var result = await characteristic.GetDescriptorsAsync(BluetoothCacheMode.Uncached);
+            var result = await characteristic
+                .GetDescriptorsAsync(BluetoothCacheMode.Uncached)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
             if (result.Status != GattCommunicationStatus.Success)
                 return false;
 
             return result.Descriptors.Any(d => d.Uuid == GattDescriptorUuids.ClientCharacteristicConfiguration);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -719,15 +810,23 @@ public sealed class BluetoothLeTransport : IRadioTransport
                error.IndexOf("0x80650003", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    private static async Task<BluetoothLEDevice?> ResolveDeviceAsync(string deviceId)
+    private static async Task<BluetoothLEDevice?> ResolveDeviceAsync(
+        string deviceId,
+        CancellationToken cancellationToken)
     {
         if (deviceId.StartsWith(AddressIdPrefix, StringComparison.OrdinalIgnoreCase) &&
             ulong.TryParse(deviceId[AddressIdPrefix.Length..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var address))
         {
-            return await BluetoothLEDevice.FromBluetoothAddressAsync(address);
+            return await BluetoothLEDevice
+                .FromBluetoothAddressAsync(address)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        return await BluetoothLEDevice.FromIdAsync(deviceId);
+        return await BluetoothLEDevice
+            .FromIdAsync(deviceId)
+            .AsTask(cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -737,7 +836,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
     /// deliver. With <paramref name="forceRepair"/> an existing (stale) bond
     /// is removed first and the device is paired again.
     /// </summary>
-    private async Task<bool> TryEnsurePairedAsync(BluetoothLEDevice device, bool forceRepair = false)
+    private async Task<bool> TryEnsurePairedAsync(
+        BluetoothLEDevice device,
+        bool forceRepair = false,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -751,7 +853,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
                     return true;
 
                 Log?.Invoke("BLE: removing stale pairing...");
-                var unpair = await pairing.UnpairAsync();
+                var unpair = await pairing
+                    .UnpairAsync()
+                    .AsTask(cancellationToken)
+                    .ConfigureAwait(false);
                 if (unpair.Status != DeviceUnpairingResultStatus.Unpaired &&
                     unpair.Status != DeviceUnpairingResultStatus.AlreadyUnpaired)
                 {
@@ -769,7 +874,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
                     DevicePairingKinds.ProvidePin |
                     DevicePairingKinds.ConfirmPinMatch;
 
-                var result = await custom.PairAsync(kinds, DevicePairingProtectionLevel.Encryption);
+                var result = await custom
+                    .PairAsync(kinds, DevicePairingProtectionLevel.Encryption)
+                    .AsTask(cancellationToken)
+                    .ConfigureAwait(false);
                 if (result.Status == DevicePairingResultStatus.Paired ||
                     result.Status == DevicePairingResultStatus.AlreadyPaired)
                 {
@@ -784,6 +892,10 @@ public sealed class BluetoothLeTransport : IRadioTransport
             {
                 custom.PairingRequested -= Pairing_Requested;
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

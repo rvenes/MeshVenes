@@ -26,7 +26,11 @@
     <Compile Include="..\\MeshVenes\\Services\\ChannelUrlUtil.cs" Link="Services\\ChannelUrlUtil.cs" />
     <Compile Include="..\\MeshVenes\\Services\\ListSorter.cs" Link="Services\\ListSorter.cs" />
     <Compile Include="..\\MeshVenes\\Services\\ListSortMode.cs" Link="Services\\ListSortMode.cs" />
+    <Compile Include="..\\MeshVenes\\Services\\MessageSendSelectionPolicy.cs" Link="Services\\MessageSendSelectionPolicy.cs" />
     <Compile Include="..\\MeshVenes\\Models\\MessageLive.cs" Link="Models\\MessageLive.cs" />
+    <Compile Include="..\\MeshVenes\\Services\\RadioConnectionStateMachine.cs" Link="Services\\RadioConnectionStateMachine.cs" />
+    <Compile Include="..\\MeshVenes\\Services\\RadioOperationGate.cs" Link="Services\\RadioOperationGate.cs" />
+    <Compile Include="..\\MeshVenes\\Services\\UpdatePackageIntegrity.cs" Link="Services\\UpdatePackageIntegrity.cs" />
     <Compile Include="..\\MeshVenes\\Services\\UpdateVersionUtil.cs" Link="Services\\UpdateVersionUtil.cs" />
   </ItemGroup>
 </Project>

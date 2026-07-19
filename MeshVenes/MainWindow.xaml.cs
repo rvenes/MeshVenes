@@ -246,6 +246,7 @@ public sealed partial class MainWindow : Window
         AppState.Nodes.CollectionChanged -= Nodes_CollectionChanged;
         foreach (var node in AppState.Nodes)
             node.PropertyChanged -= Node_PropertyChanged;
+        SettingsReconnectHelper.RequestShutdown();
         try { await MqttProxyService.Instance.ShutdownAsync(); }
         catch { }
         try { await RadioClient.Instance.DisconnectAsync(); }
@@ -320,9 +321,17 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (RadioClient.Instance.IsReconnecting)
+        var connectionState = RadioClient.Instance.ConnectionState;
+        if (connectionState.Status != RadioConnectionStatus.Connected)
         {
-            ConnectionStatusText.Text = "Connecting...";
+            ConnectionStatusText.Text = connectionState.Status switch
+            {
+                RadioConnectionStatus.Connecting => "Connecting...",
+                RadioConnectionStatus.Reconnecting => "Reconnecting...",
+                RadioConnectionStatus.Disconnecting => "Disconnecting...",
+                RadioConnectionStatus.Failed => "Connection failed",
+                _ => "Not connected"
+            };
             return;
         }
 
@@ -350,7 +359,9 @@ public sealed partial class MainWindow : Window
         }
 
         ConnectionStatusText.Text = string.IsNullOrWhiteSpace(label)
-            ? "Connected to:"
+            ? string.IsNullOrWhiteSpace(connectionState.Endpoint)
+                ? "Connected"
+                : $"Connected to: {connectionState.Endpoint}"
             : $"Connected to: {label}";
     }
 

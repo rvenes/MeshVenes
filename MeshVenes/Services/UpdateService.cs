@@ -4,7 +4,6 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -241,11 +240,18 @@ public static class UpdateService
         var zipPath = Path.Combine(updatesDir, $"MeshVenes-{update.VersionText}-win-x64.zip");
         await DownloadWithProgressAsync(update.ZipUrl, zipPath, update.SizeBytes, downloadProgress, ct).ConfigureAwait(false);
 
-        var actualHash = await ComputeSha256Async(zipPath, ct).ConfigureAwait(false);
-        if (!string.Equals(actualHash, update.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+        try
+        {
+            await UpdatePackageIntegrity.VerifyFileAsync(
+                zipPath,
+                update.SizeBytes,
+                update.Sha256,
+                ct).ConfigureAwait(false);
+        }
+        catch
         {
             try { File.Delete(zipPath); } catch { }
-            throw new InvalidOperationException("Downloaded update failed the integrity check (sha256 mismatch).");
+            throw;
         }
 
         var stagingDir = Path.Combine(updatesDir, $"staging-{update.VersionText}");
@@ -319,37 +325,51 @@ public static class UpdateService
     private static async Task DownloadWithProgressAsync(string url, string destinationPath, long expectedSize, IProgress<double>? progress, CancellationToken ct)
     {
         var partialPath = destinationPath + ".partial";
+        UpdatePackageIntegrity.EnsureDownloadWithinExpectedSize(
+            downloadedSize: 0,
+            expectedSize);
 
-        using var response = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-
-        var totalBytes = response.Content.Headers.ContentLength ?? expectedSize;
-
-        await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-        await using (var target = File.Create(partialPath))
+        try
         {
-            var buffer = new byte[81920];
-            long readTotal = 0;
-            int read;
-            while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+            using var response = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            if (response.Content.Headers.ContentLength is long contentLength)
             {
-                await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                readTotal += read;
-                if (totalBytes > 0)
-                    progress?.Report(Math.Min(1d, (double)readTotal / totalBytes));
+                UpdatePackageIntegrity.EnsureDownloadWithinExpectedSize(
+                    contentLength,
+                    expectedSize);
             }
+
+            var totalBytes = response.Content.Headers.ContentLength ?? expectedSize;
+
+            await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+            await using (var target = File.Create(partialPath))
+            {
+                var buffer = new byte[81920];
+                long readTotal = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                {
+                    var nextTotal = checked(readTotal + read);
+                    UpdatePackageIntegrity.EnsureDownloadWithinExpectedSize(
+                        nextTotal,
+                        expectedSize);
+                    await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                    readTotal = nextTotal;
+                    if (totalBytes > 0)
+                        progress?.Report(Math.Min(1d, (double)readTotal / totalBytes));
+                }
+            }
+
+            File.Move(partialPath, destinationPath, overwrite: true);
+            progress?.Report(1d);
         }
-
-        File.Move(partialPath, destinationPath, overwrite: true);
-        progress?.Report(1d);
-    }
-
-    private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
-    {
-        await using var stream = File.OpenRead(path);
-        using var sha = SHA256.Create();
-        var hash = await sha.ComputeHashAsync(stream, ct).ConfigureAwait(false);
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        catch
+        {
+            try { File.Delete(partialPath); } catch { }
+            throw;
+        }
     }
 
     private static void CleanDirectory(string path)

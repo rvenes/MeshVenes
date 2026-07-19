@@ -9,7 +9,27 @@ namespace MeshVenes.Services;
 public static class SettingsReconnectHelper
 {
     private static readonly SemaphoreSlim ReconnectGate = new(1, 1);
+    private static readonly object CancellationSync = new();
+    private static CancellationTokenSource? _activeOperationCts;
     private static int _watchdogRunning;
+    private static int _shutdownRequested;
+
+    private static bool IsShutdownRequested => Volatile.Read(ref _shutdownRequested) != 0;
+
+    public static void CancelPendingConnectionAttempts()
+    {
+        lock (CancellationSync)
+        {
+            try { _activeOperationCts?.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    public static void RequestShutdown()
+    {
+        Interlocked.Exchange(ref _shutdownRequested, 1);
+        CancelPendingConnectionAttempts();
+    }
 
     public static bool IsNotConnectedException(Exception ex)
     {
@@ -27,11 +47,22 @@ public static class SettingsReconnectHelper
 
     public static async Task<bool> TryReconnectAfterSaveAsync(Action<string>? setStatus = null, CancellationToken ct = default)
     {
+        if (IsShutdownRequested)
+            return false;
+
         await ReconnectGate.WaitAsync(ct).ConfigureAwait(false);
+        using var operationCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lock (CancellationSync)
+            _activeOperationCts = operationCts;
+        var operationToken = operationCts.Token;
+        Exception? lastError = null;
+        var cancelled = false;
         try
         {
+            if (IsShutdownRequested)
+                return false;
+
             Log("Settings reconnect: starting.");
-            RadioClient.Instance.SetReconnectingState(true);
 
             if (RadioClient.Instance.IsConnected)
             {
@@ -40,9 +71,8 @@ public static class SettingsReconnectHelper
             }
 
             setStatus?.Invoke("Connecting...");
-            try { await RadioClient.Instance.DisconnectAsync().ConfigureAwait(false); } catch { }
+            await RadioClient.Instance.PrepareForReconnectAsync(operationToken).ConfigureAwait(false);
 
-            Exception? lastError = null;
             const int maxRounds = 10;
             var retryDelay = TimeSpan.FromSeconds(10);
 
@@ -51,21 +81,21 @@ public static class SettingsReconnectHelper
             // cheaply, so it falls back to a grace delay.
             setStatus?.Invoke("Waiting for the node to come back...");
             Log("Settings reconnect: waiting for saved endpoint to become available.");
-            var endpointReady = await WaitForSavedEndpointAsync(TimeSpan.FromSeconds(60), setStatus, ct).ConfigureAwait(false);
+            var endpointReady = await WaitForSavedEndpointAsync(TimeSpan.FromSeconds(60), setStatus, operationToken).ConfigureAwait(false);
             if (endpointReady)
             {
                 Log("Settings reconnect: endpoint available, settling before connect.");
-                await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromSeconds(3), operationToken).ConfigureAwait(false);
             }
             else
             {
                 Log("Settings reconnect: endpoint not probeable or not seen, using grace delay.");
-                await Task.Delay(TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromSeconds(15), operationToken).ConfigureAwait(false);
             }
 
             for (var round = 1; round <= maxRounds; round++)
             {
-                ct.ThrowIfCancellationRequested();
+                operationToken.ThrowIfCancellationRequested();
                 var candidates = BuildCandidates();
                 if (candidates.Count == 0)
                 {
@@ -79,7 +109,7 @@ public static class SettingsReconnectHelper
 
                 foreach (var candidate in candidates)
                 {
-                    ct.ThrowIfCancellationRequested();
+                    operationToken.ThrowIfCancellationRequested();
                     setStatus?.Invoke($"Connecting... ({round}/{maxRounds})");
 
                     try
@@ -90,19 +120,28 @@ public static class SettingsReconnectHelper
                             return true;
                         }
 
-                        await candidate(ct).ConfigureAwait(false);
+                        await candidate(operationToken).ConfigureAwait(false);
                         if (RadioClient.Instance.IsConnected)
                         {
                             Log("Settings reconnect: connected.");
                             return true;
                         }
                     }
+                    catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
                     catch (Exception ex)
                     {
+                        if (RadioClient.Instance.IsConnected)
+                        {
+                            Log("Settings reconnect: another connection succeeded.");
+                            return true;
+                        }
+
                         lastError = ex;
                         setStatus?.Invoke($"Reconnect attempt failed: {ex.Message}");
                         Log("Settings reconnect attempt failed: " + ex.Message);
-                        try { await RadioClient.Instance.DisconnectAsync().ConfigureAwait(false); } catch { }
                     }
                 }
 
@@ -110,7 +149,7 @@ public static class SettingsReconnectHelper
                 {
                     setStatus?.Invoke($"Reconnect retry in 10s... ({round}/{maxRounds})");
                     Log($"Settings reconnect: retry in 10s ({round}/{maxRounds}).");
-                    await Task.Delay(retryDelay, ct).ConfigureAwait(false);
+                    await Task.Delay(retryDelay, operationToken).ConfigureAwait(false);
                 }
             }
 
@@ -122,11 +161,41 @@ public static class SettingsReconnectHelper
 
             return RadioClient.Instance.IsConnected;
         }
+        catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
+        {
+            cancelled = true;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            try { setStatus?.Invoke("Reconnect failed: " + ex.Message); }
+            catch { }
+            Log("Settings reconnect failed unexpectedly: " + ex.Message);
+            return false;
+        }
         finally
         {
-            RadioClient.Instance.SetReconnectingState(false);
-            Log("Settings reconnect: finished.");
-            ReconnectGate.Release();
+            lock (CancellationSync)
+            {
+                if (ReferenceEquals(_activeOperationCts, operationCts))
+                    _activeOperationCts = null;
+            }
+
+            try
+            {
+                if (!RadioClient.Instance.IsConnected)
+                    RadioClient.Instance.CompleteReconnect(cancelled ? null : lastError?.Message);
+                Log("Settings reconnect: finished.");
+            }
+            catch (Exception ex)
+            {
+                Log("Settings reconnect cleanup failed: " + ex.Message);
+            }
+            finally
+            {
+                ReconnectGate.Release();
+            }
         }
     }
 
@@ -136,26 +205,63 @@ public static class SettingsReconnectHelper
     /// </summary>
     public static async Task<bool> TryConnectToSavedEndpointOnceAsync(CancellationToken ct = default)
     {
-        if (RadioClient.Instance.IsConnected)
-            return true;
+        if (IsShutdownRequested)
+            return false;
 
-        foreach (var candidate in BuildCandidates())
+        await ReconnectGate.WaitAsync(ct).ConfigureAwait(false);
+        using var operationCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lock (CancellationSync)
+            _activeOperationCts = operationCts;
+        var operationToken = operationCts.Token;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                await candidate(ct).ConfigureAwait(false);
-                if (RadioClient.Instance.IsConnected)
-                    return true;
-            }
-            catch (Exception ex)
-            {
-                Log("Connect to saved endpoint failed: " + ex.Message);
-                try { await RadioClient.Instance.DisconnectAsync().ConfigureAwait(false); } catch { }
-            }
-        }
+            if (IsShutdownRequested)
+                return false;
 
-        return RadioClient.Instance.IsConnected;
+            if (RadioClient.Instance.IsConnected)
+                return true;
+
+            foreach (var candidate in BuildCandidates())
+            {
+                operationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    await candidate(operationToken).ConfigureAwait(false);
+                    if (RadioClient.Instance.IsConnected)
+                        return true;
+                }
+                catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    if (RadioClient.Instance.IsConnected)
+                    {
+                        Log("Connect to saved endpoint: another connection succeeded.");
+                        return true;
+                    }
+
+                    Log("Connect to saved endpoint failed: " + ex.Message);
+                }
+            }
+
+            return RadioClient.Instance.IsConnected;
+        }
+        catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        finally
+        {
+            lock (CancellationSync)
+            {
+                if (ReferenceEquals(_activeOperationCts, operationCts))
+                    _activeOperationCts = null;
+            }
+
+            ReconnectGate.Release();
+        }
     }
 
     private static Action<Action> BuildRunOnUi()
@@ -173,6 +279,9 @@ public static class SettingsReconnectHelper
 
     public static void StartPostSaveReconnectWatchdog(Action<string>? setStatus = null)
     {
+        if (IsShutdownRequested)
+            return;
+
         if (Interlocked.CompareExchange(ref _watchdogRunning, 1, 0) != 0)
             return;
 
@@ -182,9 +291,12 @@ public static class SettingsReconnectHelper
             {
                 Log("Settings reconnect watchdog armed (120s window).");
                 var deadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(120);
-                while (DateTime.UtcNow < deadlineUtc)
+                while (!IsShutdownRequested && DateTime.UtcNow < deadlineUtc)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                    if (IsShutdownRequested)
+                        return;
+
                     if (!RadioClient.Instance.IsConnected)
                     {
                         setStatus?.Invoke("Node reboot detected. Connecting...");
@@ -296,19 +408,24 @@ public static class SettingsReconnectHelper
 
         if (!string.IsNullOrWhiteSpace(serialPort))
         {
-            entries.Add(("serial", ct => RadioClient.Instance.ConnectAsync(serialPort, runOnUi, logToUi)));
+            entries.Add(("serial", ct => RadioClient.Instance.ConnectAsync(serialPort, runOnUi, logToUi, ct)));
         }
 
         if (!string.IsNullOrWhiteSpace(tcpHost) &&
             int.TryParse(tcpPortText, out var tcpPort) &&
             tcpPort is >= 1 and <= 65535)
         {
-            entries.Add(("tcp", ct => RadioClient.Instance.ConnectTcpAsync(tcpHost, tcpPort, runOnUi, logToUi)));
+            entries.Add(("tcp", ct => RadioClient.Instance.ConnectTcpAsync(tcpHost, tcpPort, runOnUi, logToUi, ct)));
         }
 
         if (!string.IsNullOrWhiteSpace(bleId))
         {
-            entries.Add(("ble", ct => RadioClient.Instance.ConnectBluetoothAsync(bleId, "saved device", runOnUi, logToUi)));
+            entries.Add(("ble", ct => RadioClient.Instance.ConnectBluetoothAsync(
+                bleId,
+                "saved device",
+                runOnUi,
+                logToUi,
+                ct: ct)));
         }
 
         if (!string.IsNullOrWhiteSpace(preferred))
