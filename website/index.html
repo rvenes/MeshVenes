@@ -10,8 +10,8 @@
   <meta property="og:image" content="https://venes.org/meshvenes/images/meshvenes-nodes-map.png">
   <meta property="og:type" content="website">
   <title>MeshVenes — Meshtastic for Windows</title>
-  <link rel="stylesheet" href="styles.css?v=20260929-1">
-  <script src="script.js?v=20260929-1" defer></script>
+  <link rel="stylesheet" href="styles.css?v=20260929-2">
+  <script src="script.js?v=20260929-2" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -37,13 +37,13 @@
         <h1>Your Meshtastic network,<br><span>at home on Windows.</span></h1>
         <p class="hero-lede">Send messages, explore nodes on a map and configure your radios from one focused native desktop app.</p>
         <div class="hero-actions">
-          <a class="button button-primary download-link" href="https://github.com/rvenes/MeshVenes/releases/latest">
+          <a class="button button-primary download-link" href="https://venes.org/meshvenes/MeshVenes-1.5.2-win-x64.zip">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/></svg>
             <span>Download for Windows</span>
           </a>
           <a class="button button-secondary" href="https://github.com/rvenes/MeshVenes" target="_blank" rel="noreferrer">View source on GitHub</a>
         </div>
-        <p class="download-meta"><span class="version-label">Latest version</span> · Windows x64 · PowerShell or portable ZIP</p>
+        <p class="download-meta"><span class="version-label">v1.5.2</span> · Windows x64 · PowerShell or portable ZIP</p>
       </div>
 
       <div class="hero-visual">
@@ -126,12 +126,12 @@
         <div class="latest-copy">
           <p class="section-kicker">Latest release</p>
           <div class="latest-title-row">
-            <h2 id="latest-title">What's new in <span class="version-label">MeshVenes</span></h2>
-            <span class="release-badge version-label">Latest</span>
+            <h2 id="latest-title">What's new in <span class="version-label">v1.5.2</span></h2>
+            <span class="release-badge version-label">v1.5.2</span>
           </div>
-          <p class="release-notes" aria-live="polite">Loading release details…</p>
+          <p class="release-notes" aria-live="polite">PowerShell installation, signed updates with recovery backups, encrypted configuration exports, protected local archives and .NET 10.</p>
           <div class="release-actions">
-            <a class="text-link release-link" href="https://github.com/rvenes/MeshVenes/releases/latest" target="_blank" rel="noreferrer">Read the release details <span aria-hidden="true">→</span></a>
+            <a class="text-link release-link" href="https://github.com/rvenes/MeshVenes/releases/tag/v1.5.2" target="_blank" rel="noreferrer">Read the release details <span aria-hidden="true">→</span></a>
             <span class="release-size"></span>
           </div>
         </div>
@@ -170,14 +170,15 @@
 Invoke-WebRequest -UseBasicParsing -Uri https://venes.org/meshvenes/install-windows.ps1 -OutFile $installer -ErrorAction Stop
 # Inspect the downloaded script before running it.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer</code></pre>
-          <p><a href="install-windows.ps1">Read the installer</a> · <a href="https://github.com/rvenes/MeshVenes/tree/codex/security-powershell-install/installers">Review installer source</a></p>
+          <p><a href="install-windows.ps1">Read the installer</a> · <a href="https://github.com/rvenes/MeshVenes/tree/v1.5.2/installers">Review installer source</a></p>
           <p>Close MeshVenes first. Add <code>-DesktopShortcut</code> for a desktop icon. Running the installer again checks the latest release; <code>-Rollback</code> selects the previous installation. Settings and logs are retained.</p>
           <p>The installer checks signed release metadata, the ZIP's size and SHA-256 before activation. The application and PowerShell script are not Authenticode-signed. Windows 10 version 2004 or later, x64, is required; supported Windows 11 is recommended. Maps require Microsoft Edge WebView2 Runtime.</p>
+          <p>Configuration exports are encrypted by default. Local archives are protected for your Windows account; export data you need before reinstalling Windows. Older MeshVenes versions cannot read the new protected archives.</p>
           <p>Prefer a portable copy? Download the ZIP, extract it to a writable folder and run <code>MeshVenes.exe</code>.</p>
         </div>
         <div class="download-cta">
-          <a class="button button-primary download-link" href="https://github.com/rvenes/MeshVenes/releases/latest">Download portable ZIP</a>
-          <small><span class="version-label">Latest version</span> · <span class="release-size">Windows x64</span></small>
+          <a class="button button-primary download-link" href="https://venes.org/meshvenes/MeshVenes-1.5.2-win-x64.zip">Download portable ZIP</a>
+          <small><span class="version-label">v1.5.2</span> · <span class="release-size">Windows x64</span></small>
         </div>
       </div>
     </section>
