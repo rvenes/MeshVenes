@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.Json;
+using System.Text;
 using System.Threading.Tasks;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
@@ -66,6 +67,10 @@ public sealed partial class SettingsImportExportPage : Page
             return;
         }
 
+        var exportPassword = await GetExportPasswordAsync();
+        if (exportPassword is null) return;
+        var encrypt = exportPassword.Length > 0;
+
         try
         {
             StatusText.Text = $"Exporting settings from node 0x{nodeNum:x8} (this can take time on remote nodes)...";
@@ -80,9 +85,9 @@ public sealed partial class SettingsImportExportPage : Page
             var picker = new FileSavePicker
             {
                 SuggestedFileName = $"meshtastic-config-{nodeNum:x8}-{DateTime.UtcNow:yyyyMMdd-HHmmss}",
-                DefaultFileExtension = ".json"
+                DefaultFileExtension = encrypt ? ".mvbackup" : ".json"
             };
-            picker.FileTypeChoices.Add("JSON file", new List<string> { ".json" });
+            picker.FileTypeChoices.Add(encrypt ? "Encrypted MeshVenes backup" : "Unencrypted JSON file", new List<string> { encrypt ? ".mvbackup" : ".json" });
             InitializeWithWindow.Initialize(picker, hwnd);
 
             var file = await picker.PickSaveFileAsync();
@@ -92,8 +97,9 @@ public sealed partial class SettingsImportExportPage : Page
                 return;
             }
 
-            var json = JsonSerializer.Serialize(backup, new JsonSerializerOptions { WriteIndented = true });
-            await Windows.Storage.FileIO.WriteTextAsync(file, json);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(backup, new JsonSerializerOptions { WriteIndented = true });
+            if (encrypt) payload = await Task.Run(() => EncryptedBackup.Encrypt(payload, "settings", exportPassword));
+            await Windows.Storage.FileIO.WriteBytesAsync(file, payload);
             StatusText.Text = $"Export complete: {file.Name}";
         }
         catch (Exception ex)
@@ -121,13 +127,15 @@ public sealed partial class SettingsImportExportPage : Page
         {
             var picker = new FileOpenPicker();
             picker.FileTypeFilter.Add(".json");
+            picker.FileTypeFilter.Add(".mvbackup");
             InitializeWithWindow.Initialize(picker, hwnd);
             var file = await picker.PickSingleFileAsync();
             if (file is null)
                 return;
 
-            var json = await Windows.Storage.FileIO.ReadTextAsync(file);
-            var backup = JsonSerializer.Deserialize<SettingsBackupFile>(json);
+            var payload = await ReadBackupFileAsync(file, "settings");
+            if (payload is null) return;
+            var backup = JsonSerializer.Deserialize<SettingsBackupFile>(payload);
             if (backup is null)
             {
                 StatusText.Text = "Invalid backup file.";
@@ -219,6 +227,9 @@ public sealed partial class SettingsImportExportPage : Page
             return;
         }
 
+        var exportPassword = await GetExportPasswordAsync();
+        if (exportPassword is null) return;
+        var encrypt = exportPassword.Length > 0;
         try
         {
             SetEnabled(false);
@@ -231,9 +242,9 @@ public sealed partial class SettingsImportExportPage : Page
             var picker = new FileSavePicker
             {
                 SuggestedFileName = $"meshtastic-profile-{nodeNum:x8}-{DateTime.UtcNow:yyyyMMdd-HHmmss}",
-                DefaultFileExtension = ".cfg"
+                DefaultFileExtension = encrypt ? ".mvbackup" : ".cfg"
             };
-            picker.FileTypeChoices.Add("Meshtastic device profile", new List<string> { ".cfg" });
+            picker.FileTypeChoices.Add(encrypt ? "Encrypted device profile" : "Unencrypted Meshtastic device profile", new List<string> { encrypt ? ".mvbackup" : ".cfg" });
             InitializeWithWindow.Initialize(picker, hwnd);
 
             var file = await picker.PickSaveFileAsync();
@@ -243,7 +254,9 @@ public sealed partial class SettingsImportExportPage : Page
                 return;
             }
 
-            await Windows.Storage.FileIO.WriteBytesAsync(file, profile.ToByteArray());
+            var payload = profile.ToByteArray();
+            if (encrypt) payload = await Task.Run(() => EncryptedBackup.Encrypt(payload, "device-profile", exportPassword));
+            await Windows.Storage.FileIO.WriteBytesAsync(file, payload);
             StatusText.Text = $"Device profile exported: {file.Name}";
         }
         catch (Exception ex)
@@ -271,13 +284,15 @@ public sealed partial class SettingsImportExportPage : Page
         {
             var picker = new FileOpenPicker();
             picker.FileTypeFilter.Add(".cfg");
+            picker.FileTypeFilter.Add(".mvbackup");
             InitializeWithWindow.Initialize(picker, hwnd);
             var file = await picker.PickSingleFileAsync();
             if (file is null)
                 return;
 
-            var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
-            var profile = DeviceProfile.Parser.ParseFrom(buffer.ToArray());
+            var payload = await ReadBackupFileAsync(file, "device-profile");
+            if (payload is null) return;
+            var profile = DeviceProfile.Parser.ParseFrom(payload);
             var batch = DeviceProfileService.BuildApplyBatch(profile);
             if (batch.Count == 0)
             {
@@ -359,6 +374,57 @@ public sealed partial class SettingsImportExportPage : Page
         {
             SetEnabled(true);
         }
+    }
+
+    private async Task<string?> GetExportPasswordAsync()
+    {
+        if (EncryptExportCheck.IsChecked == true) return await RequestBackupPasswordAsync(true);
+        var dialog = new ContentDialog
+        {
+            Title = "Export without encryption?",
+            Content = "This legacy file can expose private radio keys and network passwords. Anyone with access to the file can read them. Use this only when another Meshtastic client requires JSON or CFG.",
+            PrimaryButtonText = "Export unencrypted",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary ? "" : null;
+    }
+
+    private async Task<string?> RequestBackupPasswordAsync(bool creating)
+    {
+        var password = new PasswordBox { Header = "Password", PasswordRevealMode = PasswordRevealMode.Peek };
+        var confirmation = new PasswordBox { Header = "Repeat password", PasswordRevealMode = PasswordRevealMode.Peek };
+        var error = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var content = new StackPanel { Spacing = 10 };
+        content.Children.Add(new TextBlock { Text = creating ? "Use at least 12 characters. Keep the password separately; it cannot be recovered." : "Enter the password used when this backup was exported.", TextWrapping = TextWrapping.Wrap });
+        content.Children.Add(password);
+        if (creating) content.Children.Add(confirmation);
+        content.Children.Add(error);
+        var dialog = new ContentDialog { Title = creating ? "Protect backup" : "Unlock backup", Content = content, PrimaryButtonText = "Continue", CloseButtonText = "Cancel", XamlRoot = XamlRoot };
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            if ((creating && (password.Password.Length < 12 || password.Password != confirmation.Password)) || password.Password.Length == 0)
+            {
+                args.Cancel = true;
+                error.Text = creating ? "Use at least 12 characters and enter the same password twice." : "Enter the backup password.";
+            }
+        };
+        var result = await dialog.ShowAsync() == ContentDialogResult.Primary ? password.Password : null;
+        password.Password = confirmation.Password = "";
+        return result;
+    }
+
+    private async Task<byte[]?> ReadBackupFileAsync(Windows.Storage.StorageFile file, string kind)
+    {
+        var properties = await file.GetBasicPropertiesAsync();
+        if (properties.Size > EncryptedBackup.MaximumPayloadBytes * 2UL) throw new InvalidDataException("Backup is too large.");
+        var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
+        var bytes = buffer.ToArray();
+        if (!file.Name.EndsWith(".mvbackup", StringComparison.OrdinalIgnoreCase)) return bytes;
+        var password = await RequestBackupPasswordAsync(false);
+        if (password is null) return null;
+        return await Task.Run(() => EncryptedBackup.Decrypt(bytes, kind, password));
     }
 
     private async void RestoreFromFlash_Click(object sender, RoutedEventArgs e)

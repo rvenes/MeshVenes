@@ -2,7 +2,7 @@
 MeshVenes is a community-driven Windows desktop client compatible with Meshtastic radios.
 Not affiliated with or endorsed by the Meshtastic organization.
 
-MeshVenes is a self-contained WinUI 3 (.NET 8) application for interacting with Meshtastic nodes over:
+MeshVenes is a self-contained WinUI 3 (.NET 10) application for interacting with Meshtastic nodes over:
 
 Serial (COM)  
 TCP/IP  
@@ -19,12 +19,74 @@ Import / export of settings
 
 Download & install
 
-- Go to Releases on GitHub.
-- Download `MeshVenes-<version>-win-x64.zip` under Assets.
-- Extract the ZIP.
-- Run `MeshVenes.exe` directly.
+The PowerShell installer in `installers/install-windows.ps1` installs the official
+Windows x64 ZIP for the current user and creates a Start menu shortcut. It needs
+64-bit Windows PowerShell 5.1 or PowerShell 7, Windows 10 version 2004 or later,
+and no administrator privileges. Supported Windows 11 is recommended.
 
-No installer or package registration is required.
+From a reviewed source checkout, run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\installers\install-windows.ps1
+```
+
+`-DesktopShortcut` also creates a desktop shortcut; `-Rollback` switches shortcuts
+back to the previous installation without downloading anything. Close MeshVenes
+first. Repeating installation refreshes shortcuts when the same version is already
+installed. Bypass applies only to this PowerShell process, not to machine policy;
+organizational execution policy may still prevent execution.
+
+The planned web command, **only after the installer has been explicitly published**
+at the stated URL, is:
+
+```powershell
+$installer = Join-Path $env:TEMP ('MeshVenes-install-' + [guid]::NewGuid().ToString('N') + '.ps1')
+Invoke-WebRequest -UseBasicParsing -Uri https://venes.org/meshvenes/install-windows.ps1 -OutFile $installer -ErrorAction Stop
+# Inspect the downloaded script before executing it.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+```
+
+The script validates the HTTPS origin, exact ZIP size, SHA-256 and archive paths
+before activation. Programs are stored under `%LOCALAPPDATA%\Programs\MeshVenes`;
+settings, messages and logs remain under `%LOCALAPPDATA%\MeshVenes`. Previous
+releases and download files are retained, so disk usage grows with installations.
+The script does not enable autostart or install a background service. Windows
+profile paths containing percent signs are rejected to avoid shortcut API expansion;
+use the portable ZIP in that case.
+
+The installer and application require a separate RSA/SHA-256 signature over the
+exact release manifest bytes. Their pinned public key is independent of the web
+server. The script and Windows executable remain unsigned by Authenticode: acquire
+the initial installer from a trusted source and inspect it. Versions through 1.5.1
+do not verify manifest signatures; that first upgrade still relies on HTTPS. The
+new installer requires the coordinated signed feed to be published before use.
+See [the security review](docs/security-review-2026-09-29.md).
+
+Sensitive data and backups
+
+Exports default to password-protected `.mvbackup` files (AES-256-GCM). Use a strong,
+unique passphrase and keep it separately: a forgotten passphrase cannot be reset.
+Existing JSON/CFG imports remain supported; unencrypted export is an explicit
+compatibility option. Private keys and network passwords are masked by default.
+
+New message, GPS, waypoint and diagnostic archives use Windows current-user DPAPI.
+Legacy archives remain readable and are protected on their next write. Older
+MeshVenes versions cannot read the protected format. DPAPI protection depends on
+the Windows user profile: copying these files alone to a reinstalled PC or another
+account is insufficient. Before reinstalling Windows, export required logs through
+the app and create portable encrypted configuration backups. Plain log exports
+contain sensitive information. Protection does not defend against malware running
+as the same Windows user; filenames and connection preferences remain visible.
+
+Radio TCP connections are unencrypted: use a trusted LAN or VPN. MQTT uses normal
+certificate validation and always enables TLS for the public Meshtastic broker
+and `mqtts://` addresses. Custom local brokers may still use plain MQTT; enable TLS
+when sending credentials over an untrusted network.
+
+Manual installation remains available: download `MeshVenes-<version>-win-x64.zip`
+from GitHub Releases, extract it to a writable folder and run `MeshVenes.exe`.
+No package registration is required. The map requires Microsoft Edge WebView2
+Runtime; the installer does not install that runtime automatically.
 
 MeshVenes is distributed only as an unsigned, self-contained Windows ZIP. MSIX, APPX, and MSIXBundle packages are not built or published because an unsigned package is not a useful installation path for end users. GitHub Actions validates the same self-contained publish flow used for releases, but does not retain artifacts or publish releases.
 The full source code is available in the repository if you want to review or build it yourself.

@@ -710,6 +710,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
         if (!_mapEventsAttached)
         {
+            MapWebViewSecurity.Configure(wv, "appassets.local");
             wv.WebMessageReceived += CoreWebView2_WebMessageReceived;
             wv.NavigationCompleted += CoreWebView2_NavigationCompleted;
             _mapEventsAttached = true;
@@ -740,7 +741,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         try
         {
             _mapReady = false;
-            wv.SetVirtualHostNameToFolderMapping("appassets.local", _mapFolderPath, CoreWebView2HostResourceAccessKind.Allow);
+            wv.SetVirtualHostNameToFolderMapping("appassets.local", _mapFolderPath, CoreWebView2HostResourceAccessKind.DenyCors);
             MapView.Source = _mapUri;
         }
         catch (Exception ex)
@@ -779,6 +780,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
     private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        if (!MapSourcePolicy.IsTrustedPage(e.Source, "appassets.local"))
+            return;
         try
         {
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
@@ -3188,6 +3191,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             }, s_jsonOptions);
 
             var sent = false;
+            MapWebViewSecurity.Configure(core, "routemap.local");
             void SendOnce()
             {
                 if (sent || dialogMap.CoreWebView2 is null)
@@ -3199,6 +3203,8 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
 
             core.WebMessageReceived += (_, args) =>
             {
+                if (!MapSourcePolicy.IsTrustedPage(args.Source, "routemap.local"))
+                    return;
                 try
                 {
                     using var doc = JsonDocument.Parse(args.WebMessageAsJson);
@@ -3223,7 +3229,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 }
             };
 
-            core.SetVirtualHostNameToFolderMapping("routemap.local", mapFolder, CoreWebView2HostResourceAccessKind.Allow);
+            core.SetVirtualHostNameToFolderMapping("routemap.local", mapFolder, CoreWebView2HostResourceAccessKind.DenyCors);
             dialogMap.Source = new Uri("https://routemap.local/Map/map.html");
         }
         catch
@@ -5146,7 +5152,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             return;
         }
 
-        var lines = File.ReadAllLines(path);
+        var lines = LocalProtectedFile.ReadAllLines(path);
         var cutoff = DateTime.UtcNow.AddDays(-_positionLogRetentionDays);
         var filtered = new List<string>();
 
@@ -5185,7 +5191,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
                 filtered.Insert(0, "timestamp_utc,battery_volts,battery_percent,channel_utilization,airtime,is_powered");
 
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllLines(path, filtered);
+            LocalProtectedFile.WriteAllLines(path, filtered);
         }
 
         RefreshDeviceMetricsSamples();
@@ -5213,7 +5219,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
             return;
         }
 
-        var lines = File.ReadAllLines(path);
+        var lines = LocalProtectedFile.ReadAllLines(path);
         var cutoff = DateTime.UtcNow.AddDays(-_positionLogRetentionDays);
         var filtered = new List<string>();
 
@@ -5244,7 +5250,7 @@ public sealed partial class NodesPage : Page, INotifyPropertyChanged
         else
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllLines(path, filtered);
+            LocalProtectedFile.WriteAllLines(path, filtered);
         }
 
         RefreshSelectedNodeLogs();

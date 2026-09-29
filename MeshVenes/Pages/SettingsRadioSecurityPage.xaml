@@ -33,7 +33,7 @@
 
                 <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Private key (base64)"/>
                 <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                    <TextBox x:Name="PrivateKeyBox" TextWrapping="NoWrap"/>
+                    <PasswordBox x:Name="PrivateKeyBox" PasswordRevealMode="Peek"/>
                     <Button Grid.Column="1" Content="Generate" Click="GeneratePrivateKey_Click"/>
                     <Button Grid.Column="2" Content="Clear" Click="ClearPrivateKey_Click"/>
                 </Grid>

@@ -65,7 +65,7 @@ public sealed partial class SettingsModuleMqttPage : Page
             RootBox.Text = config.Root ?? string.Empty;
             AddressBox.Text = config.Address ?? string.Empty;
             UsernameBox.Text = config.Username ?? string.Empty;
-            PasswordBox.Text = config.Password ?? string.Empty;
+            PasswordBox.Password = config.Password ?? string.Empty;
             TlsToggle.IsOn = config.TlsEnabled;
 
             StatusText.Text = $"Loaded from node 0x{nodeNum:x8}.";
@@ -110,7 +110,7 @@ public sealed partial class SettingsModuleMqttPage : Page
                 Root = (RootBox.Text ?? string.Empty).Trim(),
                 Address = (AddressBox.Text ?? string.Empty).Trim(),
                 Username = (UsernameBox.Text ?? string.Empty).Trim(),
-                Password = PasswordBox.Text ?? string.Empty,
+                Password = PasswordBox.Password ?? string.Empty,
                 TlsEnabled = TlsToggle.IsOn
             };
 

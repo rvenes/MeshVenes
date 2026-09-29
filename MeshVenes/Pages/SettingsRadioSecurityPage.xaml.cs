@@ -39,7 +39,7 @@ public sealed partial class SettingsRadioSecurityPage : Page
             var security = config.Security ?? new Config.Types.SecurityConfig();
 
             PublicKeyBox.Text = security.PublicKey?.ToBase64() ?? "";
-            PrivateKeyBox.Text = security.PrivateKey?.ToBase64() ?? "";
+            PrivateKeyBox.Password = security.PrivateKey?.ToBase64() ?? "";
 
             var adminKeys = security.AdminKey?.Select(k => k.ToBase64()).ToList() ?? new List<string>();
             AdminKey1Box.Text = adminKeys.ElementAtOrDefault(0) ?? "";
@@ -74,7 +74,7 @@ public sealed partial class SettingsRadioSecurityPage : Page
 
         try
         {
-            var privateKey = ParseBase64Key32(PrivateKeyBox.Text, "Private key", allowEmpty: true);
+            var privateKey = ParseBase64Key32(PrivateKeyBox.Password, "Private key", allowEmpty: true);
 
             var security = new Config.Types.SecurityConfig
             {
@@ -129,13 +129,13 @@ public sealed partial class SettingsRadioSecurityPage : Page
 
     private void GeneratePrivateKey_Click(object sender, RoutedEventArgs e)
     {
-        PrivateKeyBox.Text = GeneratePrivateKeyBase64();
+        PrivateKeyBox.Password = GeneratePrivateKeyBase64();
         StatusText.Text = "Generated new private key. Save to apply on node.";
     }
 
     private void ClearPrivateKey_Click(object sender, RoutedEventArgs e)
     {
-        PrivateKeyBox.Text = string.Empty;
+        PrivateKeyBox.Password = string.Empty;
         StatusText.Text = "Private key cleared. Save to let node generate a new key pair.";
     }
 

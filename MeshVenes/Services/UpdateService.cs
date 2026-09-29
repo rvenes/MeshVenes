@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
 using System.Net.Http;
 using System.Reflection;
 using System.Text;
@@ -54,6 +53,7 @@ public static class UpdateService
     private static readonly HttpClient HttpClient = CreateHttpClient();
     private static readonly object Gate = new();
     private static Task<UpdateCheckResult>? _inFlightCheck;
+    private static int _stageStarted;
 
     public static string CurrentVersionText { get; } = ResolveVersion();
 
@@ -70,7 +70,7 @@ public static class UpdateService
 
         try
         {
-            var probe = Path.Combine(AppContext.BaseDirectory, ".mv-writetest");
+            var probe = Path.Combine(AppContext.BaseDirectory, ".mv-writetest-" + Guid.NewGuid().ToString("N"));
             File.WriteAllText(probe, "x");
             File.Delete(probe);
             return true;
@@ -112,11 +112,22 @@ public static class UpdateService
         {
             // Cache-buster: static hosts and proxies may cache version.json hard.
             var url = $"{GetManifestUrl()}?t={DateTime.UtcNow.Ticks}";
-            using var response = await HttpClient.GetAsync(url, ct).ConfigureAwait(false);
+            using var metadataTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            metadataTimeout.CancelAfter(TimeSpan.FromSeconds(30));
+            ct = metadataTimeout.Token;
+            using var response = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
             await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            var manifest = await JsonSerializer.DeserializeAsync<ManifestDto>(stream, cancellationToken: ct).ConfigureAwait(false);
+            var manifestBytes = await ReleaseManifestSignature.ReadBoundedAsync(stream, 65536, ct).ConfigureAwait(false);
+            var signatureUrl = new UriBuilder(url);
+            signatureUrl.Path += ".sig";
+            using var signatureResponse = await HttpClient.GetAsync(signatureUrl.Uri, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            signatureResponse.EnsureSuccessStatusCode();
+            await using var signatureStream = await signatureResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            var signature = await ReleaseManifestSignature.ReadBoundedAsync(signatureStream, 384, ct).ConfigureAwait(false);
+            ReleaseManifestSignature.Verify(manifestBytes, signature);
+            var manifest = JsonSerializer.Deserialize<ManifestDto>(manifestBytes);
             if (manifest is null ||
                 string.IsNullOrWhiteSpace(manifest.Version) ||
                 string.IsNullOrWhiteSpace(manifest.Url) ||
@@ -140,7 +151,8 @@ public static class UpdateService
                 };
             }
 
-            var versionText = SanitizeDisplayVersion(manifest.Version);
+            UpdateSourcePolicy.ValidatePackage(manifest.Version, manifest.Url, manifest.Sha256, manifest.SizeBytes, IsLocalTestFeed());
+            var versionText = manifest.Version;
             return new UpdateCheckResult
             {
                 Status = UpdateStatus.UpdateAvailable,
@@ -152,10 +164,10 @@ public static class UpdateService
                     Sha256 = manifest.Sha256,
                     SizeBytes = manifest.SizeBytes,
                     Notes = manifest.Notes,
-                    ReleaseUrl = manifest.ReleaseUrl
+                    ReleaseUrl = UpdateSourcePolicy.SafeReleaseUrl(manifest.ReleaseUrl)
                 },
                 Message = $"Update status: new version available ({versionText}).",
-                ReleaseUrl = manifest.ReleaseUrl
+                ReleaseUrl = UpdateSourcePolicy.SafeReleaseUrl(manifest.ReleaseUrl)
             };
         }
         catch
@@ -190,7 +202,7 @@ public static class UpdateService
                 {
                     Status = UpdateStatus.GitHubReleaseInfo,
                     Message = $"Update status: latest on GitHub is {latest.TagName}.",
-                    ReleaseUrl = latest.HtmlUrl
+                    ReleaseUrl = UpdateSourcePolicy.SafeReleaseUrl(latest.HtmlUrl)
                 };
             }
 
@@ -200,7 +212,7 @@ public static class UpdateService
                 {
                     Status = UpdateStatus.GitHubReleaseInfo,
                     Message = $"Update status: new version available ({latest.TagName}).",
-                    ReleaseUrl = latest.HtmlUrl
+                    ReleaseUrl = UpdateSourcePolicy.SafeReleaseUrl(latest.HtmlUrl)
                 };
             }
 
@@ -233,47 +245,65 @@ public static class UpdateService
         if (!CanSelfUpdate())
             throw new InvalidOperationException("Self-update is not supported for this installation.");
 
-        var updatesDir = Path.Combine(AppDataPaths.BasePath, "Updates");
-        CleanDirectory(updatesDir);
-        Directory.CreateDirectory(updatesDir);
-
-        var zipPath = Path.Combine(updatesDir, $"MeshVenes-{update.VersionText}-win-x64.zip");
-        await DownloadWithProgressAsync(update.ZipUrl, zipPath, update.SizeBytes, downloadProgress, ct).ConfigureAwait(false);
-
+        if (Interlocked.CompareExchange(ref _stageStarted, 1, 0) != 0)
+            throw new InvalidOperationException("An update is already downloading or waiting for this app to close.");
         try
         {
-            await UpdatePackageIntegrity.VerifyFileAsync(
-                zipPath,
-                update.SizeBytes,
-                update.Sha256,
-                ct).ConfigureAwait(false);
+            UpdateSourcePolicy.ValidatePackage(update.VersionText, update.ZipUrl, update.Sha256, update.SizeBytes, IsLocalTestFeed());
+            var updatesDir = Path.Combine(AppDataPaths.BasePath, "Updates", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(updatesDir);
+
+            var zipPath = Path.Combine(updatesDir, $"MeshVenes-{update.VersionText}-win-x64.zip");
+            await DownloadWithProgressAsync(update.ZipUrl, zipPath, update.SizeBytes, downloadProgress, ct).ConfigureAwait(false);
+
+            try
+            {
+                await UpdatePackageIntegrity.VerifyFileAsync(
+                    zipPath,
+                    update.SizeBytes,
+                    update.Sha256,
+                    ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                try { File.Delete(zipPath); } catch { }
+                throw;
+            }
+
+            var stagingDir = Path.Combine(updatesDir, $"staging-{update.VersionText}");
+            UpdatePackageIntegrity.ExtractVerifiedArchive(zipPath, stagingDir);
+
+            var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
+            var exePath = Path.Combine(installDir, "MeshVenes.exe");
+            var scriptPath = Path.Combine(updatesDir, "apply-update.ps1");
+            File.WriteAllText(scriptPath, UpdateApplyScript.Build(stagingDir, installDir, exePath, Environment.ProcessId), new UTF8Encoding(true));
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+                WorkingDirectory = updatesDir,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+
+            startInfo.ArgumentList.Add("-NoProfile");
+            // PowerShell 7's module path is incompatible with the Windows PowerShell helper.
+            startInfo.Environment.Remove("PSModulePath");
+            startInfo.ArgumentList.Add("-NonInteractive");
+            startInfo.ArgumentList.Add("-ExecutionPolicy");
+            startInfo.ArgumentList.Add("Bypass");
+            startInfo.ArgumentList.Add("-File");
+            startInfo.ArgumentList.Add(scriptPath);
+
+            if (Process.Start(startInfo) is null)
+                throw new InvalidOperationException("Could not start the updater script.");
         }
         catch
         {
-            try { File.Delete(zipPath); } catch { }
+            Interlocked.Exchange(ref _stageStarted, 0);
             throw;
         }
-
-        var stagingDir = Path.Combine(updatesDir, $"staging-{update.VersionText}");
-        ZipFile.ExtractToDirectory(zipPath, stagingDir);
-        if (!File.Exists(Path.Combine(stagingDir, "MeshVenes.exe")))
-            throw new InvalidOperationException("Update package does not contain MeshVenes.exe.");
-
-        var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
-        var exePath = Path.Combine(installDir, "MeshVenes.exe");
-        var scriptPath = Path.Combine(updatesDir, "apply-update.cmd");
-        File.WriteAllText(scriptPath, BuildUpdaterScript(stagingDir, installDir, exePath, Environment.ProcessId), Encoding.ASCII);
-
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = scriptPath,
-            WorkingDirectory = updatesDir,
-            UseShellExecute = true,
-            WindowStyle = ProcessWindowStyle.Hidden
-        };
-
-        if (Process.Start(startInfo) is null)
-            throw new InvalidOperationException("Could not start the updater script.");
     }
 
     /// <summary>
@@ -291,35 +321,6 @@ public static class UpdateService
         }
 
         Microsoft.UI.Xaml.Application.Current.Exit();
-    }
-
-    private static string BuildUpdaterScript(string stagingDir, string installDir, string exePath, int pid)
-    {
-        // Waits for the app to exit, copies the new files over the install folder
-        // (never deleting anything), and restarts the app. Sleep uses the ping
-        // trick because "timeout /t" fails without an interactive console.
-        var sb = new StringBuilder();
-        sb.AppendLine("@echo off");
-        sb.AppendLine("setlocal");
-        sb.AppendLine($"set \"SRC={stagingDir}\"");
-        sb.AppendLine($"set \"DST={installDir}\"");
-        sb.AppendLine($"set \"EXE={exePath}\"");
-        sb.AppendLine($"set \"APPPID={pid}\"");
-        sb.AppendLine(":waitloop");
-        sb.AppendLine("tasklist /FI \"PID eq %APPPID%\" | findstr /C:\" %APPPID% \" >nul");
-        sb.AppendLine("if not errorlevel 1 (");
-        sb.AppendLine("  ping -n 2 127.0.0.1 >nul");
-        sb.AppendLine("  goto waitloop");
-        sb.AppendLine(")");
-        sb.AppendLine("robocopy \"%SRC%\" \"%DST%\" /E /R:10 /W:1 /NFL /NDL /NJH /NJS /NP");
-        sb.AppendLine("if errorlevel 8 goto failed");
-        sb.AppendLine("rmdir /s /q \"%SRC%\"");
-        sb.AppendLine("start \"\" \"%EXE%\"");
-        sb.AppendLine("exit /b 0");
-        sb.AppendLine(":failed");
-        sb.AppendLine("start \"\" \"%EXE%\"");
-        sb.AppendLine("exit /b 1");
-        return sb.ToString();
     }
 
     private static async Task DownloadWithProgressAsync(string url, string destinationPath, long expectedSize, IProgress<double>? progress, CancellationToken ct)
@@ -372,29 +373,21 @@ public static class UpdateService
         }
     }
 
-    private static void CleanDirectory(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path))
-                Directory.Delete(path, recursive: true);
-        }
-        catch
-        {
-            // Leftovers from a previous run that are still locked are harmless.
-        }
-    }
-
     private static string GetManifestUrl()
     {
         // Debug/testing override so the feed can be pointed at a local server.
         var overrideUrl = SettingsStore.GetString("UpdateManifestUrlOverride")?.Trim();
-        return string.IsNullOrWhiteSpace(overrideUrl) ? ManifestUrl : overrideUrl;
+        if (string.IsNullOrWhiteSpace(overrideUrl)) return ManifestUrl;
+        if (!UpdateSourcePolicy.IsLoopbackHttp(overrideUrl))
+            throw new InvalidOperationException("Test update feeds must use a loopback HTTP(S) address.");
+        return overrideUrl;
     }
+
+    private static bool IsLocalTestFeed() => UpdateSourcePolicy.IsLoopbackHttp(SettingsStore.GetString("UpdateManifestUrlOverride")?.Trim());
 
     private static HttpClient CreateHttpClient()
     {
-        var client = new HttpClient
+        var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
         {
             Timeout = TimeSpan.FromMinutes(5)
         };

@@ -1,4 +1,4 @@
-﻿using MeshVenes.Models;
+using MeshVenes.Models;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -45,7 +45,7 @@ public static class WaypointArchive
         lock (_gate)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, json);
+            LocalProtectedFile.WriteAllText(path, json);
         }
     }
 
@@ -59,7 +59,7 @@ public static class WaypointArchive
         {
             string json;
             lock (_gate)
-                json = File.ReadAllText(path);
+                json = LocalProtectedFile.ReadAllText(path);
 
             if (string.IsNullOrWhiteSpace(json))
                 return Array.Empty<WaypointLive>();

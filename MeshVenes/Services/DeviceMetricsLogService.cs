@@ -52,9 +52,9 @@ public static class DeviceMetricsLogService
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (!File.Exists(path))
-                File.AppendAllText(path, "timestamp_utc,battery_volts,battery_percent,channel_utilization,airtime,is_powered" + Environment.NewLine);
+                LocalProtectedFile.AppendAllText(path, "timestamp_utc,battery_volts,battery_percent,channel_utilization,airtime,is_powered" + Environment.NewLine);
 
-            File.AppendAllText(path, line + Environment.NewLine);
+            LocalProtectedFile.AppendAllText(path, line + Environment.NewLine);
 
             if (!_cache.TryGetValue(scopedKey, out var list))
             {
@@ -100,7 +100,7 @@ public static class DeviceMetricsLogService
         string[] lines;
         lock (_gate)
         {
-            lines = File.ReadAllLines(path);
+            lines = LocalProtectedFile.ReadAllLines(path);
         }
 
         var slice = lines.Length <= maxSamples ? lines : lines[^maxSamples..];

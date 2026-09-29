@@ -1,4 +1,4 @@
-﻿using Meshtastic.Core;
+using Meshtastic.Core;
 using Meshtastic.Protobufs;
 using Meshtastic.Transport.Serial;
 using MeshVenes.Parsing;
@@ -423,7 +423,7 @@ public sealed class RadioClient
 
                     try
                     {
-                        File.AppendAllLines(_liveLogPath, batch);
+                        LocalProtectedFile.AppendAllLines(_liveLogPath, batch);
                     }
                     catch
                     {
@@ -1113,6 +1113,16 @@ public sealed class RadioClient
 
         var msg = ToRadioFactory.CreateMqttProxyMessage(proxyMessage);
         var framed = MeshtasticWire.Wrap((Google.Protobuf.IMessage)msg);
+
+        // Firmware caps ToRadio frames at MAX_TO_FROM_RADIO_SIZE (512 bytes of
+        // protobuf payload). Oversized broker messages would desync the serial
+        // stream, so drop them here instead of sending.
+        if (framed.Length > MeshtasticWire.HeaderLength + MeshtasticWire.MaxToFromRadioPayloadBytes)
+        {
+            AddSystemLog($"MQTT proxy: dropped broker message ({framed.Length - MeshtasticWire.HeaderLength} bytes) exceeding the radio's {MeshtasticWire.MaxToFromRadioPayloadBytes}-byte ToRadio limit.");
+            return false;
+        }
+
         return await SendPacketWithQueueControlAsync(framed, packetId: 0).ConfigureAwait(false);
     }
 

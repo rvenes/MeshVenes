@@ -799,6 +799,11 @@ public sealed partial class ConnectPage : Page
         if (HideTxCheck.IsChecked == true && Regex.IsMatch(body, @"^TX \d+ bytes$"))
             return false;
 
+        // Per-chunk RX byte counts are diagnostics noise; only show them in
+        // extended mode. They still reach the saved debug log unfiltered.
+        if (ExtendedInfoCheck.IsChecked != true && Regex.IsMatch(body, @"^RX \d+ bytes$"))
+            return false;
+
         var text = ExtendedInfoCheck.IsChecked == true ? RewriteExtended(body) : HumanizeUptimeInline(body);
         presented = stamp is null ? text : $"{stamp} {text}";
         return true;

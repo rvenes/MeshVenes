@@ -13,6 +13,15 @@ public static class MeshtasticWire
     private const byte Sync1 = 0x94;
     private const byte Sync2 = 0xC3;
 
+    /// <summary>Sync + length header size in bytes.</summary>
+    public const int HeaderLength = 4;
+
+    /// <summary>
+    /// Firmware MAX_TO_FROM_RADIO_SIZE: the largest protobuf payload the
+    /// device accepts in a single ToRadio/FromRadio frame.
+    /// </summary>
+    public const int MaxToFromRadioPayloadBytes = 512;
+
     public static byte[] Wrap(IMessage message)
     {
         var payload = message.ToByteArray();

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MeshVenes is an open-source Windows desktop client for Meshtastic radios, with messaging, maps, node management and radio configuration.">
+  <meta name="theme-color" content="#0b0b0e">
+  <meta property="og:title" content="MeshVenes — Meshtastic for Windows">
+  <meta property="og:description" content="Message, map and manage your Meshtastic network from a native Windows desktop app.">
+  <meta property="og:image" content="https://venes.org/meshvenes/images/meshvenes-nodes-map.png">
+  <meta property="og:type" content="website">
+  <title>MeshVenes — Meshtastic for Windows</title>
+  <link rel="stylesheet" href="styles.css?v=20260929-1">
+  <script src="script.js?v=20260929-1" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="MeshVenes home">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>MeshVenes</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="#features">Features</a>
+      <a href="#latest">What's new</a>
+      <a href="#download">Download</a>
+      <a href="https://github.com/rvenes/MeshVenes" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-glow" aria-hidden="true"></div>
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="status-dot"></span> Open source · Built for Windows</div>
+        <h1>Your Meshtastic network,<br><span>at home on Windows.</span></h1>
+        <p class="hero-lede">Send messages, explore nodes on a map and configure your radios from one focused native desktop app.</p>
+        <div class="hero-actions">
+          <a class="button button-primary download-link" href="https://github.com/rvenes/MeshVenes/releases/latest">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/></svg>
+            <span>Download for Windows</span>
+          </a>
+          <a class="button button-secondary" href="https://github.com/rvenes/MeshVenes" target="_blank" rel="noreferrer">View source on GitHub</a>
+        </div>
+        <p class="download-meta"><span class="version-label">Latest version</span> · Windows x64 · PowerShell or portable ZIP</p>
+      </div>
+
+      <div class="hero-visual">
+        <div class="window-frame">
+          <img src="images/meshvenes-nodes-map.png" alt="MeshVenes node list and map showing Meshtastic nodes around a Norwegian fjord" width="1573" height="1061">
+        </div>
+      </div>
+    </section>
+
+    <section class="intro section-shell" aria-labelledby="intro-title">
+      <p class="section-kicker">One app. Your whole mesh.</p>
+      <h2 id="intro-title">A desktop control room for Meshtastic</h2>
+      <p>MeshVenes is a community-built Windows client compatible with Meshtastic radios. Connect over USB, TCP/IP or Bluetooth LE and work with your mesh through a spacious interface made for the desktop.</p>
+    </section>
+
+    <section class="features section-shell" id="features" aria-labelledby="features-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Everything in reach</p>
+          <h2 id="features-title">Built for more than messaging</h2>
+        </div>
+        <p>Follow the network, inspect radio data and change settings without jumping between tools.</p>
+      </div>
+
+      <div class="feature-grid">
+        <a class="feature-card feature-wide feature-card-link" href="images/meshvenes-messages.png" data-lightbox data-caption="Messages and channels">
+          <div class="feature-card-copy">
+            <span class="feature-icon" aria-hidden="true">⌁</span>
+            <h3>Messages and channels</h3>
+            <p>Send direct messages and join public channel conversations, with delivery state, local history, drafts and useful node context close at hand.</p>
+            <span class="preview-hint">View screenshot <span aria-hidden="true">↗</span></span>
+          </div>
+          <img class="feature-thumbnail" src="images/meshvenes-messages.png" alt="Preview of direct messages in MeshVenes" width="1573" height="1061" loading="lazy">
+        </a>
+        <a class="feature-card feature-card-link feature-card-stack" href="images/meshvenes-map-view.png" data-lightbox data-caption="Live node map">
+          <div class="feature-card-copy">
+            <span class="feature-icon" aria-hidden="true">◎</span>
+            <h3>Live node map</h3>
+            <p>See node positions across the full map, inspect GPS tracks and understand how your mesh is spread across the landscape.</p>
+          </div>
+          <img class="feature-thumbnail" src="images/meshvenes-map-view.png" alt="MeshVenes full map view with a live node list and node markers" width="1597" height="957" loading="lazy">
+        </a>
+        <a class="feature-card feature-card-link feature-card-stack" href="images/meshvenes-traceroutes.png" data-lightbox data-caption="Active and passive traceroutes">
+          <div class="feature-card-copy">
+            <span class="feature-icon" aria-hidden="true">↝</span>
+            <h3>Trace routes</h3>
+            <p>Run active traceroutes to inspect a path through the mesh. Passive traceroutes are logged automatically when another node traces your node.</p>
+          </div>
+          <img class="feature-thumbnail" src="images/meshvenes-traceroutes.png" alt="MeshVenes trace route log showing active and passive traceroutes" width="1597" height="957" loading="lazy">
+        </a>
+        <article class="feature-card feature-wide feature-card-gallery">
+          <span class="feature-icon" aria-hidden="true">◫</span>
+          <h3>Metrics and position history</h3>
+          <p>Explore battery, channel utilization and airtime graphs, alongside timestamped position history and altitude data.</p>
+          <div class="feature-gallery">
+            <a class="preview-tile" href="images/meshvenes-device-metrics.png" data-lightbox data-caption="Device metrics">
+              <img src="images/meshvenes-device-metrics.png" alt="MeshVenes device metrics graph for battery, channel utilization and airtime" width="1753" height="1028" loading="lazy">
+              <span>Device metrics <span aria-hidden="true">↗</span></span>
+            </a>
+            <a class="preview-tile" href="images/meshvenes-position-log.png" data-lightbox data-caption="Position history">
+              <img src="images/meshvenes-position-log.png" alt="MeshVenes position log with coordinates, altitude and data source" width="1753" height="1028" loading="lazy">
+              <span>Position history <span aria-hidden="true">↗</span></span>
+            </a>
+          </div>
+        </article>
+        <a class="feature-card feature-wide feature-card-link feature-card-portrait" href="images/meshvenes-debug-logs.png" data-lightbox data-caption="Settings and debug logs">
+          <div class="feature-card-copy">
+            <span class="feature-icon" aria-hidden="true">⚙</span>
+            <h3>Deep configuration and logs</h3>
+            <p>Manage local and remote radio settings, LoRa channels, security, device options and Meshtastic modules. Search, filter, copy and save detailed debug logs when troubleshooting your setup.</p>
+            <span class="preview-hint">View all settings and logs <span aria-hidden="true">↗</span></span>
+          </div>
+          <img class="feature-thumbnail feature-thumbnail-portrait" src="images/meshvenes-debug-logs.png" alt="MeshVenes settings navigation and detailed debug log view" width="1494" height="1887" loading="lazy">
+        </a>
+      </div>
+    </section>
+
+    <section class="latest section-shell" id="latest" aria-labelledby="latest-title">
+      <div class="latest-panel">
+        <div class="latest-copy">
+          <p class="section-kicker">Latest release</p>
+          <div class="latest-title-row">
+            <h2 id="latest-title">What's new in <span class="version-label">MeshVenes</span></h2>
+            <span class="release-badge version-label">Latest</span>
+          </div>
+          <p class="release-notes" aria-live="polite">Loading release details…</p>
+          <div class="release-actions">
+            <a class="text-link release-link" href="https://github.com/rvenes/MeshVenes/releases/latest" target="_blank" rel="noreferrer">Read the release details <span aria-hidden="true">→</span></a>
+            <span class="release-size"></span>
+          </div>
+        </div>
+        <div class="connect-strip" aria-label="Supported connection types">
+          <div><span aria-hidden="true">⌁</span><b>USB</b><small>Serial connection</small></div>
+          <div><span aria-hidden="true">◉</span><b>Bluetooth LE</b><small>Wireless nearby</small></div>
+          <div><span aria-hidden="true">⇄</span><b>TCP/IP</b><small>Across your network</small></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="showcase section-shell" aria-labelledby="showcase-title">
+      <div class="showcase-copy">
+        <p class="section-kicker">Configure with confidence</p>
+        <h2 id="showcase-title">Keep radio settings and firmware in view</h2>
+        <p>MeshVenes brings detailed Meshtastic configuration to a familiar Windows interface. Check firmware status, open official release notes and work with remote nodes from the same app.</p>
+        <ul class="check-list">
+          <li>Local and remote administration</li>
+          <li>Radio, device and module settings</li>
+          <li>Firmware version checks</li>
+          <li>Configuration import and export</li>
+        </ul>
+      </div>
+      <div class="window-frame showcase-window">
+        <img src="images/meshvenes-firmware-settings.png" alt="MeshVenes settings page showing firmware update information and configuration categories" width="1573" height="1061" loading="lazy">
+      </div>
+    </section>
+
+    <section class="download section-shell" id="download" aria-labelledby="download-title">
+      <div class="download-card">
+        <div>
+          <p class="section-kicker">Ready to explore your mesh?</p>
+          <h2 id="download-title">Install MeshVenes with PowerShell</h2>
+          <p>Open PowerShell as your normal Windows user. Download and inspect the script, then run it to install MeshVenes and add a Start menu shortcut. No administrator rights or separate .NET installation are needed.</p>
+          <pre class="install-command"><code>$installer = Join-Path $env:TEMP ('MeshVenes-install-' + [guid]::NewGuid().ToString('N') + '.ps1')
+Invoke-WebRequest -UseBasicParsing -Uri https://venes.org/meshvenes/install-windows.ps1 -OutFile $installer -ErrorAction Stop
+# Inspect the downloaded script before running it.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer</code></pre>
+          <p><a href="install-windows.ps1">Read the installer</a> · <a href="https://github.com/rvenes/MeshVenes/tree/codex/security-powershell-install/installers">Review installer source</a></p>
+          <p>Close MeshVenes first. Add <code>-DesktopShortcut</code> for a desktop icon. Running the installer again checks the latest release; <code>-Rollback</code> selects the previous installation. Settings and logs are retained.</p>
+          <p>The installer checks signed release metadata, the ZIP's size and SHA-256 before activation. The application and PowerShell script are not Authenticode-signed. Windows 10 version 2004 or later, x64, is required; supported Windows 11 is recommended. Maps require Microsoft Edge WebView2 Runtime.</p>
+          <p>Prefer a portable copy? Download the ZIP, extract it to a writable folder and run <code>MeshVenes.exe</code>.</p>
+        </div>
+        <div class="download-cta">
+          <a class="button button-primary download-link" href="https://github.com/rvenes/MeshVenes/releases/latest">Download portable ZIP</a>
+          <small><span class="version-label">Latest version</span> · <span class="release-size">Windows x64</span></small>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="image-dialog" id="image-dialog" role="dialog" aria-modal="true" aria-label="MeshVenes screenshot preview" hidden>
+    <button type="button" class="image-dialog-close" aria-label="Close screenshot">×</button>
+    <img id="image-dialog-content" alt="">
+  </div>
+
+  <footer>
+    <div class="footer-inner">
+      <div>
+        <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>MeshVenes</span></a>
+        <p>A community-driven Windows desktop client compatible with Meshtastic radios.</p>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/rvenes/MeshVenes" target="_blank" rel="noreferrer">Source code</a>
+        <a href="https://github.com/rvenes/MeshVenes/issues" target="_blank" rel="noreferrer">Report an issue</a>
+        <a href="https://github.com/rvenes/MeshVenes/blob/main/LICENSE" target="_blank" rel="noreferrer">GPL-3.0 license</a>
+      </div>
+    </div>
+    <div class="footer-legal">© <span id="current-year"></span> MeshVenes. Not affiliated with or endorsed by the Meshtastic organization.</div>
+  </footer>
+</body>
+</html>

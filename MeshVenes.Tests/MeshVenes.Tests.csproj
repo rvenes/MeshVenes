@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>MeshVenes.Tests</AssemblyName>
     <RootNamespace>MeshVenes.Tests</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
@@ -19,10 +20,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Meshtastic.Core\Meshtastic.Core.csproj" />
+    <None Include="..\installers\Repair-Update.ps1" Link="Repair-Update.ps1" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="..\\MeshVenes\\Protocol\\MeshtasticFrameDecoder.cs" Link="Protocol\\MeshtasticFrameDecoder.cs" />
+    <Compile Include="..\\MeshVenes\\Protocol\\MeshtasticWire.cs" Link="Protocol\\MeshtasticWire.cs" />
     <Compile Include="..\\MeshVenes\\Services\\ChannelUrlUtil.cs" Link="Services\\ChannelUrlUtil.cs" />
     <Compile Include="..\\MeshVenes\\Services\\ListSorter.cs" Link="Services\\ListSorter.cs" />
     <Compile Include="..\\MeshVenes\\Services\\ListSortMode.cs" Link="Services\\ListSortMode.cs" />
@@ -32,5 +35,14 @@
     <Compile Include="..\\MeshVenes\\Services\\RadioOperationGate.cs" Link="Services\\RadioOperationGate.cs" />
     <Compile Include="..\\MeshVenes\\Services\\UpdatePackageIntegrity.cs" Link="Services\\UpdatePackageIntegrity.cs" />
     <Compile Include="..\\MeshVenes\\Services\\UpdateVersionUtil.cs" Link="Services\\UpdateVersionUtil.cs" />
+    <Compile Include="..\MeshVenes\Services\UpdateSourcePolicy.cs" Link="Services\UpdateSourcePolicy.cs" />
+    <Compile Include="..\MeshVenes\Services\UpdateApplyScript.cs" Link="Services\UpdateApplyScript.cs" />
+    <Compile Include="..\MeshVenes\Services\MapSourcePolicy.cs" Link="Services\MapSourcePolicy.cs" />
+    <Compile Include="..\MeshVenes\Services\MqttEndpointPolicy.cs" Link="Services\MqttEndpointPolicy.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\MeshVenes\Services\EncryptedBackup.cs" Link="Services\EncryptedBackup.cs" />
+    <Compile Include="..\MeshVenes\Services\LocalProtectedFile.cs" Link="Services\LocalProtectedFile.cs" />
+    <Compile Include="..\MeshVenes\Services\ReleaseManifestSignature.cs" Link="Services\ReleaseManifestSignature.cs" />
   </ItemGroup>
 </Project>

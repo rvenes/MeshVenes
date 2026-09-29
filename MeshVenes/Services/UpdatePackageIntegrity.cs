@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.IO.Compression;
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +12,45 @@ namespace MeshVenes.Services;
 public static class UpdatePackageIntegrity
 {
     private const int Sha256HexLength = 64;
+
+    public static void ExtractVerifiedArchive(string zipPath, string destination)
+    {
+        if (Directory.Exists(destination) || File.Exists(destination))
+            throw new InvalidDataException("Update staging must be a new directory.");
+        using var archive = ZipFile.OpenRead(zipPath);
+        if (archive.Entries.Count > 20000)
+            throw new InvalidDataException("Too many update archive entries.");
+        var root = Path.GetFullPath(destination).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        long expandedSize = 0;
+        foreach (var entry in archive.Entries)
+        {
+            var name = entry.FullName.Replace('\\', '/');
+            foreach (var part in name.TrimEnd('/').Split('/'))
+            {
+                if (part.Length == 0 || part is "." or ".." || part.EndsWith('.') || part.EndsWith(' ') ||
+                    Regex.IsMatch(part, "[<>:\"|?*\\x00-\\x1f]") ||
+                    Regex.IsMatch(part, @"\A(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\.|$)", RegexOptions.IgnoreCase))
+                    throw new InvalidDataException("Unsafe update archive path.");
+            }
+            var path = Path.GetFullPath(Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar)));
+            if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !seen.Add(path))
+                throw new InvalidDataException("Duplicate or escaping update archive path.");
+            if (((entry.ExternalAttributes >> 16) & 0xF000) == 0xA000 || (entry.ExternalAttributes & 0x400) != 0)
+                throw new InvalidDataException("Update archive links are not supported.");
+            if (Path.GetExtension(name).ToLowerInvariant() is ".msix" or ".msixbundle" or ".appx" or ".appxbundle" or ".appinstaller")
+                throw new InvalidDataException("Packaged updates are not supported.");
+            expandedSize = checked(expandedSize + entry.Length);
+            if (expandedSize > 4L * 1024 * 1024 * 1024)
+                throw new InvalidDataException("Expanded update exceeds 4 GiB.");
+        }
+        foreach (var required in new[] { "MeshVenes.exe", "MeshVenes.pri" })
+        {
+            if (archive.GetEntry(required) is not { Length: > 0 })
+                throw new InvalidDataException($"Update package does not contain {required} at its root.");
+        }
+        archive.ExtractToDirectory(destination);
+    }
 
     public static void EnsureDownloadWithinExpectedSize(
         long downloadedSize,

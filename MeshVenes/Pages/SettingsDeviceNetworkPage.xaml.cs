@@ -40,7 +40,7 @@ public sealed partial class SettingsDeviceNetworkPage : Page
 
             WifiEnabledToggle.IsOn = network.WifiEnabled;
             WifiSsidBox.Text = network.WifiSsid ?? string.Empty;
-            WifiPasswordBox.Text = network.WifiPsk ?? string.Empty;
+            WifiPasswordBox.Password = network.WifiPsk ?? string.Empty;
             NtpServerBox.Text = network.NtpServer ?? string.Empty;
             UdpBroadcastToggle.IsOn = (network.EnabledProtocols & UdpBroadcastFlag) != 0;
 
@@ -75,7 +75,7 @@ public sealed partial class SettingsDeviceNetworkPage : Page
             {
                 WifiEnabled = WifiEnabledToggle.IsOn,
                 WifiSsid = (WifiSsidBox.Text ?? string.Empty).Trim(),
-                WifiPsk = (WifiPasswordBox.Text ?? string.Empty).Trim(),
+                WifiPsk = (WifiPasswordBox.Password ?? string.Empty).Trim(),
                 NtpServer = (NtpServerBox.Text ?? string.Empty).Trim(),
                 EnabledProtocols = enabledProtocols
             };

@@ -17,7 +17,7 @@ jobs:
 
     env:
       CONFIGURATION: Release
-      TARGET_FRAMEWORK: net8.0-windows10.0.19041.0
+      TARGET_FRAMEWORK: net10.0-windows10.0.19041.0
       RUNTIME: win-x64
       PROJECT_PATH: MeshVenes/MeshVenes.csproj
       PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish\win-x64
@@ -26,10 +26,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup .NET 8 SDK
+      - name: Setup .NET 10 SDK
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Resolve build target
         id: target
@@ -56,6 +56,20 @@ jobs:
       - name: Test
         shell: pwsh
         run: dotnet test MeshVenes.Tests/MeshVenes.Tests.csproj -c $env:CONFIGURATION -p:Platform=x64
+
+      - name: Test PowerShell installers
+        shell: pwsh
+        run: |
+          & pwsh -NoProfile -File installers/Test-Installer.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $env:PSModulePath = $null
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File installers/Test-Installer.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test release key recovery with a fixture key
+        shell: pwsh
+        run: ./scripts/Test-ReleaseSigning.ps1
 
       - name: Validate self-contained win-x64 publish
         shell: pwsh

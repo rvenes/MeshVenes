@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -92,7 +92,7 @@ public static class MessageArchive
         lock (_lock)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.AppendAllText(path, line + Environment.NewLine, Encoding.UTF8);
+            LocalProtectedFile.AppendAllText(path, line + Environment.NewLine, Encoding.UTF8);
         }
     }
 
@@ -148,7 +148,7 @@ public static class MessageArchive
                     break;
 
                 string[] lines;
-                try { lines = File.ReadAllLines(file, Encoding.UTF8); }
+                try { lines = LocalProtectedFile.ReadAllLines(file, Encoding.UTF8); }
                 catch { continue; }
 
                 // Files are append-only; read from end so we prefer newest entries.

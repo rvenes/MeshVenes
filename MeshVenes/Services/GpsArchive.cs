@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -53,7 +53,7 @@ public static class GpsArchive
         lock (_gate)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.AppendAllText(path, line + Environment.NewLine);
+            LocalProtectedFile.AppendAllText(path, line + Environment.NewLine);
         }
     }
 
@@ -63,7 +63,6 @@ public static class GpsArchive
         var dir = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(dir);
 
-        var tempPath = Path.Combine(dir, $"{Path.GetFileName(path)}.tmp");
         var lines = points
             .OrderBy(p => p.TsUtc)
             .Select(FormatLine)
@@ -71,11 +70,7 @@ public static class GpsArchive
 
         lock (_gate)
         {
-            File.WriteAllLines(tempPath, lines);
-            if (File.Exists(path))
-                File.Replace(tempPath, path, null);
-            else
-                File.Move(tempPath, path);
+            LocalProtectedFile.WriteAllLines(path, lines);
         }
     }
 
@@ -88,7 +83,7 @@ public static class GpsArchive
         string[] lines;
         lock (_gate)
         {
-            lines = File.ReadAllLines(path);
+            lines = LocalProtectedFile.ReadAllLines(path);
         }
 
         // Read the last maxPoints lines (performance for large files).

@@ -168,6 +168,7 @@ public sealed partial class MapsPage : Page, INotifyPropertyChanged
 
         if (!_mapEventsAttached)
         {
+            MapWebViewSecurity.Configure(wv, "mapassets.local");
             wv.WebMessageReceived += CoreWebView2_WebMessageReceived;
             wv.NavigationCompleted += CoreWebView2_NavigationCompleted;
             _mapEventsAttached = true;
@@ -185,7 +186,7 @@ public sealed partial class MapsPage : Page, INotifyPropertyChanged
         try
         {
             _mapReady = false;
-            wv.SetVirtualHostNameToFolderMapping("mapassets.local", mapFolderPath, CoreWebView2HostResourceAccessKind.Allow);
+            wv.SetVirtualHostNameToFolderMapping("mapassets.local", mapFolderPath, CoreWebView2HostResourceAccessKind.DenyCors);
             MapView.Source = new Uri("https://mapassets.local/Map/map.html");
             HideMapFallback();
             _mapConfigured = true;
@@ -199,6 +200,8 @@ public sealed partial class MapsPage : Page, INotifyPropertyChanged
 
     private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        if (!MapSourcePolicy.IsTrustedPage(e.Source, "mapassets.local"))
+            return;
         try
         {
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);

@@ -34,6 +34,14 @@ public sealed class MqttProxyService
     private CancellationTokenSource? _reconnectLoopCts;
     private Task? _reconnectLoopTask;
     private bool _manualSuspend;
+    private volatile TaskCompletionSource<bool> _disconnectedSignal =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _preferV311;
+    private volatile bool _clientUsesV5 = true;
+
+    private static readonly TimeSpan StateChangedMinInterval = TimeSpan.FromMilliseconds(250);
+    private long _lastStateRaiseTicks;
+    private int _stateRaiseScheduled;
 
     private bool _proxyEnabledByConfig;
     private string _runtimeStatus = "Disabled";
@@ -359,6 +367,8 @@ public sealed class MqttProxyService
     {
         await StopInternalLockedAsync("Reconnecting...", clearConfigEnabled: false).ConfigureAwait(false);
 
+        _preferV311 = false;
+
         _reconnectLoopCts = new CancellationTokenSource();
         var ct = _reconnectLoopCts.Token;
         _reconnectLoopTask = Task.Run(() => ReconnectLoopAsync(ct), ct);
@@ -387,18 +397,34 @@ public sealed class MqttProxyService
                 continue;
             }
 
+            var useV5 = !_preferV311;
             try
             {
                 var client = _client ?? CreateClient();
                 _client = client;
                 if (!client.IsConnected)
                 {
-                    var options = BuildClientOptions(_currentConfig);
-                    await client.ConnectAsync(options, ct).ConfigureAwait(false);
+                    _disconnectedSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var options = BuildClientOptions(_currentConfig, useV5);
+                    try
+                    {
+                        await client.ConnectAsync(options, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception) when (!ct.IsCancellationRequested)
+                    {
+                        // Older private brokers may reject MQTT v5; alternate
+                        // protocol versions between failed connect attempts so
+                        // both get tried. Only a failed ConnectAsync toggles —
+                        // subscribe or session errors keep the working version.
+                        _preferV311 = useV5;
+                        throw;
+                    }
+
+                    _clientUsesV5 = useV5;
                 }
 
                 await SubscribeCurrentTopicFilterAsync(client, ct).ConfigureAwait(false);
-                SetState("Broker connected (active).", _broker, null);
+                SetState(_clientUsesV5 ? "Broker connected (active)." : "Broker connected (active, MQTT 3.1.1).", _broker, null);
                 reconnectDelay = TimeSpan.FromSeconds(1);
                 await WaitForDisconnectOrStopAsync(client, ct).ConfigureAwait(false);
             }
@@ -433,6 +459,7 @@ public sealed class MqttProxyService
 
     private Task OnClientDisconnectedAsync(MqttClientDisconnectedEventArgs arg)
     {
+        _disconnectedSignal.TrySetResult(true);
         if (_proxyEnabledByConfig)
         {
             var reason = arg.Exception?.Message;
@@ -453,6 +480,17 @@ public sealed class MqttProxyService
 
         var topic = arg.ApplicationMessage.Topic ?? string.Empty;
         if (string.IsNullOrWhiteSpace(topic))
+        {
+            Interlocked.Increment(ref _droppedCount);
+            RaiseStateChanged();
+            return;
+        }
+
+        // On an MQTT 3.1.1 fallback connection there is no NoLocal, so the
+        // broker echoes our own uplinks back. Uplink topics end with the
+        // gateway id; drop anything published by the connected node itself so
+        // the firmware never sees its own packets as incoming.
+        if (!_clientUsesV5 && IsFromOwnGateway(topic))
         {
             Interlocked.Increment(ref _droppedCount);
             RaiseStateChanged();
@@ -532,6 +570,20 @@ public sealed class MqttProxyService
             || normalized.IndexOf("/2/c/", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
+    private bool IsFromOwnGateway(string topic)
+    {
+        var nodeNum = _connectedNodeNum;
+        if (nodeNum == 0)
+            return false;
+
+        var lastSlash = topic.LastIndexOf('/');
+        if (lastSlash < 0 || lastSlash == topic.Length - 1)
+            return false;
+
+        var lastSegment = topic[(lastSlash + 1)..].Trim();
+        return string.Equals(lastSegment, $"!{nodeNum:x8}", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsJsonTopic(string topic)
         => (topic ?? string.Empty).IndexOf("/2/json/", StringComparison.OrdinalIgnoreCase) >= 0;
 
@@ -564,14 +616,35 @@ public sealed class MqttProxyService
             config.Address ?? string.Empty,
             config.Root ?? string.Empty,
             config.Username ?? string.Empty,
-            config.Password ?? string.Empty,
+            HashSecret(config.Password),
             string.Join(",", subscribeFilters));
+    }
+
+    /// <summary>
+    /// The signature only needs to detect changes, so keep the password out of
+    /// it as plain text.
+    /// </summary>
+    private static string HashSecret(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        var hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(hash);
     }
 
     private async Task WaitForDisconnectOrStopAsync(IMqttClient client, CancellationToken ct)
     {
+        // Wakes immediately on the broker disconnect event; the timed fallback
+        // only covers config flips and missed events.
         while (!ct.IsCancellationRequested && _proxyEnabledByConfig && client.IsConnected)
-            await DelaySafeAsync(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        {
+            var signal = _disconnectedSignal.Task;
+            if (signal.IsCompleted)
+                return;
+
+            await Task.WhenAny(signal, DelaySafeAsync(TimeSpan.FromSeconds(15), ct)).ConfigureAwait(false);
+        }
     }
 
     private async Task SubscribeCurrentTopicFilterAsync(IMqttClient client, CancellationToken ct)
@@ -581,6 +654,7 @@ public sealed class MqttProxyService
             return;
 
         var builder = _factory.CreateSubscribeOptionsBuilder();
+        var useNoLocal = _clientUsesV5;
         foreach (var filter in filters)
         {
             builder.WithTopicFilter(f =>
@@ -588,27 +662,33 @@ public sealed class MqttProxyService
                 f.WithTopic(filter);
                 // Match the official clients: QoS 1 and no-local so the
                 // node's own uplinked packets are not echoed back to it.
+                // NoLocal only exists in MQTT v5, so skip it on a 3.1.1
+                // fallback connection.
                 f.WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce);
-                f.WithNoLocal(true);
+                if (useNoLocal)
+                    f.WithNoLocal(true);
             });
         }
 
         await client.SubscribeAsync(builder.Build(), ct).ConfigureAwait(false);
     }
 
-    private static MqttClientOptions BuildClientOptions(ModuleConfig.Types.MQTTConfig config)
+    private static MqttClientOptions BuildClientOptions(ModuleConfig.Types.MQTTConfig config, bool useV5)
     {
         var builder = new MqttClientOptionsBuilder()
             .WithClientId("MeshVenesMqttProxy-" + Guid.NewGuid().ToString("N"))
-            .WithProtocolVersion(MQTTnet.Formatter.MqttProtocolVersion.V500)
+            .WithProtocolVersion(useV5
+                ? MQTTnet.Formatter.MqttProtocolVersion.V500
+                : MQTTnet.Formatter.MqttProtocolVersion.V311)
             .WithKeepAlivePeriod(TimeSpan.FromSeconds(30))
             .WithCleanSession(true);
 
         // Like the official clients: always use TLS against the public
         // Meshtastic broker, regardless of the node's tls_enabled flag.
-        var tls = config.TlsEnabled || IsPublicMeshtasticBroker(config.Address);
+        var endpoint = MqttEndpointPolicy.Resolve(config.Address, config.TlsEnabled);
+        var tls = endpoint.UseTls;
 
-        ConfigureServer(builder, config, tls);
+        builder.WithTcpServer(endpoint.Host, endpoint.Port);
 
         var username = (config.Username ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(username))
@@ -618,45 +698,6 @@ public sealed class MqttProxyService
             builder.WithTlsOptions(o => o.UseTls());
 
         return builder.Build();
-    }
-
-    private static bool IsPublicMeshtasticBroker(string? address)
-    {
-        var raw = (address ?? string.Empty).Trim();
-        if (raw.Length == 0)
-            return false;
-
-        var afterScheme = raw.Contains("://", StringComparison.Ordinal)
-            ? raw[(raw.IndexOf("://", StringComparison.Ordinal) + 3)..]
-            : raw;
-        var host = afterScheme.Split('/')[0].Split(':')[0];
-        return string.Equals(host, PublicBrokerHost, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static void ConfigureServer(MqttClientOptionsBuilder builder, ModuleConfig.Types.MQTTConfig config, bool tls)
-    {
-        var addressRaw = (config.Address ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(addressRaw))
-            throw new InvalidOperationException("MQTT address is empty.");
-
-        if (!addressRaw.Contains("://", StringComparison.Ordinal))
-            addressRaw = (tls ? "mqtts://" : "mqtt://") + addressRaw;
-
-        if (Uri.TryCreate(addressRaw, UriKind.Absolute, out var uri))
-        {
-            var host = uri.Host;
-            var port = uri.IsDefaultPort ? (tls ? 8883 : 1883) : uri.Port;
-            builder.WithTcpServer(host, port);
-            return;
-        }
-
-        var hostPort = addressRaw.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        var hostFallback = hostPort.Length > 0 ? hostPort[0] : addressRaw;
-        var portFallback = hostPort.Length > 1 && int.TryParse(hostPort[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var p)
-            ? p
-            : tls ? 8883 : 1883;
-
-        builder.WithTcpServer(hostFallback, portFallback);
     }
 
     private async void RadioClient_ConnectionChanged()
@@ -755,6 +796,33 @@ public sealed class MqttProxyService
     }
 
     private void RaiseStateChanged()
+    {
+        // Throttle to at most ~4 events per second so heavy MQTT traffic does
+        // not flood the UI; a trailing raise ensures the last update is shown.
+        var nowTicks = DateTime.UtcNow.Ticks;
+        var lastTicks = Interlocked.Read(ref _lastStateRaiseTicks);
+        var elapsed = TimeSpan.FromTicks(nowTicks - lastTicks);
+        if (elapsed >= StateChangedMinInterval)
+        {
+            Interlocked.Exchange(ref _lastStateRaiseTicks, nowTicks);
+            InvokeStateChanged();
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _stateRaiseScheduled, 1, 0) != 0)
+            return;
+
+        var wait = StateChangedMinInterval - elapsed;
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(wait).ConfigureAwait(false); } catch { }
+            Interlocked.Exchange(ref _stateRaiseScheduled, 0);
+            Interlocked.Exchange(ref _lastStateRaiseTicks, DateTime.UtcNow.Ticks);
+            InvokeStateChanged();
+        });
+    }
+
+    private void InvokeStateChanged()
     {
         try { StateChanged?.Invoke(); } catch { }
     }

@@ -18,6 +18,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -29,6 +30,9 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Row="3" Grid.ColumnSpan="8" TextWrapping="Wrap" Opacity="0.8"
+                       Text="TCP connections to radios are not encrypted. Use a trusted local network or VPN; do not expose the radio port to the internet."/>
 
             <TextBlock Grid.Row="0" Grid.Column="0" Text="COM:" VerticalAlignment="Center" />
             <ComboBox Grid.Row="0"

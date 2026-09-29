@@ -8,6 +8,7 @@
             <TextBlock Text="MQTT Config" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock x:Name="StatusText" Text="Loading..." Opacity="0.85"/>
             <TextBlock x:Name="NodeText" Opacity="0.8"/>
+            <TextBlock TextWrapping="Wrap" Text="Enable TLS for custom brokers outside your trusted LAN. Without TLS, broker credentials and transport data can be observed in transit. Radio payload encryption does not replace TLS."/>
             <TextBlock Text="Runtime MQTT proxy (app -> internet broker -> node)" FontWeight="SemiBold"/>
             <TextBlock x:Name="RuntimeStatusText" Opacity="0.9"/>
             <TextBlock x:Name="RuntimeBrokerText" Opacity="0.85"/>
@@ -32,7 +33,7 @@
                 <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="Root topic"/><TextBox Grid.Row="6" Grid.Column="1" x:Name="RootBox"/>
                 <TextBlock Grid.Row="7" Grid.Column="0" VerticalAlignment="Center" Text="Address"/><TextBox Grid.Row="7" Grid.Column="1" x:Name="AddressBox"/>
                 <TextBlock Grid.Row="8" Grid.Column="0" VerticalAlignment="Center" Text="Username"/><TextBox Grid.Row="8" Grid.Column="1" x:Name="UsernameBox"/>
-                <TextBlock Grid.Row="9" Grid.Column="0" VerticalAlignment="Center" Text="Password"/><TextBox Grid.Row="9" Grid.Column="1" x:Name="PasswordBox"/>
+                <TextBlock Grid.Row="9" Grid.Column="0" VerticalAlignment="Center" Text="Password"/><PasswordBox Grid.Row="9" Grid.Column="1" x:Name="PasswordBox" PasswordRevealMode="Peek"/>
                 <TextBlock Grid.Row="10" Grid.Column="0" VerticalAlignment="Center" Text="TLS enabled"/><ToggleSwitch Grid.Row="10" Grid.Column="1" x:Name="TlsToggle"/>
                 <TextBlock Grid.Row="11" Grid.Column="0" Grid.ColumnSpan="2" Opacity="0.75" TextWrapping="Wrap"
                            Text="Proxy uses app as bridge: app -> broker -> node. If MQTT is enabled and proxy is disabled, the node must have its own internet networking."/>

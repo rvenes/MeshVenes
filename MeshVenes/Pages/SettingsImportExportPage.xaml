@@ -7,6 +7,9 @@
         <StackPanel Spacing="12" MaxWidth="1200" HorizontalAlignment="Left">
             <TextBlock Text="Import / Export" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock x:Name="StatusText" Text="Ready." Opacity="0.85" TextWrapping="Wrap"/>
+            <TextBlock TextWrapping="Wrap"
+                       Text="Backups can contain private radio keys, channel keys, Wi-Fi passwords and MQTT credentials. Password-protected exports are recommended. Legacy JSON/CFG exports are unencrypted."/>
+            <CheckBox x:Name="EncryptExportCheck" Content="Protect exports with a password (.mvbackup)" IsChecked="True"/>
             <TextBlock Opacity="0.85" TextWrapping="Wrap"
                        Text="Note: Export/import can take time, especially for remote admin targets. Fetching all categories uses significant mesh bandwidth. Select only the sections you actually need."/>
             <Grid ColumnDefinitions="180,420" RowSpacing="8" ColumnSpacing="12" Visibility="Collapsed">

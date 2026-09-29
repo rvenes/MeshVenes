@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -54,7 +54,7 @@ public static class NodeLogArchive
         lock (_gate)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.AppendAllText(path, line + Environment.NewLine);
+            LocalProtectedFile.AppendAllText(path, line + Environment.NewLine);
         }
     }
 
@@ -67,7 +67,7 @@ public static class NodeLogArchive
         string[] lines;
         lock (_gate)
         {
-            lines = File.ReadAllLines(path);
+            lines = LocalProtectedFile.ReadAllLines(path);
         }
 
         return lines.Length <= maxLines ? lines : lines[^maxLines..];
