@@ -93,22 +93,26 @@ API expands environment-variable syntax; use a portable ZIP in that case.
 
 ## Release gates and limitations
 
-The reviewed changes are not yet approved as a public binary release. Earlier live
+The user authorized release 1.5.2 and publication on 2026-09-29. Earlier live
 testing exposed an unresponsive window after connecting/navigating. Responsiveness
 improved in a fresh session with Windows UI automation disconnected, and manual
 USB messaging passed. This does not establish the cause or prove that the freeze
 is fixed. A remote TCP endpoint also closed its connection; USB messaging succeeded
 after switching to COM3. BLE discovery worked, but a BLE connection was not tested.
 
-The new installer requires `version.json.sig`, which is not yet present in the
-public feed. Do not advertise it as usable until the coordinated release is public.
-The existing public 1.5.1 binary does not contain these changes.
+Release 1.5.2, its detached manifest signature, PowerShell installer and updated
+website are now public. The GitHub asset and public ZIP both match 91,873,444 bytes
+and SHA-256 `f1535d80a248569d7c3b60bf54b7029868d4e89a2c096f7dbba220aad6f87455`.
+All seven published files were downloaded over HTTPS and byte-compared with staging;
+the public manifest signature was checked against the pinned public key. Browser
+verification confirmed v1.5.2, the release notes and installation instructions.
 
-The required venes.org publisher preview failed because the reinstalled Windows
-account has no stored WinSCP session. Nothing was uploaded. Restore the configured
-`Venes.org` session and WinSCP 6.5.6 or newer, then run the full-tree preview again.
-A GitHub tag/release, verified artifacts and explicit release authorization remain
-separate prerequisites under `RELEASING.md`. No historical ZIPs are to be removed.
+The initial publisher failure was resolved after the user restored WinSCP access.
+The full-tree preview passed with three additions, four updates, zero deletions
+and seven other folders unchanged. Publication completed successfully with exit
+code 0. Historical ZIPs were retained. The installer downloaded from the public
+site successfully installed 1.5.2 and passed a repeated installation using Windows
+PowerShell 5.1. The Start menu shortcut targets the installed 1.5.2.0 executable.
 
 ## References
 

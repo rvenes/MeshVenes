@@ -36,8 +36,7 @@ first. Repeating installation refreshes shortcuts when the same version is alrea
 installed. Bypass applies only to this PowerShell process, not to machine policy;
 organizational execution policy may still prevent execution.
 
-The planned web command, **only after the installer has been explicitly published**
-at the stated URL, is:
+To install the current public release from venes.org:
 
 ```powershell
 $installer = Join-Path $env:TEMP ('MeshVenes-install-' + [guid]::NewGuid().ToString('N') + '.ps1')
@@ -59,7 +58,7 @@ exact release manifest bytes. Their pinned public key is independent of the web
 server. The script and Windows executable remain unsigned by Authenticode: acquire
 the initial installer from a trusted source and inspect it. Versions through 1.5.1
 do not verify manifest signatures; that first upgrade still relies on HTTPS. The
-new installer requires the coordinated signed feed to be published before use.
+signed feed and installer are published together on venes.org.
 See [the security review](docs/security-review-2026-09-29.md).
 
 Sensitive data and backups
